@@ -66,9 +66,11 @@ DOMAIN-SUFFIX,google.com
 IP-CIDR,8.8.8.8/32,no-resolve
 payload:
   - 'DOMAIN,example.org'
+DIRECT-SUFFIX,dash.cloudflare.com
+GARBAGE,foo,bar
 FINAL
 `
-	out := expandRemoteRuleset([]byte(data), "🚀 PROXY")
+	out, skipped := expandRemoteRuleset([]byte(data), "🚀 PROXY")
 	joined := strings.Join(out, "\n")
 	for _, want := range []string{
 		"DOMAIN-SUFFIX,google.com,🚀 PROXY",
@@ -80,14 +82,24 @@ FINAL
 			t.Errorf("missing %q in %v", want, out)
 		}
 	}
+	// Unsupported rule types must be dropped (else mihomo rejects the config).
+	if strings.Contains(joined, "DIRECT-SUFFIX") || strings.Contains(joined, "GARBAGE") {
+		t.Errorf("unsupported rule types leaked into output: %v", out)
+	}
+	if len(skipped) != 2 {
+		t.Errorf("skipped = %d, want 2 (DIRECT-SUFFIX, GARBAGE), got %v", len(skipped), skipped)
+	}
 }
 
 func TestExpandInlineRule(t *testing.T) {
-	if got := expandInlineRule("FINAL", "G"); got != "MATCH,G" {
-		t.Errorf("FINAL -> %q", got)
+	if got, ok := expandInlineRule("FINAL", "G"); !ok || got != "MATCH,G" {
+		t.Errorf("FINAL -> %q,%v", got, ok)
 	}
-	if got := expandInlineRule("GEOIP,CN", "G"); got != "GEOIP,CN,G" {
-		t.Errorf("GEOIP -> %q", got)
+	if got, ok := expandInlineRule("GEOIP,CN", "G"); !ok || got != "GEOIP,CN,G" {
+		t.Errorf("GEOIP -> %q,%v", got, ok)
+	}
+	if _, ok := expandInlineRule("DIRECT-SUFFIX,x", "G"); ok {
+		t.Error("unsupported inline rule type should be rejected")
 	}
 }
 

@@ -31,8 +31,9 @@ type Request struct {
 // Diagnostics captures non-fatal information about a conversion.
 type Diagnostics struct {
 	NodeCount    int
-	SkippedLines []string
-	EmptyGroups  []string
+	SkippedLines []string // subscription lines that did not parse into a node
+	EmptyGroups  []string // proxy-groups that matched no nodes (filled with DIRECT)
+	SkippedRules []string // ruleset entries dropped for an unsupported rule type
 }
 
 // Run performs the conversion and returns the rendered config bytes.
@@ -71,6 +72,7 @@ func Run(ctx context.Context, f Fetcher, req Request) ([]byte, *Diagnostics, err
 		NodeCount:    result.NodeCount,
 		SkippedLines: skipped,
 		EmptyGroups:  result.EmptyGroups,
+		SkippedRules: result.SkippedRules,
 	}, nil
 }
 

@@ -80,8 +80,11 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "conversion failed: "+err.Error(), http.StatusBadGateway)
 		return
 	}
-	log.Printf("converted: %d nodes, %d skipped lines, empty groups: %v",
-		diag.NodeCount, len(diag.SkippedLines), diag.EmptyGroups)
+	log.Printf("converted: %d nodes, %d unparsed lines, empty groups: %v, %d rules dropped (unsupported type)",
+		diag.NodeCount, len(diag.SkippedLines), diag.EmptyGroups, len(diag.SkippedRules))
+	if len(diag.SkippedRules) > 0 {
+		log.Printf("dropped rules (unsupported type): %v", diag.SkippedRules)
+	}
 
 	// Clash clients expect YAML; this content type matches subconverter.
 	w.Header().Set("Content-Type", "text/yaml; charset=utf-8")

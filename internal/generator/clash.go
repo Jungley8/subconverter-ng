@@ -54,9 +54,10 @@ type clashOut struct {
 
 // Result is the rendered config plus diagnostics worth surfacing to the user.
 type Result struct {
-	YAML        []byte
-	NodeCount   int
-	EmptyGroups []string // groups that matched no nodes (filled with DIRECT)
+	YAML         []byte
+	NodeCount    int
+	EmptyGroups  []string // groups that matched no nodes (filled with DIRECT)
+	SkippedRules []string // source rules dropped for an unsupported rule type
 }
 
 // GenerateClash builds a Clash.Meta config.
@@ -76,7 +77,8 @@ func GenerateClash(ctx context.Context, nodes []*proxy.Proxy, cfg *extconfig.Con
 	}
 
 	groups := buildGroups(cfg.ProxyGroups, nodes, names, res)
-	rules := buildRules(ctx, cfg, f)
+	rules, skippedRules := buildRules(ctx, cfg, f)
+	res.SkippedRules = skippedRules
 
 	out := defaultBase()
 	out.Proxies = proxies
@@ -259,12 +261,13 @@ func resolveSelectors(selectors []string, nodes []*proxy.Proxy, allNames []strin
 // buildRules expands all rulesets in declared order. Remote rulesets are
 // fetched concurrently but assembled in order. A trailing MATCH (from []FINAL)
 // is honoured wherever it appears.
-func buildRules(ctx context.Context, cfg *extconfig.Config, f Fetcher) []string {
+func buildRules(ctx context.Context, cfg *extconfig.Config, f Fetcher) (rules, skipped []string) {
 	if !cfg.EnableRuleGenerator {
-		return nil
+		return nil, nil
 	}
 	type fetched struct {
-		lines []string
+		lines   []string
+		skipped []string
 	}
 	results := make([]fetched, len(cfg.Rulesets))
 	var wg sync.WaitGroup
@@ -279,38 +282,65 @@ func buildRules(ctx context.Context, cfg *extconfig.Config, f Fetcher) []string 
 			if err != nil {
 				return
 			}
-			results[i].lines = expandRemoteRuleset(data, group)
+			results[i].lines, results[i].skipped = expandRemoteRuleset(data, group)
 		}(i, rs.URL, rs.Group)
 	}
 	wg.Wait()
 
-	var rules []string
 	for i, rs := range cfg.Rulesets {
 		if rs.Inline != "" {
-			rules = append(rules, expandInlineRule(rs.Inline, rs.Group))
+			if rule, ok := expandInlineRule(rs.Inline, rs.Group); ok {
+				rules = append(rules, rule)
+			} else {
+				skipped = append(skipped, rs.Inline+","+rs.Group)
+			}
 			continue
 		}
 		rules = append(rules, results[i].lines...)
+		skipped = append(skipped, results[i].skipped...)
 	}
-	return rules
+	return rules, skipped
 }
 
-// expandInlineRule turns a []inline body into a Clash rule for group.
+// validRuleTypes is the set of rule types Clash.Meta (mihomo) accepts. Rules
+// whose type is not in this set make mihomo reject the WHOLE config at load
+// time, so we drop unknown types (e.g. a typo'd "DIRECT-SUFFIX" in a source
+// ruleset) and report them instead of emitting an unloadable config.
+var validRuleTypes = map[string]bool{
+	"DOMAIN": true, "DOMAIN-SUFFIX": true, "DOMAIN-KEYWORD": true, "DOMAIN-REGEX": true,
+	"GEOSITE": true, "IP-CIDR": true, "IP-CIDR6": true, "IP-SUFFIX": true, "IP-ASN": true,
+	"GEOIP": true, "SRC-GEOIP": true, "SRC-IP-CIDR": true, "SRC-IP-SUFFIX": true, "SRC-IP-ASN": true,
+	"DST-PORT": true, "SRC-PORT": true, "IN-PORT": true, "IN-TYPE": true, "IN-USER": true, "IN-NAME": true,
+	"PROCESS-NAME": true, "PROCESS-PATH": true, "PROCESS-NAME-REGEX": true, "PROCESS-PATH-REGEX": true,
+	"NETWORK": true, "DSCP": true, "UID": true, "RULE-SET": true,
+	"AND": true, "OR": true, "NOT": true, "SUB-RULE": true, "MATCH": true,
+}
+
+func isValidRuleType(typ string) bool {
+	return validRuleTypes[strings.ToUpper(strings.TrimSpace(typ))]
+}
+
+// expandInlineRule turns a []inline body into a Clash rule for group. ok is
+// false when the rule type is not recognised by Clash.Meta.
 //
 //	FINAL      -> MATCH,<group>
 //	GEOIP,CN   -> GEOIP,CN,<group>
 //	DOMAIN,x   -> DOMAIN,x,<group>
-func expandInlineRule(body, group string) string {
+func expandInlineRule(body, group string) (string, bool) {
 	if strings.EqualFold(body, "FINAL") {
-		return "MATCH," + group
+		return "MATCH," + group, true
 	}
-	return body + "," + group
+	typ, _, _ := strings.Cut(body, ",")
+	if !isValidRuleType(typ) {
+		return "", false
+	}
+	return body + "," + group, true
 }
 
 // expandRemoteRuleset parses an ACL4SSR-style .list file and appends the policy
-// group to each rule, preserving an optional trailing no-resolve.
-func expandRemoteRuleset(data []byte, group string) []string {
-	var out []string
+// group to each rule, preserving an optional trailing no-resolve. Lines with an
+// unsupported rule type are collected into skipped rather than emitted.
+func expandRemoteRuleset(data []byte, group string) (out, skipped []string) {
 	for _, raw := range strings.Split(string(data), "\n") {
 		line := strings.TrimSpace(strings.TrimRight(raw, "\r"))
 		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") || strings.HasPrefix(line, "//") {
@@ -330,16 +360,26 @@ func expandRemoteRuleset(data []byte, group string) []string {
 		}
 		switch len(fields) {
 		case 2: // TYPE,VALUE
+			if !isValidRuleType(fields[0]) {
+				skipped = append(skipped, line)
+				continue
+			}
 			out = append(out, fields[0]+","+fields[1]+","+group)
 		case 3: // TYPE,VALUE,no-resolve  (insert group before the flag)
+			if !isValidRuleType(fields[0]) {
+				skipped = append(skipped, line)
+				continue
+			}
 			out = append(out, fields[0]+","+fields[1]+","+group+","+fields[2])
 		case 1: // bare keyword like FINAL/MATCH
 			if strings.EqualFold(fields[0], "FINAL") || strings.EqualFold(fields[0], "MATCH") {
 				out = append(out, "MATCH,"+group)
+			} else {
+				skipped = append(skipped, line)
 			}
 		}
 	}
-	return out
+	return out, skipped
 }
 
 // defaultBase is the Clash.Meta skeleton used when no clash_rule_base is set.

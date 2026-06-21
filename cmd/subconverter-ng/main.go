@@ -141,8 +141,11 @@ func cmdConvert(args []string) {
 	if err != nil {
 		fatal("convert: %v", err)
 	}
-	fmt.Fprintf(os.Stderr, "ok: %d nodes, %d skipped lines, empty groups: %v\n",
-		diag.NodeCount, len(diag.SkippedLines), diag.EmptyGroups)
+	fmt.Fprintf(os.Stderr, "ok: %d nodes, %d unparsed lines, %d empty groups, %d rules dropped (unsupported type)\n",
+		diag.NodeCount, len(diag.SkippedLines), len(diag.EmptyGroups), len(diag.SkippedRules))
+	for _, r := range diag.SkippedRules {
+		fmt.Fprintf(os.Stderr, "  dropped rule (unsupported type): %s\n", r)
+	}
 
 	if *out == "" {
 		os.Stdout.Write(data)
