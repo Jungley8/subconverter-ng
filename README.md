@@ -13,7 +13,10 @@
 ## 特性（MVP）
 
 - ✅ **接口兼容**：`/sub?target=clash&url=...&config=...`，老客户端无需改动
-- ✅ **协议**：Shadowsocks、VMess、VLESS（含 Reality / XTLS-Vision）、Trojan、Hysteria2、TUIC v5
+- ✅ **协议**：Shadowsocks、ShadowsocksR、VMess、VLESS（含 Reality / XTLS-Vision）、Trojan、Hysteria（v1/v2）、TUIC v5、AnyTLS、SOCKS5
+- ✅ **缓存 / 限流**：规则与订阅 TTL 缓存（默认开，可清除）、按 IP 限流防滥用
+- ✅ **Subscription-Userinfo 透传**：客户端直接显示机场流量 / 到期
+- ✅ **rule-providers 输出**（`expand=false`）、`rename` 重命名规则
 - ✅ **外部配置**：解析 subconverter 的 INI 外部配置（`ruleset=` / `custom_proxy_group=` / `exclude_remarks` / `enable_rule_generator` / `clash_rule_base`），兼容 ACL4SSR 规则
 - ✅ **访问层**：上游代理（http/socks5）、可配置 User-Agent、**自动绕过 Cloudflare 5 秒盾**（FlareSolverr）
 - ✅ **两种形态**：HTTP 服务 + CLI 单次转换，单二进制
@@ -95,10 +98,14 @@ make run     # 本地起服务
 ## 路线图
 
 - [ ] 更多输出 target（sing-box、surge、quanx…）
-- [ ] 更多协议（hysteria1、anytls、ssr、wireguard…）
-- [ ] 节点去重 / 重命名规则 / emoji 注入
-- [ ] 订阅缓存与并发优化
-- [ ] Web 界面
+- [x] 更多协议（hysteria1、anytls、ssr、socks5）
+- [x] 重命名规则 / emoji 增删（对齐 subconverter）
+- [x] 订阅 / 规则缓存
+- [x] rule-providers 输出模式
+- [x] IP 限流防滥用
+- [x] Subscription-Userinfo 透传
+- [x] 内置 Web 界面
+- [ ] 节点去重、wireguard、更多 target
 
 ## License
 

@@ -17,6 +17,15 @@
 | `add_emoji` | 是否按规则给节点名前加国旗 emoji（默认 `true`） | :material-check: |
 | `remove_emoji` | 是否先移除节点名中已有的 emoji（默认 `true`） | :material-check: |
 | `proxy` | **本次请求**的上游代理，覆盖全局配置（扩展参数） | :material-check: |
+| `expand` | `true`（默认）把规则内联进配置；`false` 改为输出 `rule-providers` 引用远程规则，配置体积大幅减小、规则自动更新 | :material-check: |
+| `nocache` | `1` 时绕过本次请求的 TTL 缓存，强制重新抓取 | :material-check: |
+| `flushcache` | `1` 时先清空整个共享缓存再处理本次请求（另有 `GET /flushcache` 端点） | :material-check: |
+
+!!! note "重命名 / 缓存 / 限流"
+    - **rename**：外部配置里写 `rename=<正则>@<替换>`（支持 `\1` / `$1` 反向引用、空替换），批量改节点名。处理顺序：去 emoji → 重命名 → 加 emoji。
+    - **缓存**：订阅与规则列表按 URL 做内存 TTL 缓存（默认 300s），避免每次 `/sub` 都去 GitHub 拉 ~25 个规则列表被限流。`cache_ttl: -1s` 可关闭。
+    - **限流**：`/sub` 按客户端 IP 限流（默认 30/min、burst 10），超限返回 `429 + Retry-After`；`/version` 与 Web 界面不受限。详见 `config.example.yaml`。
+    - **Subscription-Userinfo**：机场返回的流量 / 到期头会透传给客户端，Clash 里直接显示。
 
 !!! note "emoji 行为（对齐 subconverter）"
     处理顺序：**先 `remove_emoji` 去旧 → 再 `add_emoji` 按正则规则加新旗**。规则取自外部配置的
