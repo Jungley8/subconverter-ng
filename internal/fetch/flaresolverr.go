@@ -12,9 +12,9 @@ import (
 
 // FlareSolverr request/response shapes (v1 API).
 type fsRequest struct {
-	Cmd        string `json:"cmd"`
-	URL        string `json:"url"`
-	MaxTimeout int    `json:"maxTimeout"`
+	Cmd        string   `json:"cmd"`
+	URL        string   `json:"url"`
+	MaxTimeout int      `json:"maxTimeout"`
 	Proxy      *fsProxy `json:"proxy,omitempty"`
 }
 

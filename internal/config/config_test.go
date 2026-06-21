@@ -60,3 +60,29 @@ func TestEnvOverrides(t *testing.T) {
 		t.Errorf("env fetch not applied: %+v", c.Fetch)
 	}
 }
+
+func TestCacheTTLFromFileAndEnv(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "app.yaml")
+	yaml := "fetch:\n  cache_ttl: 120s\n"
+	if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Fetch.CacheTTL != 120*time.Second {
+		t.Errorf("cache_ttl from file = %v, want 120s", c.Fetch.CacheTTL)
+	}
+
+	// Env overrides the file.
+	t.Setenv("SUBNG_CACHE_TTL", "45s")
+	c, err = Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Fetch.CacheTTL != 45*time.Second {
+		t.Errorf("cache_ttl from env = %v, want 45s", c.Fetch.CacheTTL)
+	}
+}

@@ -6,6 +6,7 @@ package convert
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"sync"
 
 	"github.com/Jungley8/subconverter-ng/internal/emoji"
@@ -21,6 +22,22 @@ type Fetcher interface {
 	Get(ctx context.Context, url string) ([]byte, error)
 }
 
+// MetaFetcher is an optional capability: a Fetcher that can also return the
+// response headers. fetch.Client implements it. convert type-asserts for it and
+// falls back to plain Get (with empty headers) for fakes that don't.
+type MetaFetcher interface {
+	GetWithMeta(ctx context.Context, url string) ([]byte, http.Header, error)
+}
+
+// getWithMeta calls f.GetWithMeta when available, else plain Get with nil headers.
+func getWithMeta(ctx context.Context, f Fetcher, url string) ([]byte, http.Header, error) {
+	if mf, ok := f.(MetaFetcher); ok {
+		return mf.GetWithMeta(ctx, url)
+	}
+	body, err := f.Get(ctx, url)
+	return body, nil, err
+}
+
 // Request describes one conversion.
 type Request struct {
 	Target    string   // currently only "clash"
@@ -34,6 +51,11 @@ type Request struct {
 	Emoji       *bool
 	AddEmoji    *bool
 	RemoveEmoji *bool
+
+	// NoCache, when true, signals the server to bypass the shared fetch cache
+	// for this request (the &nocache=1 param). It is informational to convert;
+	// the actual bypass is wired by the server constructing the Fetcher.
+	NoCache bool
 }
 
 // Diagnostics captures non-fatal information about a conversion.
@@ -42,6 +64,11 @@ type Diagnostics struct {
 	SkippedLines []string // subscription lines that did not parse into a node
 	EmptyGroups  []string // proxy-groups that matched no nodes (filled with DIRECT)
 	SkippedRules []string // ruleset entries dropped for an unsupported rule type
+
+	// SubscriptionUserinfo is the airport's Subscription-Userinfo response
+	// header from the FIRST subscription fetch (empty if absent). Clash clients
+	// use it to display traffic/expiry.
+	SubscriptionUserinfo string
 }
 
 // Run performs the conversion and returns the rendered config bytes.
@@ -53,7 +80,7 @@ func Run(ctx context.Context, f Fetcher, req Request) ([]byte, *Diagnostics, err
 		return nil, nil, fmt.Errorf("no subscription url provided")
 	}
 
-	nodes, skipped, err := fetchAndParseAll(ctx, f, req.SubURLs)
+	nodes, skipped, userinfo, err := fetchAndParseAll(ctx, f, req.SubURLs)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -87,10 +114,11 @@ func Run(ctx context.Context, f Fetcher, req Request) ([]byte, *Diagnostics, err
 		return nil, nil, err
 	}
 	return result.YAML, &Diagnostics{
-		NodeCount:    result.NodeCount,
-		SkippedLines: skipped,
-		EmptyGroups:  result.EmptyGroups,
-		SkippedRules: result.SkippedRules,
+		NodeCount:            result.NodeCount,
+		SkippedLines:         skipped,
+		EmptyGroups:          result.EmptyGroups,
+		SkippedRules:         result.SkippedRules,
+		SubscriptionUserinfo: userinfo,
 	}, nil
 }
 
@@ -120,12 +148,14 @@ func resolveEmoji(cfg *extconfig.Config, req Request) (remove, add bool) {
 }
 
 // fetchAndParseAll fetches every subscription concurrently and concatenates the
-// parsed nodes, preserving subscription order.
-func fetchAndParseAll(ctx context.Context, f Fetcher, urls []string) ([]*proxy.Proxy, []string, error) {
+// parsed nodes, preserving subscription order. It also returns the
+// Subscription-Userinfo header captured from the FIRST subscription URL.
+func fetchAndParseAll(ctx context.Context, f Fetcher, urls []string) ([]*proxy.Proxy, []string, string, error) {
 	type out struct {
-		nodes   []*proxy.Proxy
-		skipped []string
-		err     error
+		nodes    []*proxy.Proxy
+		skipped  []string
+		userinfo string
+		err      error
 	}
 	results := make([]out, len(urls))
 	var wg sync.WaitGroup
@@ -133,13 +163,18 @@ func fetchAndParseAll(ctx context.Context, f Fetcher, urls []string) ([]*proxy.P
 		wg.Add(1)
 		go func(i int, u string) {
 			defer wg.Done()
-			data, err := f.Get(ctx, u)
+			data, hdr, err := getWithMeta(ctx, f, u)
 			if err != nil {
 				results[i].err = err
 				return
 			}
 			nodes, skipped, err := parser.Parse(data)
-			results[i] = out{nodes: nodes, skipped: skipped, err: err}
+			results[i] = out{
+				nodes:    nodes,
+				skipped:  skipped,
+				userinfo: hdr.Get("Subscription-Userinfo"),
+				err:      err,
+			}
 		}(i, u)
 	}
 	wg.Wait()
@@ -148,10 +183,15 @@ func fetchAndParseAll(ctx context.Context, f Fetcher, urls []string) ([]*proxy.P
 	var allSkipped []string
 	for i, r := range results {
 		if r.err != nil {
-			return nil, nil, fmt.Errorf("subscription %d: %w", i+1, r.err)
+			return nil, nil, "", fmt.Errorf("subscription %d: %w", i+1, r.err)
 		}
 		allNodes = append(allNodes, r.nodes...)
 		allSkipped = append(allSkipped, r.skipped...)
 	}
-	return allNodes, allSkipped, nil
+	// Userinfo comes from the first subscription URL only.
+	userinfo := ""
+	if len(results) > 0 {
+		userinfo = results[0].userinfo
+	}
+	return allNodes, allSkipped, userinfo, nil
 }
