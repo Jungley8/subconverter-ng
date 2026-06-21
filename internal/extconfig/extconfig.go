@@ -9,6 +9,7 @@
 //	exclude_remarks=<regex>     (repeatable)
 //	include_remarks=<regex>     (repeatable)
 //	clash_rule_base=<url>
+//	rename=<regex-pattern>@<replacement>   (repeatable)
 //
 // Selectors inside a custom_proxy_group are either []Literal (a reference to
 // another group or builtin such as DIRECT/REJECT) or a regular expression
@@ -48,6 +49,10 @@ type Config struct {
 	EnableRuleGenerator bool
 	OverwriteRules      bool
 	ClashRuleBase       string
+
+	// RenameRules holds raw "pattern@replacement" lines from rename= entries,
+	// in declared order. The pattern is a regex; the replacement may be empty.
+	RenameRules []string
 
 	// Emoji settings (subconverter-compatible). EmojiRules holds raw
 	// "<regex>,<emoji>" lines. AddEmoji/RemoveOldEmoji are nil when the config
@@ -108,6 +113,10 @@ func Parse(data []byte) *Config {
 			cfg.OverwriteRules = boolVal(val)
 		case "clash_rule_base":
 			cfg.ClashRuleBase = val
+		case "rename":
+			if val != "" {
+				cfg.RenameRules = append(cfg.RenameRules, val)
+			}
 		case "emoji":
 			cfg.EmojiRules = append(cfg.EmojiRules, val)
 		case "add_emoji":

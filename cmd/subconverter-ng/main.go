@@ -112,6 +112,7 @@ func cmdConvert(args []string) {
 	emoji := fs.String("emoji", "", "emoji shortcut (true=normalize, false=strip); empty=default")
 	addEmoji := fs.String("add-emoji", "", "add flag emoji by rules (true/false); empty=default")
 	removeEmoji := fs.String("remove-emoji", "", "remove existing emoji (true/false); empty=default")
+	expand := fs.Bool("expand", true, "inline rules (true) or emit rule-providers (false)")
 	timeout := fs.Duration("timeout", 30*time.Second, "per-fetch timeout")
 	fs.Parse(args)
 
@@ -135,6 +136,7 @@ func cmdConvert(args []string) {
 		ConfigURL: *cfgURL,
 		Gen: generator.Options{
 			Sort: *sortNodes, UDP: *udp, TFO: *tfo, SkipCertVerify: *scv,
+			UseRuleProviders: !*expand,
 		},
 		Emoji:       triFromString(*emoji),
 		AddEmoji:    triFromString(*addEmoji),

@@ -73,6 +73,112 @@ func TestApplyNodeOptions_RemoveThenAddEmoji(t *testing.T) {
 	}
 }
 
+func TestApplyNodeOptions_Rename(t *testing.T) {
+	// Simple substring rename: 美国 -> US.
+	rules := CompileRenameRules([]string{`美国@US`})
+	a := proxy.New("ss", "香港 美国 节点", "1.1.1.1", 8388)
+	applyNodeOptions([]*proxy.Proxy{a}, Options{RenameRules: rules})
+	if a.Name != "香港 US 节点" || a.Clash["name"] != "香港 US 节点" {
+		t.Errorf("rename failed: name=%q clash=%v", a.Name, a.Clash["name"])
+	}
+}
+
+func TestCompileRenameRules_Backref(t *testing.T) {
+	// subconverter-style \1 backref must work like Go's $1.
+	rules := CompileRenameRules([]string{`\[(.+?)\]@\1`})
+	if len(rules) != 1 {
+		t.Fatalf("expected 1 compiled rule, got %d", len(rules))
+	}
+	a := proxy.New("ss", "[HK] Premium", "1.1.1.1", 8388)
+	applyNodeOptions([]*proxy.Proxy{a}, Options{RenameRules: rules})
+	if a.Name != "HK Premium" {
+		t.Errorf("backref rename = %q, want 'HK Premium'", a.Name)
+	}
+
+	// Go-style $1 backref must also work.
+	rules2 := CompileRenameRules([]string{`(\d+)x@$1`})
+	b := proxy.New("ss", "10x node", "1.1.1.1", 8388)
+	applyNodeOptions([]*proxy.Proxy{b}, Options{RenameRules: rules2})
+	if b.Name != "10 node" {
+		t.Errorf("dollar backref rename = %q, want '10 node'", b.Name)
+	}
+
+	// Empty replacement is valid; entries without "@" or with a bad pattern are skipped.
+	rules3 := CompileRenameRules([]string{`xxx@`, `no-at-sign`, `(@whatever`})
+	if len(rules3) != 1 {
+		t.Fatalf("expected 1 valid rule (empty-replace), got %d", len(rules3))
+	}
+}
+
+func TestApplyNodeOptions_RenameOrderBetweenEmoji(t *testing.T) {
+	// Order: remove emoji -> rename -> add emoji. Renaming "US"->"美国" should
+	// then let the add-emoji rule for 美国 attach the correct flag.
+	emojiRules := emoji.ParseRules([]string{`(?i:US|美国),🇺🇸`})
+	renameRules := CompileRenameRules([]string{`US@美国`})
+	n := proxy.New("vmess", "🇨🇳 US", "2.2.2.2", 443) // wrong flag, name "US"
+	applyNodeOptions([]*proxy.Proxy{n}, Options{
+		RemoveEmoji: true, RenameRules: renameRules, AddEmoji: true, EmojiRules: emojiRules,
+	})
+	if n.Name != "🇺🇸 美国" {
+		t.Errorf("name = %q, want '🇺🇸 美国'", n.Name)
+	}
+}
+
+func TestGenerateClash_RuleProviders(t *testing.T) {
+	cfg := &extconfig.Config{
+		EnableRuleGenerator: true,
+		ProxyGroups: []extconfig.ProxyGroup{
+			{Name: "🚀 Proxy", Type: "select", Selectors: []string{".*"}},
+		},
+		Rulesets: []extconfig.Ruleset{
+			{Group: "🚀 Proxy", URL: "https://example.com/rules/proxy.list"},
+			{Group: "🚀 Proxy", URL: "https://example.com/rules/proxy.list"}, // dup URL+group -> one provider, one RULE-SET
+			{Group: "🎯 Direct", URL: "https://example.com/rules/direct.list"},
+			{Group: "🐟 Final", Inline: "GEOIP,CN"},
+			{Group: "🐟 Final", Inline: "FINAL"},
+		},
+	}
+	// fakeFetcher is empty: rule-providers mode must NOT fetch the rulesets.
+	res, err := GenerateClash(context.Background(), mkNodes(), cfg, fakeFetcher{}, Options{UseRuleProviders: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		RuleProviders map[string]map[string]any `yaml:"rule-providers"`
+		Rules         []string                  `yaml:"rules"`
+	}
+	if err := yaml.Unmarshal(res.YAML, &doc); err != nil {
+		t.Fatalf("invalid yaml: %v", err)
+	}
+	// Two distinct URLs -> two providers.
+	if len(doc.RuleProviders) != 2 {
+		t.Fatalf("rule-providers count = %d, want 2: %v", len(doc.RuleProviders), doc.RuleProviders)
+	}
+	for name, p := range doc.RuleProviders {
+		if p["type"] != "http" || p["behavior"] != "classical" {
+			t.Errorf("provider %q wrong type/behavior: %v", name, p)
+		}
+		if p["url"] == nil || p["format"] != "text" {
+			t.Errorf("provider %q missing url/format: %v", name, p)
+		}
+	}
+	joined := strings.Join(doc.Rules, "\n")
+	for _, want := range []string{
+		"RULE-SET,provider_1,🚀 Proxy",
+		"RULE-SET,provider_2,🎯 Direct",
+		"GEOIP,CN,🐟 Final", // inline kept as a direct rule
+		"MATCH,🐟 Final",    // []FINAL still present
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("missing %q in rules: %v", want, doc.Rules)
+		}
+	}
+	// The dup (URL,group) must yield exactly one RULE-SET line.
+	if got := strings.Count(joined, "RULE-SET,provider_1,🚀 Proxy"); got != 1 {
+		t.Errorf("RULE-SET,provider_1 appears %d times, want 1", got)
+	}
+}
+
 func TestApplyNodeOptions(t *testing.T) {
 	nodes := mkNodes()
 	applyNodeOptions(nodes, Options{UDP: true, TFO: true, SkipCertVerify: true})

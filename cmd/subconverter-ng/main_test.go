@@ -16,6 +16,24 @@ func TestSplitPipe(t *testing.T) {
 	}
 }
 
+func TestTriFromString(t *testing.T) {
+	for _, on := range []string{"true", "1", "yes", "ON"} {
+		if v := triFromString(on); v == nil || !*v {
+			t.Errorf("triFromString(%q) should be true", on)
+		}
+	}
+	for _, off := range []string{"false", "0", "no", "OFF"} {
+		if v := triFromString(off); v == nil || *v {
+			t.Errorf("triFromString(%q) should be false", off)
+		}
+	}
+	for _, none := range []string{"", "maybe", " "} {
+		if v := triFromString(none); v != nil {
+			t.Errorf("triFromString(%q) should be nil, got %v", none, *v)
+		}
+	}
+}
+
 func TestNewHTTPServer(t *testing.T) {
 	cfg := config.Default()
 	cfg.Listen = ":12345"

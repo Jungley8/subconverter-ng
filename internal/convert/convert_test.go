@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Jungley8/subconverter-ng/internal/extconfig"
 	"gopkg.in/yaml.v3"
 )
 
@@ -213,6 +214,100 @@ func TestRun_NoConfigDefaultsRuleGen(t *testing.T) {
 	if diag.NodeCount != 7 || len(data) == 0 {
 		t.Errorf("bare conversion wrong: nodes=%d bytes=%d", diag.NodeCount, len(data))
 	}
+}
+
+func TestRun_Rename(t *testing.T) {
+	// rename= rewrites node names; the regex backref form (\1) must work too.
+	ini := sampleINI + "rename=HK-Test@HongKong\nrename=US-(.+)@\\1-USA\n"
+	f := fakeFetcher{
+		"client/subscribe": sampleSubscription(),
+		"config.init":      []byte(ini),
+		"PROXY.list":       []byte(samplePROXYList),
+	}
+	data, _, err := Run(context.Background(), f, Request{
+		Target:    "clash",
+		SubURLs:   []string{"https://airport.example.com/api/v1/client/subscribe?token=x"},
+		ConfigURL: "https://github.com/x/config.init",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, p := range toAnys(doc["proxies"]) {
+		m, _ := p.(map[string]any)
+		names = append(names, m["name"].(string))
+	}
+	joined := strings.Join(names, "\n")
+	if !strings.Contains(joined, "🇭🇰 HongKong") {
+		t.Errorf("plain rename not applied, names: %v", names)
+	}
+	if !strings.Contains(joined, "Test-USA") {
+		t.Errorf("backref rename not applied, names: %v", names)
+	}
+}
+
+func TestRun_ExpandFalseRuleProviders(t *testing.T) {
+	f := fakeFetcher{
+		"client/subscribe": sampleSubscription(),
+		"config.init":      []byte(sampleINI),
+		// PROXY.list intentionally NOT served: expand=false must not fetch it.
+	}
+	req := Request{
+		Target:    "clash",
+		SubURLs:   []string{"https://airport.example.com/api/v1/client/subscribe?token=x"},
+		ConfigURL: "https://github.com/x/config.init",
+	}
+	req.Gen.UseRuleProviders = true
+	data, _, err := Run(context.Background(), f, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	rp, _ := doc["rule-providers"].(map[string]any)
+	if len(rp) != 1 {
+		t.Fatalf("rule-providers = %v, want 1 entry", rp)
+	}
+	rules := strings.Join(toStrings(doc["rules"]), "\n")
+	if !strings.Contains(rules, "RULE-SET,provider_1,🚀 节点选择") {
+		t.Errorf("missing RULE-SET rule: %s", rules)
+	}
+	if !strings.Contains(rules, "MATCH,🐟 漏网之鱼") {
+		t.Errorf("inline MATCH lost in rule-providers mode: %s", rules)
+	}
+}
+
+func TestResolveEmoji(t *testing.T) {
+	tr := func(b bool) *bool { return &b }
+
+	// Defaults: both true.
+	if r, a := resolveEmoji(&extconfig.Config{}, Request{}); !r || !a {
+		t.Errorf("defaults = remove %v add %v, want true true", r, a)
+	}
+	// External config overrides defaults.
+	cfg := &extconfig.Config{AddEmoji: tr(false), RemoveOldEmoji: tr(false)}
+	if r, a := resolveEmoji(cfg, Request{}); r || a {
+		t.Errorf("config override = remove %v add %v, want false false", r, a)
+	}
+	// URL params override config.
+	if r, a := resolveEmoji(cfg, Request{AddEmoji: tr(true), RemoveEmoji: tr(true)}); !r || !a {
+		t.Errorf("url override = remove %v add %v, want true true", r, a)
+	}
+	// emoji shortcut forces remove=true and sets add.
+	if r, a := resolveEmoji(&extconfig.Config{}, Request{Emoji: tr(false)}); !r || a {
+		t.Errorf("emoji shortcut = remove %v add %v, want true false", r, a)
+	}
+}
+
+func toAnys(v any) []any {
+	arr, _ := v.([]any)
+	return arr
 }
 
 func toStrings(v any) []string {

@@ -72,6 +72,9 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 			UDP:            boolParam(q.Get("udp"), false),
 			TFO:            boolParam(q.Get("tfo"), false),
 			SkipCertVerify: boolParam(q.Get("scv"), false),
+			// expand=true (default) inlines every rule; expand=false emits
+			// rule-providers instead.
+			UseRuleProviders: !boolParam(q.Get("expand"), true),
 		},
 		// Emoji tribools (nil when the param is absent) resolved in convert.
 		Emoji:       boolTri(q.Get("emoji")),
