@@ -59,11 +59,17 @@ func New(opts Options) (*Client, error) {
 		TLSHandshakeTimeout: 15 * time.Second,
 	}
 	if opts.Proxy != "" {
+		// An explicit proxy (config / SUBNG_PROXY / --proxy / &proxy=) wins and
+		// also gets forwarded to FlareSolverr so the egress stays consistent.
 		pu, err := url.Parse(opts.Proxy)
 		if err != nil {
 			return nil, fmt.Errorf("invalid proxy %q: %w", opts.Proxy, err)
 		}
 		tr.Proxy = http.ProxyURL(pu)
+	} else {
+		// Otherwise honour the standard HTTP_PROXY / HTTPS_PROXY / NO_PROXY
+		// (and lowercase) environment variables, like every other Go HTTP tool.
+		tr.Proxy = http.ProxyFromEnvironment
 	}
 	jar, _ := cookiejar.New(nil)
 	return &Client{

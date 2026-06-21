@@ -18,6 +18,28 @@ func TestNew_Defaults(t *testing.T) {
 	}
 }
 
+func TestNew_FallsBackToEnvProxy(t *testing.T) {
+	// With no explicit proxy, the transport must use ProxyFromEnvironment so
+	// standard HTTP_PROXY/HTTPS_PROXY/NO_PROXY are honoured.
+	c, err := New(Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := c.http.Transport.(*http.Transport)
+	if tr.Proxy == nil {
+		t.Fatal("expected env-based proxy func, got nil")
+	}
+
+	// And an explicit proxy overrides it with a fixed URL.
+	c2, _ := New(Options{Proxy: "http://127.0.0.1:7890"})
+	tr2 := c2.http.Transport.(*http.Transport)
+	req, _ := http.NewRequest(http.MethodGet, "http://example.com", nil)
+	u, err := tr2.Proxy(req)
+	if err != nil || u == nil || u.Host != "127.0.0.1:7890" {
+		t.Errorf("explicit proxy not used: u=%v err=%v", u, err)
+	}
+}
+
 func TestNew_InvalidProxy(t *testing.T) {
 	if _, err := New(Options{Proxy: "://bad"}); err == nil {
 		t.Error("expected error for invalid proxy URL")

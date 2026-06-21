@@ -8,13 +8,22 @@
 
 配置上游代理的三种方式（优先级从高到低）：
 
-| 方式 | 示例 | 作用范围 |
-|---|---|---|
-| URL 参数 `&proxy=` | `/sub?...&proxy=socks5://127.0.0.1:1080` | 仅本次请求 |
-| 环境变量 `SUBNG_PROXY` | `socks5://127.0.0.1:1080` | 全局默认 |
-| 配置文件 `fetch.proxy` | 见 `config.example.yaml` | 全局默认 |
+| 方式 | 示例 | 作用范围 | 优先级 |
+|---|---|---|---|
+| URL 参数 `&proxy=` | `/sub?...&proxy=socks5://127.0.0.1:1080` | 仅本次请求 | 最高 |
+| 环境变量 `SUBNG_PROXY` | `socks5://127.0.0.1:1080` | 全局默认 | 高 |
+| 配置文件 `fetch.proxy` | 见 `config.example.yaml` | 全局默认 | 高 |
+| 标准环境变量 `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` | `http://127.0.0.1:7890` | 全局默认 | 兜底 |
 
 支持的代理协议：`http://`、`https://`、`socks5://`（可带账号密码：`socks5://user:pass@host:port`）。
+
+!!! note "SUBNG_PROXY vs HTTP_PROXY"
+    没有显式配置代理时，本工具会回退到标准的 `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY`
+    环境变量（大小写均可），和其它 Go 工具行为一致。
+
+    **区别**：`SUBNG_PROXY`（及 `--proxy` / `&proxy=`）是本工具专用的，除了抓取请求外，还会
+    **转发给 FlareSolverr** 保证过盾与重放走同一出口；而标准 `HTTP_PROXY` 只作用于抓取本身。
+    若你既要走代理又要过 Cloudflare 盾，用 `SUBNG_PROXY`。
 
 > 该上游代理同时用于：抓订阅、抓 `config=` 外部配置、抓 ruleset 规则列表，以及（若启用）转发给 FlareSolverr 过盾，确保出口一致。
 
