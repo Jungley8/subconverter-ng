@@ -12,6 +12,62 @@ func TestDefault(t *testing.T) {
 	if c.Listen != ":25500" || c.Fetch.Timeout != 30*time.Second {
 		t.Errorf("defaults wrong: %+v", c)
 	}
+	if !c.RateLimit.Enabled || c.RateLimit.RequestsPerMinute != 30 || c.RateLimit.Burst != 10 {
+		t.Errorf("ratelimit defaults wrong: %+v", c.RateLimit)
+	}
+}
+
+func TestRateLimitDefaultsBackfilled(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "app.yaml")
+	// Toggle enabled off but omit the numeric fields: defaults must backfill.
+	yaml := "ratelimit:\n  enabled: false\n"
+	if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.RateLimit.Enabled {
+		t.Error("enabled should be false from file")
+	}
+	if c.RateLimit.RequestsPerMinute != 30 || c.RateLimit.Burst != 10 {
+		t.Errorf("numeric defaults not backfilled: %+v", c.RateLimit)
+	}
+}
+
+func TestRateLimitFromFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "app.yaml")
+	yaml := "ratelimit:\n  enabled: true\n  requests_per_minute: 100\n  burst: 25\n"
+	if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.RateLimit.Enabled || c.RateLimit.RequestsPerMinute != 100 || c.RateLimit.Burst != 25 {
+		t.Errorf("ratelimit from file wrong: %+v", c.RateLimit)
+	}
+}
+
+func TestRateLimitEnvOverrides(t *testing.T) {
+	t.Setenv("SUBNG_RATELIMIT_ENABLED", "false")
+	t.Setenv("SUBNG_RATELIMIT_RPM", "120")
+	t.Setenv("SUBNG_RATELIMIT_BURST", "40")
+
+	c, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.RateLimit.Enabled {
+		t.Error("SUBNG_RATELIMIT_ENABLED=false not applied")
+	}
+	if c.RateLimit.RequestsPerMinute != 120 || c.RateLimit.Burst != 40 {
+		t.Errorf("ratelimit env not applied: %+v", c.RateLimit)
+	}
 }
 
 func TestLoadMissingFileUsesDefaults(t *testing.T) {
