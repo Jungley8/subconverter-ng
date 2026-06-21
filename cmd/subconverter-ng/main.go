@@ -109,6 +109,7 @@ func cmdConvert(args []string) {
 	udp := fs.Bool("udp", false, "force udp on all nodes")
 	tfo := fs.Bool("tfo", false, "enable tcp-fast-open")
 	scv := fs.Bool("scv", false, "skip-cert-verify")
+	emoji := fs.Bool("emoji", true, "allow emoji in node names (--emoji=false strips them)")
 	timeout := fs.Duration("timeout", 30*time.Second, "per-fetch timeout")
 	fs.Parse(args)
 
@@ -132,6 +133,7 @@ func cmdConvert(args []string) {
 		ConfigURL: *cfgURL,
 		Gen: generator.Options{
 			Sort: *sortNodes, UDP: *udp, TFO: *tfo, SkipCertVerify: *scv,
+			StripEmoji: !*emoji,
 		},
 	}
 

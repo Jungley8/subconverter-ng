@@ -26,6 +26,7 @@ type Options struct {
 	UDP            bool // force udp:true on every node
 	TFO            bool // tcp-fast-open
 	SkipCertVerify bool // scv=true
+	StripEmoji     bool // remove emoji from node names (for clients that can't render them)
 }
 
 // groupOut is a Clash proxy-group, as a struct so YAML keys stay in a natural
@@ -41,12 +42,12 @@ type groupOut struct {
 }
 
 type clashOut struct {
-	MixedPort          int            `yaml:"mixed-port"`
-	AllowLan           bool           `yaml:"allow-lan"`
-	Mode               string         `yaml:"mode"`
-	LogLevel           string         `yaml:"log-level"`
-	ExternalController string         `yaml:"external-controller"`
-	DNS                map[string]any `yaml:"dns"`
+	MixedPort          int              `yaml:"mixed-port"`
+	AllowLan           bool             `yaml:"allow-lan"`
+	Mode               string           `yaml:"mode"`
+	LogLevel           string           `yaml:"log-level"`
+	ExternalController string           `yaml:"external-controller"`
+	DNS                map[string]any   `yaml:"dns"`
 	Proxies            []map[string]any `yaml:"proxies"`
 	ProxyGroups        []groupOut       `yaml:"proxy-groups"`
 	Rules              []string         `yaml:"rules"`
@@ -183,9 +184,14 @@ func matchesAny(res []*regexp.Regexp, s string) bool {
 	return false
 }
 
-// applyNodeOptions stamps URL-flag-driven fields onto every node.
+// applyNodeOptions stamps URL-flag-driven fields onto every node. Emoji are
+// stripped here (before group/rule assembly) so the names used in proxy-group
+// member lists stay in sync with the renamed proxies.
 func applyNodeOptions(nodes []*proxy.Proxy, opts Options) {
 	for _, n := range nodes {
+		if opts.StripEmoji {
+			n.Rename(stripEmoji(n.Name))
+		}
 		if opts.UDP {
 			n.Clash["udp"] = true
 		}
@@ -197,6 +203,43 @@ func applyNodeOptions(nodes []*proxy.Proxy, opts Options) {
 			n.Clash["skip-cert-verify"] = true
 		}
 	}
+}
+
+// stripEmoji removes emoji / pictographic runes (country flags, symbols, etc.)
+// from a node name for Clash clients that cannot render them, then collapses
+// the whitespace left behind. Regular text (CJK, latin, digits) is preserved,
+// so proxy-group regex matchers like (港|HK) keep working.
+func stripEmoji(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if isEmojiRune(r) {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	// Collapse runs of spaces created by removed emoji and trim the edges.
+	return strings.Join(strings.Fields(b.String()), " ")
+}
+
+func isEmojiRune(r rune) bool {
+	switch {
+	case r >= 0x1F1E6 && r <= 0x1F1FF: // regional indicator symbols (country flags)
+		return true
+	case r >= 0x1F300 && r <= 0x1FAFF: // symbols, pictographs, emoji, supplemental
+		return true
+	case r >= 0x1F000 && r <= 0x1F02F: // mahjong / dominoes
+		return true
+	case r >= 0x2600 && r <= 0x27BF: // misc symbols + dingbats
+		return true
+	case r >= 0x2B00 && r <= 0x2BFF: // misc symbols and arrows (stars ⭐ etc.)
+		return true
+	case r >= 0xFE00 && r <= 0xFE0F: // variation selectors
+		return true
+	case r == 0x200D || r == 0x20E3 || r == 0xFEFF: // ZWJ, keycap, BOM
+		return true
+	}
+	return false
 }
 
 // buildGroups resolves each custom_proxy_group's selectors against the node

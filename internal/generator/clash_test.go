@@ -36,15 +36,41 @@ func mkNodes() []*proxy.Proxy {
 func TestUnescapeUnicode(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{`name: "\U0001F1ED\U0001F1F0 HK"`, `name: "🇭🇰 HK"`},
-		{`x: "中文"`, `x: "中文"`},                 // BMP CJK
-		{`path: "	tab"`, `path: "	tab"`},        // control char (<0x80) preserved
-		{`p: "a\\Ufake"`, `p: "a\\Ufake"`},                // literal backslash preserved
+		{`x: "中文"`, `x: "中文"`},             // BMP CJK
+		{`path: "	tab"`, `path: "	tab"`},   // control char (<0x80) preserved
+		{`p: "a\\Ufake"`, `p: "a\\Ufake"`}, // literal backslash preserved
 	}
 	for _, c := range cases {
 		got := string(unescapeUnicode([]byte(c.in)))
 		if got != c.want {
 			t.Errorf("unescapeUnicode(%q) = %q, want %q", c.in, got, c.want)
 		}
+	}
+}
+
+func TestStripEmoji(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"🇭🇰 香港01", "香港01"},
+		{"🇺🇲 US-Test", "US-Test"},
+		{"⭐ 高级 节点 🚀", "高级 节点"},
+		{"无emoji节点", "无emoji节点"},
+		{"🇯🇵日本", "日本"},
+	}
+	for _, c := range cases {
+		if got := stripEmoji(c.in); got != c.want {
+			t.Errorf("stripEmoji(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestApplyNodeOptions_StripEmoji(t *testing.T) {
+	nodes := mkNodes() // names: "🇭🇰 HK", "🇺🇲 US"
+	applyNodeOptions(nodes, Options{StripEmoji: true})
+	if nodes[0].Name != "HK" || nodes[0].Clash["name"] != "HK" {
+		t.Errorf("node[0] not stripped/synced: name=%q clash=%v", nodes[0].Name, nodes[0].Clash["name"])
+	}
+	if nodes[1].Name != "US" {
+		t.Errorf("node[1] = %q, want US", nodes[1].Name)
 	}
 }
 

@@ -13,6 +13,7 @@
 | `udp` | 强制所有节点开启 UDP | :material-check: |
 | `tfo` | TCP Fast Open | :material-check: |
 | `scv` | skip-cert-verify（跳过证书校验） | :material-check: |
+| `emoji` | 是否**允许** emoji（默认 `true` 保留）。`emoji=false` 时**移除节点名称中的 emoji**，给不支持 emoji 的 Clash 客户端用 | :material-check: |
 | `proxy` | **本次请求**的上游代理，覆盖全局配置（扩展参数） | :material-check: |
 
 ## 暂未实现的参数
@@ -21,7 +22,6 @@
 
 | 参数 | 说明 |
 |---|---|
-| `emoji` | 按规则注入国旗 emoji |
 | `new_name` | 新版节点命名 |
 | `list` | 仅输出节点列表 |
 | `fdn` | filter deprecated nodes |

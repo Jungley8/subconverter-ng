@@ -178,7 +178,7 @@
           <label class="toggle"><input type="checkbox" id="udp"><span>强制 UDP</span></label>
           <label class="toggle"><input type="checkbox" id="tfo"><span>TCP Fast Open</span></label>
           <label class="toggle"><input type="checkbox" id="scv"><span>跳过证书校验</span></label>
-          <label class="toggle"><input type="checkbox" id="emoji"><span>添加 emoji</span></label>
+          <label class="toggle"><input type="checkbox" id="emoji" checked><span>允许 emoji</span></label>
         </div>
       </div>
 
@@ -228,9 +228,11 @@
     var config = $('config').value.trim();
     if (config) { params.push('config=' + encodeURIComponent(config)); }
 
-    ['sort', 'udp', 'tfo', 'scv', 'emoji'].forEach(function (k) {
+    ['sort', 'udp', 'tfo', 'scv'].forEach(function (k) {
       if ($(k).checked) { params.push(k + '=true'); }
     });
+    // Emoji are allowed by default; only signal removal when unchecked.
+    if (!$('emoji').checked) { params.push('emoji=false'); }
 
     var proxy = $('proxy').value.trim();
     if (proxy) { params.push('proxy=' + encodeURIComponent(proxy)); }

@@ -72,6 +72,8 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 			UDP:            boolParam(q.Get("udp"), false),
 			TFO:            boolParam(q.Get("tfo"), false),
 			SkipCertVerify: boolParam(q.Get("scv"), false),
+			// Emoji are allowed by default; emoji=false strips them from names.
+			StripEmoji: !boolParam(q.Get("emoji"), true),
 		},
 	}
 
