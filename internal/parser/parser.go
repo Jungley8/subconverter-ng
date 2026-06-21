@@ -20,13 +20,19 @@ type lineParser func(uri string) (*proxy.Proxy, error)
 
 // registry maps a URI scheme prefix to its parser.
 var registry = map[string]lineParser{
-	"ss://":         parseSS,
-	"vmess://":      parseVMess,
-	"vless://":      parseVLESS,
-	"trojan://":     parseTrojan,
-	"hysteria2://":  parseHysteria2,
-	"hy2://":        parseHysteria2,
-	"tuic://":       parseTUIC,
+	"ss://":        parseSS,
+	"ssr://":       parseSSR,
+	"vmess://":     parseVMess,
+	"vless://":     parseVLESS,
+	"trojan://":    parseTrojan,
+	"hysteria2://": parseHysteria2,
+	"hy2://":       parseHysteria2,
+	"hysteria://":  parseHysteria1,
+	"hy://":        parseHysteria1,
+	"tuic://":      parseTUIC,
+	"socks://":     parseSOCKS,
+	"socks5://":    parseSOCKS,
+	"anytls://":    parseAnyTLS,
 }
 
 // Parse decodes a subscription payload into proxy nodes. Unparseable or
