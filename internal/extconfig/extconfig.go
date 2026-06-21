@@ -48,6 +48,13 @@ type Config struct {
 	EnableRuleGenerator bool
 	OverwriteRules      bool
 	ClashRuleBase       string
+
+	// Emoji settings (subconverter-compatible). EmojiRules holds raw
+	// "<regex>,<emoji>" lines. AddEmoji/RemoveOldEmoji are nil when the config
+	// does not set them, so URL params / global defaults can take over.
+	EmojiRules     []string
+	AddEmoji       *bool
+	RemoveOldEmoji *bool
 }
 
 // Literal reports whether a selector is a []Reference (vs a regex matcher) and
@@ -101,6 +108,14 @@ func Parse(data []byte) *Config {
 			cfg.OverwriteRules = boolVal(val)
 		case "clash_rule_base":
 			cfg.ClashRuleBase = val
+		case "emoji":
+			cfg.EmojiRules = append(cfg.EmojiRules, val)
+		case "add_emoji":
+			b := boolVal(val)
+			cfg.AddEmoji = &b
+		case "remove_old_emoji":
+			b := boolVal(val)
+			cfg.RemoveOldEmoji = &b
 		}
 	}
 	return cfg

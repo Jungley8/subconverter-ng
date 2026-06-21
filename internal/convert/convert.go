@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/Jungley8/subconverter-ng/internal/emoji"
 	"github.com/Jungley8/subconverter-ng/internal/extconfig"
 	"github.com/Jungley8/subconverter-ng/internal/generator"
 	"github.com/Jungley8/subconverter-ng/internal/parser"
@@ -26,6 +27,13 @@ type Request struct {
 	SubURLs   []string // subscription URLs (the &url= param, split on |)
 	ConfigURL string   // external INI config (the &config= param)
 	Gen       generator.Options
+
+	// Emoji intent from URL params, as tribools (nil = unspecified). Emoji is
+	// the subconverter shortcut: when set it drives add_emoji and forces
+	// remove_emoji=true. Resolved against the external config + defaults below.
+	Emoji       *bool
+	AddEmoji    *bool
+	RemoveEmoji *bool
 }
 
 // Diagnostics captures non-fatal information about a conversion.
@@ -64,7 +72,17 @@ func Run(ctx context.Context, f Fetcher, req Request) ([]byte, *Diagnostics, err
 		cfg = &extconfig.Config{EnableRuleGenerator: true}
 	}
 
-	result, err := generator.GenerateClash(ctx, nodes, cfg, f, req.Gen)
+	gen := req.Gen
+	gen.RemoveEmoji, gen.AddEmoji = resolveEmoji(cfg, req)
+	if gen.AddEmoji {
+		if len(cfg.EmojiRules) > 0 {
+			gen.EmojiRules = emoji.ParseRules(cfg.EmojiRules)
+		} else {
+			gen.EmojiRules = emoji.Default()
+		}
+	}
+
+	result, err := generator.GenerateClash(ctx, nodes, cfg, f, gen)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -74,6 +92,31 @@ func Run(ctx context.Context, f Fetcher, req Request) ([]byte, *Diagnostics, err
 		EmptyGroups:  result.EmptyGroups,
 		SkippedRules: result.SkippedRules,
 	}, nil
+}
+
+// resolveEmoji decides remove/add emoji flags using subconverter's precedence:
+// global default (both true) < external config < URL add_emoji/remove_emoji <
+// the `emoji` shortcut (which sets add_emoji and forces remove_emoji=true).
+func resolveEmoji(cfg *extconfig.Config, req Request) (remove, add bool) {
+	add, remove = true, true // subconverter global defaults
+
+	if cfg.AddEmoji != nil {
+		add = *cfg.AddEmoji
+	}
+	if cfg.RemoveOldEmoji != nil {
+		remove = *cfg.RemoveOldEmoji
+	}
+	if req.AddEmoji != nil {
+		add = *req.AddEmoji
+	}
+	if req.RemoveEmoji != nil {
+		remove = *req.RemoveEmoji
+	}
+	if req.Emoji != nil {
+		add = *req.Emoji
+		remove = true
+	}
+	return remove, add
 }
 
 // fetchAndParseAll fetches every subscription concurrently and concatenates the

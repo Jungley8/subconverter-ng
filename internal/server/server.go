@@ -72,9 +72,11 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 			UDP:            boolParam(q.Get("udp"), false),
 			TFO:            boolParam(q.Get("tfo"), false),
 			SkipCertVerify: boolParam(q.Get("scv"), false),
-			// Emoji are allowed by default; emoji=false strips them from names.
-			StripEmoji: !boolParam(q.Get("emoji"), true),
 		},
+		// Emoji tribools (nil when the param is absent) resolved in convert.
+		Emoji:       boolTri(q.Get("emoji")),
+		AddEmoji:    boolTri(q.Get("add_emoji")),
+		RemoveEmoji: boolTri(q.Get("remove_emoji")),
 	}
 
 	out, diag, err := convert.Run(r.Context(), client, req)
@@ -104,6 +106,20 @@ func splitURLs(raw string) []string {
 		}
 	}
 	return out
+}
+
+// boolTri parses an optional boolean query param into a tribool: nil when the
+// param is absent/unrecognised, else a pointer to the parsed value.
+func boolTri(v string) *bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "true", "1", "yes", "on":
+		b := true
+		return &b
+	case "false", "0", "no", "off":
+		b := false
+		return &b
+	}
+	return nil
 }
 
 func boolParam(v string, def bool) bool {

@@ -109,7 +109,9 @@ func cmdConvert(args []string) {
 	udp := fs.Bool("udp", false, "force udp on all nodes")
 	tfo := fs.Bool("tfo", false, "enable tcp-fast-open")
 	scv := fs.Bool("scv", false, "skip-cert-verify")
-	emoji := fs.Bool("emoji", true, "allow emoji in node names (--emoji=false strips them)")
+	emoji := fs.String("emoji", "", "emoji shortcut (true=normalize, false=strip); empty=default")
+	addEmoji := fs.String("add-emoji", "", "add flag emoji by rules (true/false); empty=default")
+	removeEmoji := fs.String("remove-emoji", "", "remove existing emoji (true/false); empty=default")
 	timeout := fs.Duration("timeout", 30*time.Second, "per-fetch timeout")
 	fs.Parse(args)
 
@@ -133,8 +135,10 @@ func cmdConvert(args []string) {
 		ConfigURL: *cfgURL,
 		Gen: generator.Options{
 			Sort: *sortNodes, UDP: *udp, TFO: *tfo, SkipCertVerify: *scv,
-			StripEmoji: !*emoji,
 		},
+		Emoji:       triFromString(*emoji),
+		AddEmoji:    triFromString(*addEmoji),
+		RemoveEmoji: triFromString(*removeEmoji),
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
@@ -157,6 +161,19 @@ func cmdConvert(args []string) {
 		fatal("write %s: %v", *out, err)
 	}
 	fmt.Fprintf(os.Stderr, "wrote %s\n", *out)
+}
+
+// triFromString parses an optional bool flag into a tribool (nil when empty).
+func triFromString(v string) *bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "true", "1", "yes", "on":
+		b := true
+		return &b
+	case "false", "0", "no", "off":
+		b := false
+		return &b
+	}
+	return nil
 }
 
 func splitPipe(raw string) []string {

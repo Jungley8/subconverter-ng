@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Jungley8/subconverter-ng/internal/emoji"
 	"github.com/Jungley8/subconverter-ng/internal/extconfig"
 	"github.com/Jungley8/subconverter-ng/internal/proxy"
 	"gopkg.in/yaml.v3"
@@ -48,29 +49,27 @@ func TestUnescapeUnicode(t *testing.T) {
 	}
 }
 
-func TestStripEmoji(t *testing.T) {
-	cases := []struct{ in, want string }{
-		{"🇭🇰 香港01", "香港01"},
-		{"🇺🇲 US-Test", "US-Test"},
-		{"⭐ 高级 节点 🚀", "高级 节点"},
-		{"无emoji节点", "无emoji节点"},
-		{"🇯🇵日本", "日本"},
-	}
-	for _, c := range cases {
-		if got := stripEmoji(c.in); got != c.want {
-			t.Errorf("stripEmoji(%q) = %q, want %q", c.in, got, c.want)
-		}
-	}
-}
-
-func TestApplyNodeOptions_StripEmoji(t *testing.T) {
+func TestApplyNodeOptions_RemoveEmoji(t *testing.T) {
 	nodes := mkNodes() // names: "🇭🇰 HK", "🇺🇲 US"
-	applyNodeOptions(nodes, Options{StripEmoji: true})
+	applyNodeOptions(nodes, Options{RemoveEmoji: true})
 	if nodes[0].Name != "HK" || nodes[0].Clash["name"] != "HK" {
 		t.Errorf("node[0] not stripped/synced: name=%q clash=%v", nodes[0].Name, nodes[0].Clash["name"])
 	}
 	if nodes[1].Name != "US" {
 		t.Errorf("node[1] = %q, want US", nodes[1].Name)
+	}
+}
+
+func TestApplyNodeOptions_RemoveThenAddEmoji(t *testing.T) {
+	rules := emoji.ParseRules([]string{`(?i:HK|香港|港),🇭🇰`, `(?i:US|美国),🇺🇸`})
+	nodes := mkNodes() // "🇭🇰 HK", "🇺🇲 US" (note US carries the wrong 🇺🇲 flag)
+	applyNodeOptions(nodes, Options{RemoveEmoji: true, AddEmoji: true, EmojiRules: rules})
+	if nodes[0].Name != "🇭🇰 HK" {
+		t.Errorf("node[0] = %q, want '🇭🇰 HK'", nodes[0].Name)
+	}
+	// US started with 🇺🇲; remove+add normalizes it to 🇺🇸.
+	if nodes[1].Name != "🇺🇸 US" {
+		t.Errorf("node[1] = %q, want '🇺🇸 US'", nodes[1].Name)
 	}
 }
 
