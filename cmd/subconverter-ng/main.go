@@ -113,6 +113,7 @@ func cmdConvert(args []string) {
 	addEmoji := fs.String("add-emoji", "", "add flag emoji by rules (true/false); empty=default")
 	removeEmoji := fs.String("remove-emoji", "", "remove existing emoji (true/false); empty=default")
 	timeout := fs.Duration("timeout", 30*time.Second, "per-fetch timeout")
+	cacheTTL := fs.Duration("cache-ttl", 0, "TTL for the in-memory fetch cache (0=default 300s, negative=disabled)")
 	fs.Parse(args)
 
 	if *url == "" {
@@ -124,6 +125,7 @@ func cmdConvert(args []string) {
 		Proxy:           *proxy,
 		FlareSolverrURL: *flaresolverr,
 		Timeout:         *timeout,
+		CacheTTL:        *cacheTTL,
 	})
 	if err != nil {
 		fatal("fetch client: %v", err)

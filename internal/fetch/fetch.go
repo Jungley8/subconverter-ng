@@ -25,20 +25,35 @@ import (
 // Options configures a single Client. Zero values fall back to sensible
 // defaults in New.
 type Options struct {
-	UserAgent      string        // default: clash.meta UA
-	Proxy          string        // http(s):// or socks5:// upstream proxy URL
-	FlareSolverrURL string       // e.g. http://127.0.0.1:8191/v1 (empty disables)
-	Timeout        time.Duration // per-request timeout (default 30s)
-	MaxRetries     int           // network retry attempts (default 2)
+	UserAgent       string        // default: clash.meta UA
+	Proxy           string        // http(s):// or socks5:// upstream proxy URL
+	FlareSolverrURL string        // e.g. http://127.0.0.1:8191/v1 (empty disables)
+	Timeout         time.Duration // per-request timeout (default 30s)
+	MaxRetries      int           // network retry attempts (default 2)
+
+	// CacheTTL controls the in-memory TTL cache for successful GETs:
+	//   0  => use defaultCacheTTL (300s)
+	//   <0 => caching disabled
+	//   >0 => that TTL
+	CacheTTL time.Duration
+
+	// Cache, when non-nil, is a shared cache injected by the caller (e.g. the
+	// HTTP server reuses one cache across per-request Clients). When nil, New
+	// creates a per-Client cache (unless caching is disabled).
+	Cache *Cache
 }
 
 // Client fetches URLs applying the configured access strategy.
 type Client struct {
-	opts Options
-	http *http.Client
+	opts  Options
+	http  *http.Client
+	cache *Cache // nil when caching is disabled
 }
 
 const defaultUA = "clash.meta/1.18.0 mihomo/1.18.0"
+
+// defaultCacheTTL is applied when Options.CacheTTL is zero.
+const defaultCacheTTL = 300 * time.Second
 
 // New builds a Client. proxyOverride, when non-empty, replaces opts.Proxy
 // (used for per-request &proxy= overrides).
@@ -72,37 +87,87 @@ func New(opts Options) (*Client, error) {
 		tr.Proxy = http.ProxyFromEnvironment
 	}
 	jar, _ := cookiejar.New(nil)
-	return &Client{
+	c := &Client{
 		opts: opts,
 		http: &http.Client{Transport: tr, Timeout: opts.Timeout, Jar: jar},
-	}, nil
+	}
+	// Wire up caching unless explicitly disabled (CacheTTL < 0).
+	if opts.CacheTTL >= 0 {
+		ttl := opts.CacheTTL
+		if ttl == 0 {
+			ttl = defaultCacheTTL
+		}
+		if opts.Cache != nil {
+			c.cache = opts.Cache
+		} else {
+			c.cache = NewCache(ttl)
+		}
+		c.cache.ttl = ttl
+	}
+	return c, nil
 }
 
 // Get retrieves target, transparently solving a Cloudflare challenge if one is
-// detected and a FlareSolverr endpoint is configured.
+// detected and a FlareSolverr endpoint is configured. It honours the TTL cache.
 func (c *Client) Get(ctx context.Context, target string) ([]byte, error) {
-	body, status, err := c.do(ctx, target, nil)
+	body, _, err := c.GetWithMeta(ctx, target)
+	return body, err
+}
+
+// GetWithMeta is like Get but also returns the response headers of the final
+// (origin or FlareSolverr-replay) response. Callers use this to capture
+// airport metadata such as the Subscription-Userinfo header.
+//
+// Caching: successful (200, non-empty) responses are cached by URL. Cached
+// entries also retain their headers so repeated reads see Subscription-Userinfo.
+// Pass a context value (see NoCache) is not used here; cache bypass is decided
+// by the caller wiring a Client with caching disabled or by clearing the cache.
+func (c *Client) GetWithMeta(ctx context.Context, target string) ([]byte, http.Header, error) {
+	if c.cache != nil {
+		if body, hdr, ok := c.cache.get(target); ok {
+			return body, hdr, nil
+		}
+	}
+
+	body, hdr, status, err := c.do(ctx, target, nil)
 	if err == nil && !isCloudflareChallenge(status, body) {
-		return body, nil
+		c.maybeCache(target, status, body, hdr)
+		return body, hdr, nil
 	}
 	if err != nil && c.opts.FlareSolverrURL == "" {
-		return nil, err
+		return nil, nil, err
 	}
 	if c.opts.FlareSolverrURL == "" {
-		return nil, fmt.Errorf("fetch %s: blocked by Cloudflare and no FlareSolverr configured (set fetch.flaresolverr_url; see docs/cloudflare.md)", target)
+		return nil, nil, fmt.Errorf("fetch %s: blocked by Cloudflare and no FlareSolverr configured (set fetch.flaresolverr_url; see docs/cloudflare.md)", target)
 	}
 
 	// Solve the challenge: obtain cf_clearance cookies + the UA FlareSolverr
 	// used, then replay the request ourselves through the same egress.
 	cookies, ua, ferr := c.solveCloudflare(ctx, target)
 	if ferr != nil {
-		return nil, fmt.Errorf("fetch %s: cloudflare solve failed: %w", target, ferr)
+		return nil, nil, fmt.Errorf("fetch %s: cloudflare solve failed: %w", target, ferr)
 	}
-	body, _, err = c.do(ctx, target, &replay{cookies: cookies, userAgent: ua})
+	body, hdr, status, err = c.do(ctx, target, &replay{cookies: cookies, userAgent: ua})
 	if err != nil {
-		return nil, fmt.Errorf("fetch %s: replay after solve failed: %w", target, err)
+		return nil, nil, fmt.Errorf("fetch %s: replay after solve failed: %w", target, err)
 	}
-	return body, nil
+	c.maybeCache(target, status, body, hdr)
+	return body, hdr, nil
+}
+
+// maybeCache stores successful (200, non-empty) responses if caching is on.
+func (c *Client) maybeCache(target string, status int, body []byte, hdr http.Header) {
+	if c.cache == nil || status != http.StatusOK || len(body) == 0 {
+		return
+	}
+	c.cache.set(target, body, hdr)
+}
+
+// FlushCache clears all cached entries. Safe to call when caching is disabled.
+func (c *Client) FlushCache() {
+	if c.cache != nil {
+		c.cache.Flush()
+	}
 }
 
 type replay struct {
@@ -110,12 +175,12 @@ type replay struct {
 	userAgent string
 }
 
-func (c *Client) do(ctx context.Context, target string, r *replay) ([]byte, int, error) {
+func (c *Client) do(ctx context.Context, target string, r *replay) ([]byte, http.Header, int, error) {
 	var lastErr error
 	for attempt := 0; attempt <= c.opts.MaxRetries; attempt++ {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 		if err != nil {
-			return nil, 0, err
+			return nil, nil, 0, err
 		}
 		ua := c.opts.UserAgent
 		if r != nil {
@@ -140,9 +205,9 @@ func (c *Client) do(ctx context.Context, target string, r *replay) ([]byte, int,
 			lastErr = rerr
 			continue
 		}
-		return body, resp.StatusCode, nil
+		return body, resp.Header, resp.StatusCode, nil
 	}
-	return nil, 0, lastErr
+	return nil, nil, 0, lastErr
 }
 
 // isCloudflareChallenge detects the JS interstitial / managed-challenge page.

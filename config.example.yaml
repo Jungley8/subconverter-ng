@@ -2,7 +2,7 @@
 # Per-request behaviour is driven by URL parameters; this file only sets the
 # server defaults. Environment variables override these:
 #   SUBNG_LISTEN, SUBNG_PROXY, SUBNG_FLARESOLVERR_URL, SUBNG_USER_AGENT,
-#   SUBNG_RATELIMIT_ENABLED, SUBNG_RATELIMIT_RPM, SUBNG_RATELIMIT_BURST
+#   SUBNG_CACHE_TTL, SUBNG_RATELIMIT_ENABLED, SUBNG_RATELIMIT_RPM, SUBNG_RATELIMIT_BURST
 
 listen: ":25500"
 
@@ -21,6 +21,14 @@ fetch:
 
   # Per-fetch timeout.
   timeout: 30s
+
+  # In-memory TTL cache for successful remote GETs (subscriptions + rulesets),
+  # keyed by URL. Avoids re-hitting GitHub on every /sub request (~25 ruleset
+  # fetches each) and the rate limits that come with it. Default 300s when
+  # unset/zero. Set to a negative duration (e.g. -1s) to disable caching.
+  # Per request: &nocache=1 bypasses the cache; &flushcache=1 or GET /flushcache
+  # clears it entirely.
+  cache_ttl: 300s
 
 # Per-client-IP rate limiting for the /sub endpoint. Each /sub request fans out
 # into many upstream fetches, so this protects the instance from abuse. Only

@@ -17,6 +17,11 @@ type Fetch struct {
 	Proxy           string        `yaml:"proxy"`            // default upstream proxy for all fetches
 	FlareSolverrURL string        `yaml:"flaresolverr_url"` // e.g. http://127.0.0.1:8191/v1
 	Timeout         time.Duration `yaml:"timeout"`
+
+	// CacheTTL is the in-memory TTL cache lifetime for successful remote GETs
+	// (subscriptions + rulesets), keyed by URL. Default 300s when zero. Set to a
+	// negative value to disable caching.
+	CacheTTL time.Duration `yaml:"cache_ttl"`
 }
 
 // RateLimit configures per-client-IP rate limiting on the expensive /sub
@@ -86,6 +91,11 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("SUBNG_USER_AGENT"); v != "" {
 		cfg.Fetch.UserAgent = v
+	}
+	if v := os.Getenv("SUBNG_CACHE_TTL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			cfg.Fetch.CacheTTL = d
+		}
 	}
 	if v := os.Getenv("SUBNG_RATELIMIT_ENABLED"); v != "" {
 		if b, err := parseBool(v); err == nil {

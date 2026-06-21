@@ -21,10 +21,20 @@ import (
 
 // Server wires the HTTP handlers to the application config.
 type Server struct {
-	cfg *config.Config
+	cfg   *config.Config
+	cache *fetch.Cache // shared across requests so the TTL cache survives; nil when caching disabled
 }
 
-func New(cfg *config.Config) *Server { return &Server{cfg: cfg} }
+func New(cfg *config.Config) *Server {
+	s := &Server{cfg: cfg}
+	// A shared cache lives on the Server so repeated /sub requests reuse cached
+	// ruleset/subscription fetches. CacheTTL < 0 disables caching entirely.
+	if cfg.Fetch.CacheTTL >= 0 {
+		ttl := cfg.Fetch.CacheTTL // 0 => NewCache applies the default
+		s.cache = fetch.NewCache(ttl)
+	}
+	return s
+}
 
 // Handler returns the root mux. Rate limiting is applied only to /sub, the
 // expensive endpoint that triggers upstream fetches; /version and the web UI
@@ -32,6 +42,7 @@ func New(cfg *config.Config) *Server { return &Server{cfg: cfg} }
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/sub", s.rateLimit(http.HandlerFunc(s.handleSub)))
+	mux.HandleFunc("/flushcache", s.handleFlushCache)
 	mux.HandleFunc("/version", s.handleVersion)
 	mux.Handle("/", web.Handler())
 	return logging(mux)
@@ -81,6 +92,15 @@ func clientIP(r *http.Request) string {
 	return r.RemoteAddr
 }
 
+// handleFlushCache clears the shared fetch cache.
+func (s *Server) handleFlushCache(w http.ResponseWriter, r *http.Request) {
+	if s.cache != nil {
+		s.cache.Flush()
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Write([]byte("cache flushed\n"))
+}
+
 func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Write([]byte("subconverter-ng (MVP)\n"))
@@ -99,14 +119,33 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// &flushcache=1 clears the whole shared cache before serving this request.
+	if boolParam(q.Get("flushcache"), false) && s.cache != nil {
+		s.cache.Flush()
+	}
+
+	// &nocache=1 bypasses the cache for this request only. We do that by giving
+	// this per-request client a disabled cache (CacheTTL < 0) instead of the
+	// shared one.
+	noCache := boolParam(q.Get("nocache"), false)
+
 	// Build a fetch client, allowing a per-request &proxy= override of the
-	// configured upstream proxy.
-	client, err := fetch.New(fetch.Options{
+	// configured upstream proxy. The shared cache is injected so cached
+	// ruleset/subscription fetches persist across requests (keyed by URL only;
+	// per-request proxy differences are intentionally ignored).
+	opts := fetch.Options{
 		UserAgent:       s.cfg.Fetch.UserAgent,
 		Proxy:           firstNonEmpty(q.Get("proxy"), s.cfg.Fetch.Proxy),
 		FlareSolverrURL: s.cfg.Fetch.FlareSolverrURL,
 		Timeout:         s.cfg.Fetch.Timeout,
-	})
+	}
+	if noCache || s.cache == nil {
+		opts.CacheTTL = -1 // disable caching for this request
+	} else {
+		opts.Cache = s.cache
+		opts.CacheTTL = s.cfg.Fetch.CacheTTL
+	}
+	client, err := fetch.New(opts)
 	if err != nil {
 		http.Error(w, "fetch client: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -126,6 +165,7 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 		Emoji:       boolTri(q.Get("emoji")),
 		AddEmoji:    boolTri(q.Get("add_emoji")),
 		RemoveEmoji: boolTri(q.Get("remove_emoji")),
+		NoCache:     noCache,
 	}
 
 	out, diag, err := convert.Run(r.Context(), client, req)
@@ -143,6 +183,11 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 	// Clash clients expect YAML; this content type matches subconverter.
 	w.Header().Set("Content-Type", "text/yaml; charset=utf-8")
 	w.Header().Set("Profile-Update-Interval", "24")
+	// Pass through the airport's traffic/expiry metadata so Clash clients can
+	// display it.
+	if diag.SubscriptionUserinfo != "" {
+		w.Header().Set("Subscription-Userinfo", diag.SubscriptionUserinfo)
+	}
 	w.Write(out)
 }
 

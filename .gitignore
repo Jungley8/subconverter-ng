@@ -5,3 +5,6 @@
 *.log
 .env
 dist/
+
+# agent worktrees
+.claude/
