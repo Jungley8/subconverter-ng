@@ -5,7 +5,9 @@ package server
 
 import (
 	"log"
+	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -13,6 +15,7 @@ import (
 	"github.com/Jungley8/subconverter-ng/internal/convert"
 	"github.com/Jungley8/subconverter-ng/internal/fetch"
 	"github.com/Jungley8/subconverter-ng/internal/generator"
+	"github.com/Jungley8/subconverter-ng/internal/ratelimit"
 	"github.com/Jungley8/subconverter-ng/internal/web"
 )
 
@@ -23,13 +26,59 @@ type Server struct {
 
 func New(cfg *config.Config) *Server { return &Server{cfg: cfg} }
 
-// Handler returns the root mux.
+// Handler returns the root mux. Rate limiting is applied only to /sub, the
+// expensive endpoint that triggers upstream fetches; /version and the web UI
+// are left unthrottled.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/sub", s.handleSub)
+	mux.Handle("/sub", s.rateLimit(http.HandlerFunc(s.handleSub)))
 	mux.HandleFunc("/version", s.handleVersion)
 	mux.Handle("/", web.Handler())
 	return logging(mux)
+}
+
+// rateLimit wraps next with per-client-IP token-bucket rate limiting. When the
+// limiter is disabled in config it returns next unchanged (no-op pass-through).
+func (s *Server) rateLimit(next http.Handler) http.Handler {
+	rl := s.cfg.RateLimit
+	if !rl.Enabled {
+		return next
+	}
+	limiter := ratelimit.New(rl.RequestsPerMinute, rl.Burst)
+	// Retry-After advertises the worst-case wait for one token to refill.
+	retryAfter := "1"
+	if rl.RequestsPerMinute > 0 {
+		if secs := 60 / rl.RequestsPerMinute; secs > 1 {
+			retryAfter = strconv.Itoa(secs)
+		}
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !limiter.Allow(clientIP(r)) {
+			w.Header().Set("Retry-After", retryAfter)
+			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// clientIP derives the originating client IP, honouring reverse-proxy headers
+// (the service runs behind Cloudflare / nginx). X-Forwarded-For's first hop
+// wins, then X-Real-IP, falling back to the connection's RemoteAddr host.
+func clientIP(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		first := strings.TrimSpace(strings.SplitN(xff, ",", 2)[0])
+		if first != "" {
+			return first
+		}
+	}
+	if xrip := strings.TrimSpace(r.Header.Get("X-Real-IP")); xrip != "" {
+		return xrip
+	}
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return host
+	}
+	return r.RemoteAddr
 }
 
 func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {

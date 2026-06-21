@@ -5,21 +5,32 @@ package config
 
 import (
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
 )
 
 type Fetch struct {
-	UserAgent      string        `yaml:"user_agent"`
-	Proxy          string        `yaml:"proxy"`           // default upstream proxy for all fetches
-	FlareSolverrURL string       `yaml:"flaresolverr_url"` // e.g. http://127.0.0.1:8191/v1
-	Timeout        time.Duration `yaml:"timeout"`
+	UserAgent       string        `yaml:"user_agent"`
+	Proxy           string        `yaml:"proxy"`            // default upstream proxy for all fetches
+	FlareSolverrURL string        `yaml:"flaresolverr_url"` // e.g. http://127.0.0.1:8191/v1
+	Timeout         time.Duration `yaml:"timeout"`
+}
+
+// RateLimit configures per-client-IP rate limiting on the expensive /sub
+// endpoint. When Enabled is false the limiter is a no-op pass-through.
+type RateLimit struct {
+	Enabled           bool `yaml:"enabled"`
+	RequestsPerMinute int  `yaml:"requests_per_minute"`
+	Burst             int  `yaml:"burst"`
 }
 
 type Config struct {
-	Listen string `yaml:"listen"`
-	Fetch  Fetch  `yaml:"fetch"`
+	Listen    string    `yaml:"listen"`
+	Fetch     Fetch     `yaml:"fetch"`
+	RateLimit RateLimit `yaml:"ratelimit"`
 }
 
 // Default returns a config with sane defaults applied.
@@ -27,6 +38,11 @@ func Default() *Config {
 	return &Config{
 		Listen: ":25500",
 		Fetch:  Fetch{Timeout: 30 * time.Second},
+		RateLimit: RateLimit{
+			Enabled:           true,
+			RequestsPerMinute: 30,
+			Burst:             10,
+		},
 	}
 }
 
@@ -47,6 +63,14 @@ func Load(path string) (*Config, error) {
 	if cfg.Fetch.Timeout == 0 {
 		cfg.Fetch.Timeout = 30 * time.Second
 	}
+	// Backfill rate-limit defaults for values left unset (e.g. a config file
+	// that toggles `enabled` but omits the numeric fields).
+	if cfg.RateLimit.RequestsPerMinute == 0 {
+		cfg.RateLimit.RequestsPerMinute = 30
+	}
+	if cfg.RateLimit.Burst == 0 {
+		cfg.RateLimit.Burst = 10
+	}
 	return cfg, nil
 }
 
@@ -63,4 +87,31 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("SUBNG_USER_AGENT"); v != "" {
 		cfg.Fetch.UserAgent = v
 	}
+	if v := os.Getenv("SUBNG_RATELIMIT_ENABLED"); v != "" {
+		if b, err := parseBool(v); err == nil {
+			cfg.RateLimit.Enabled = b
+		}
+	}
+	if v := os.Getenv("SUBNG_RATELIMIT_RPM"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.RateLimit.RequestsPerMinute = n
+		}
+	}
+	if v := os.Getenv("SUBNG_RATELIMIT_BURST"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.RateLimit.Burst = n
+		}
+	}
+}
+
+// parseBool accepts the common truthy/falsey spellings in addition to those
+// understood by strconv.ParseBool.
+func parseBool(v string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "true", "1", "yes", "on":
+		return true, nil
+	case "false", "0", "no", "off":
+		return false, nil
+	}
+	return strconv.ParseBool(v)
 }
