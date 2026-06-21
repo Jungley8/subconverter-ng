@@ -51,6 +51,12 @@ subconverter-ng convert \
 | `--flaresolverr` | FlareSolverr 端点（过 CF 盾） |
 | `--ua` | 自定义 User-Agent |
 | `--sort` `--udp` `--tfo` `--scv` | 节点处理开关 |
+| `--dedup` | 去除重复节点 |
+| `--fdn` | 过滤 Clash.Meta 不支持的节点 |
+| `--list` | 仅输出节点列表 |
+| `--append-type` | 节点名前加 `[类型]` |
+| `--expand` | `=false` 时输出 rule-providers |
+| `--emoji` `--add-emoji` `--remove-emoji` | emoji 增删 |
 
 ## 外部配置（config）
 

@@ -44,6 +44,23 @@ type Options struct {
 	// subconverter's expand=false. The default (false) keeps the inline path
 	// (expand=true). Inline rules ([]GEOIP,CN, []FINAL) stay direct rules.
 	UseRuleProviders bool
+
+	// Dedup drops duplicate nodes — entries identical in every connection field
+	// (type/server/port/credentials/transport), ignoring the name. First wins.
+	// Maps to &dedup=true.
+	Dedup bool
+
+	// FilterDeprecated drops nodes Clash.Meta cannot use (e.g. Shadowsocks with
+	// a retired cipher), preventing an unloadable config. Maps to &fdn=true.
+	FilterDeprecated bool
+
+	// AppendType prepends "[TYPE] " to each node name. Maps to &append_type=true.
+	// Applied before emoji/rename so the rest of the pipeline sees the new name.
+	AppendType bool
+
+	// ListOnly emits only the proxies list (the `proxies:` document) with no
+	// groups or rules. Maps to &list=true.
+	ListOnly bool
 }
 
 // RenameRule is a compiled rename= entry: a regex pattern and its replacement.
@@ -108,26 +125,52 @@ type clashOut struct {
 
 // Result is the rendered config plus diagnostics worth surfacing to the user.
 type Result struct {
-	YAML         []byte
-	NodeCount    int
-	EmptyGroups  []string // groups that matched no nodes (filled with DIRECT)
-	SkippedRules []string // source rules dropped for an unsupported rule type
+	YAML              []byte
+	NodeCount         int
+	EmptyGroups       []string // groups that matched no nodes (filled with DIRECT)
+	SkippedRules      []string // source rules dropped for an unsupported rule type
+	Duplicates        int      // nodes removed by dedup
+	DeprecatedDropped int      // nodes removed by filter-deprecated (fdn)
 }
 
 // GenerateClash builds a Clash.Meta config.
 func GenerateClash(ctx context.Context, nodes []*proxy.Proxy, cfg *extconfig.Config, f Fetcher, opts Options) (*Result, error) {
 	nodes = filterNodes(nodes, cfg)
+
+	res := &Result{}
+	if opts.FilterDeprecated {
+		var dropped int
+		nodes, dropped = filterDeprecated(nodes)
+		res.DeprecatedDropped = dropped
+	}
+	if opts.Dedup {
+		var removed int
+		nodes, removed = dedup(nodes)
+		res.Duplicates = removed
+	}
 	if opts.Sort {
 		sort.SliceStable(nodes, func(i, j int) bool { return nodes[i].Name < nodes[j].Name })
 	}
 	applyNodeOptions(nodes, opts)
 
-	res := &Result{NodeCount: len(nodes)}
+	res.NodeCount = len(nodes)
 	proxies := make([]map[string]any, 0, len(nodes))
 	names := make([]string, 0, len(nodes))
 	for _, n := range nodes {
 		proxies = append(proxies, n.Clash)
 		names = append(names, n.Name)
+	}
+
+	// list=true: emit only the proxies list, no groups/rules.
+	if opts.ListOnly {
+		y, err := yaml.Marshal(struct {
+			Proxies []map[string]any `yaml:"proxies"`
+		}{Proxies: proxies})
+		if err != nil {
+			return nil, err
+		}
+		res.YAML = unescapeUnicode(y)
+		return res, nil
 	}
 
 	groups := buildGroups(cfg.ProxyGroups, nodes, names, res)
@@ -242,6 +285,72 @@ func filterNodes(nodes []*proxy.Proxy, cfg *extconfig.Config) []*proxy.Proxy {
 	return out
 }
 
+// dedup removes nodes that are identical in every connection field, ignoring
+// the display name. The first occurrence of each distinct node is kept, so
+// order is preserved. The signature is the node's Clash map (minus "name")
+// marshalled to YAML, which yaml.v3 emits with deterministically sorted keys.
+func dedup(nodes []*proxy.Proxy) (out []*proxy.Proxy, removed int) {
+	seen := make(map[string]bool, len(nodes))
+	out = make([]*proxy.Proxy, 0, len(nodes))
+	for _, n := range nodes {
+		sig := nodeSignature(n)
+		if seen[sig] {
+			removed++
+			continue
+		}
+		seen[sig] = true
+		out = append(out, n)
+	}
+	return out, removed
+}
+
+func nodeSignature(n *proxy.Proxy) string {
+	clone := make(map[string]any, len(n.Clash))
+	for k, v := range n.Clash {
+		if k == "name" {
+			continue
+		}
+		clone[k] = v
+	}
+	b, err := yaml.Marshal(clone)
+	if err != nil {
+		// Fall back to a coarse signature; collisions only cost a missed dedup.
+		return n.Type + "|" + n.Server + "|" + strconv.Itoa(n.Port)
+	}
+	return string(b)
+}
+
+// supportedSSCiphers is the set of Shadowsocks ciphers Clash.Meta accepts. SS
+// nodes using anything else make mihomo reject the whole config, so fdn drops
+// them.
+var supportedSSCiphers = map[string]bool{
+	"aes-128-gcm": true, "aes-192-gcm": true, "aes-256-gcm": true,
+	"aes-128-cfb": true, "aes-192-cfb": true, "aes-256-cfb": true,
+	"aes-128-ctr": true, "aes-192-ctr": true, "aes-256-ctr": true,
+	"rc4-md5": true, "chacha20-ietf": true, "xchacha20": true,
+	"chacha20-ietf-poly1305": true, "xchacha20-ietf-poly1305": true,
+	"2022-blake3-aes-128-gcm": true, "2022-blake3-aes-256-gcm": true,
+	"2022-blake3-chacha20-poly1305": true, "none": true,
+}
+
+// filterDeprecated drops nodes Clash.Meta cannot load. Currently this is
+// Shadowsocks nodes with a cipher outside supportedSSCiphers; other protocols
+// are passed through (the parser only emits types mihomo understands).
+func filterDeprecated(nodes []*proxy.Proxy) (out []*proxy.Proxy, dropped int) {
+	out = make([]*proxy.Proxy, 0, len(nodes))
+	for _, n := range nodes {
+		if n.Type == "ss" {
+			cipher, _ := n.Clash["cipher"].(string)
+			if cipher != "" && !supportedSSCiphers[strings.ToLower(cipher)] {
+				dropped++
+				continue
+			}
+		}
+		out = append(out, n)
+	}
+	return out, dropped
+}
+
 func matchesAny(res []*regexp.Regexp, s string) bool {
 	for _, re := range res {
 		if re.MatchString(s) {
@@ -256,6 +365,9 @@ func matchesAny(res []*regexp.Regexp, s string) bool {
 // before group/rule assembly — so proxy-group member lists stay in sync.
 func applyNodeOptions(nodes []*proxy.Proxy, opts Options) {
 	for _, n := range nodes {
+		if opts.AppendType && n.Type != "" {
+			n.Rename("[" + strings.ToUpper(n.Type) + "] " + n.Name)
+		}
 		if opts.RemoveEmoji {
 			n.Rename(emoji.Remove(n.Name))
 		}

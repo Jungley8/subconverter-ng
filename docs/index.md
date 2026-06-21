@@ -14,16 +14,23 @@
 - **对准 Clash.Meta / mihomo** —— 新协议第一时间可用
 - **访问层是一等公民** —— 内置上游代理、自定义 User-Agent、自动绕过 Cloudflare 5 秒盾
 
-## 支持的协议（MVP）
+## 支持的协议
 
 | 协议 | 链接前缀 | 状态 |
 |---|---|---|
 | Shadowsocks | `ss://` | :material-check: |
+| ShadowsocksR | `ssr://` | :material-check: |
 | VMess | `vmess://` | :material-check: |
 | VLESS（含 Reality / XTLS-Vision） | `vless://` | :material-check: |
 | Trojan | `trojan://` | :material-check: |
+| Hysteria v1 | `hysteria://` `hy://` | :material-check: |
 | Hysteria2 | `hysteria2://` `hy2://` | :material-check: |
 | TUIC v5 | `tuic://` | :material-check: |
+| AnyTLS | `anytls://` | :material-check: |
+| SOCKS5 | `socks://` `socks5://` | :material-check: |
+| WireGuard | `wireguard://` `wg://` | :material-check: |
+
+> 订阅本身就是 Clash/Clash.Meta YAML 时，会直接提取其中的 `proxies`（任意类型，包括 WireGuard）。
 
 ## 30 秒上手
 

@@ -33,6 +33,8 @@ var registry = map[string]lineParser{
 	"socks://":     parseSOCKS,
 	"socks5://":    parseSOCKS,
 	"anytls://":    parseAnyTLS,
+	"wireguard://": parseWireGuard,
+	"wg://":        parseWireGuard,
 }
 
 // Parse decodes a subscription payload into proxy nodes. Unparseable or

@@ -13,6 +13,12 @@
 | `udp` | 强制所有节点开启 UDP | :material-check: |
 | `tfo` | TCP Fast Open | :material-check: |
 | `scv` | skip-cert-verify（跳过证书校验） | :material-check: |
+| `dedup` | 去除重复节点：连接字段（类型/地址/端口/凭据/传输）完全相同的节点只保留第一个 | :material-check: |
+| `fdn` | 过滤 Clash.Meta 不支持的节点（如使用已废弃加密的 Shadowsocks），避免配置加载失败 | :material-check: |
+| `list` | 仅输出节点列表（`proxies:`），不含分组与规则 | :material-check: |
+| `append_type` | 节点名前加 `[类型]`（如 `[SS] 香港 01`） | :material-check: |
+| `filename` | 设置下载文件名（`Content-Disposition`） | :material-check: |
+| `interval` | 客户端订阅自动更新间隔（小时，默认 24） | :material-check: |
 | `emoji` | subconverter 快捷开关：`true`=去旧 emoji 后按规则统一加旗；`false`=去除 emoji 不再加（给不支持 emoji 的客户端）。等价于同时设 `add_emoji=<值>` 且 `remove_emoji=true` | :material-check: |
 | `add_emoji` | 是否按规则给节点名前加国旗 emoji（默认 `true`） | :material-check: |
 | `remove_emoji` | 是否先移除节点名中已有的 emoji（默认 `true`） | :material-check: |
@@ -33,16 +39,14 @@
     优先级：`emoji` 快捷参数 > `add_emoji`/`remove_emoji` > 外部配置 > 默认（均为 `true`）。
     想**完全保留原始名字**：`add_emoji=false&remove_emoji=false`。
 
-## 暂未实现的参数
+## 兼容性接收但当前无效果
 
-以下参数会被识别但走默认值，不影响主流程，后续版本逐步补全：
+以下参数会被识别（不会报错），但当前版本无实际效果：
 
 | 参数 | 说明 |
 |---|---|
-| `new_name` | 新版节点命名 |
-| `list` | 仅输出节点列表 |
-| `fdn` | filter deprecated nodes |
-| `insert` | 插入节点 |
+| `insert` | subconverter 用于插入 `insert_url` 配置的额外节点；本项目尚未实现 `insert_url`，故无效果 |
+| `new_name` | subconverter 的旧/新命名开关；本项目默认即为新式命名，无需切换 |
 
 !!! note "布尔参数取值"
     `true / 1 / yes / on` 为真，`false / 0 / no / off` 为假，其余按默认值处理。

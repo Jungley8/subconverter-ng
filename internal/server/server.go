@@ -163,6 +163,10 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 			// expand=true (default) inlines every rule; expand=false emits
 			// rule-providers instead.
 			UseRuleProviders: !boolParam(q.Get("expand"), true),
+			Dedup:            boolParam(q.Get("dedup"), false),
+			FilterDeprecated: boolParam(q.Get("fdn"), false),
+			AppendType:       boolParam(q.Get("append_type"), false),
+			ListOnly:         boolParam(q.Get("list"), false),
 		},
 		// Emoji tribools (nil when the param is absent) resolved in convert.
 		Emoji:       boolTri(q.Get("emoji")),
@@ -171,21 +175,39 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 		NoCache:     noCache,
 	}
 
+	// `insert` and `new_name` are accepted for compatibility but have no effect:
+	// `insert` needs a configured insert_url feature we don't have yet, and our
+	// node naming is already the "new" style. They are ignored intentionally.
+
 	out, diag, err := convert.Run(r.Context(), client, req)
 	if err != nil {
 		log.Printf("convert error: %v", err)
 		http.Error(w, "conversion failed: "+err.Error(), http.StatusBadGateway)
 		return
 	}
-	log.Printf("converted: %d nodes, %d unparsed lines, empty groups: %v, %d rules dropped (unsupported type)",
-		diag.NodeCount, len(diag.SkippedLines), diag.EmptyGroups, len(diag.SkippedRules))
+	log.Printf("converted: %d nodes, %d unparsed lines, %d dup, %d deprecated, empty groups: %v, %d rules dropped (unsupported type)",
+		diag.NodeCount, len(diag.SkippedLines), diag.Duplicates, diag.Deprecated, diag.EmptyGroups, len(diag.SkippedRules))
 	if len(diag.SkippedRules) > 0 {
 		log.Printf("dropped rules (unsupported type): %v", diag.SkippedRules)
 	}
 
 	// Clash clients expect YAML; this content type matches subconverter.
 	w.Header().Set("Content-Type", "text/yaml; charset=utf-8")
-	w.Header().Set("Profile-Update-Interval", "24")
+
+	// &interval=<hours> overrides the client's profile auto-update interval.
+	updateInterval := "24"
+	if iv := q.Get("interval"); iv != "" {
+		if n, err := strconv.Atoi(strings.TrimSpace(iv)); err == nil && n > 0 {
+			updateInterval = strconv.Itoa(n)
+		}
+	}
+	w.Header().Set("Profile-Update-Interval", updateInterval)
+
+	// &filename=<name> sets the download filename clients save the profile as.
+	if fn := strings.TrimSpace(q.Get("filename")); fn != "" {
+		w.Header().Set("Content-Disposition", "attachment; filename=\""+sanitizeFilename(fn)+"\"")
+	}
+
 	// Pass through the airport's traffic/expiry metadata so Clash clients can
 	// display it.
 	if diag.SubscriptionUserinfo != "" {
@@ -227,6 +249,18 @@ func boolParam(v string, def bool) bool {
 		return false
 	}
 	return def
+}
+
+// sanitizeFilename strips characters that could break (or inject into) the
+// Content-Disposition header.
+func sanitizeFilename(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch r {
+		case '"', '\\', '\r', '\n', '/':
+			return -1
+		}
+		return r
+	}, s)
 }
 
 func firstNonEmpty(vals ...string) string {

@@ -113,6 +113,10 @@ func cmdConvert(args []string) {
 	addEmoji := fs.String("add-emoji", "", "add flag emoji by rules (true/false); empty=default")
 	removeEmoji := fs.String("remove-emoji", "", "remove existing emoji (true/false); empty=default")
 	expand := fs.Bool("expand", true, "inline rules (true) or emit rule-providers (false)")
+	dedup := fs.Bool("dedup", false, "remove duplicate nodes")
+	fdn := fs.Bool("fdn", false, "filter nodes Clash.Meta cannot use")
+	list := fs.Bool("list", false, "output only the node list (no groups/rules)")
+	appendType := fs.Bool("append-type", false, "prepend [TYPE] to node names")
 	timeout := fs.Duration("timeout", 30*time.Second, "per-fetch timeout")
 	cacheTTL := fs.Duration("cache-ttl", 0, "TTL for the in-memory fetch cache (0=default 300s, negative=disabled)")
 	fs.Parse(args)
@@ -139,6 +143,10 @@ func cmdConvert(args []string) {
 		Gen: generator.Options{
 			Sort: *sortNodes, UDP: *udp, TFO: *tfo, SkipCertVerify: *scv,
 			UseRuleProviders: !*expand,
+			Dedup:            *dedup,
+			FilterDeprecated: *fdn,
+			AppendType:       *appendType,
+			ListOnly:         *list,
 		},
 		Emoji:       triFromString(*emoji),
 		AddEmoji:    triFromString(*addEmoji),
@@ -151,8 +159,8 @@ func cmdConvert(args []string) {
 	if err != nil {
 		fatal("convert: %v", err)
 	}
-	fmt.Fprintf(os.Stderr, "ok: %d nodes, %d unparsed lines, %d empty groups, %d rules dropped (unsupported type)\n",
-		diag.NodeCount, len(diag.SkippedLines), len(diag.EmptyGroups), len(diag.SkippedRules))
+	fmt.Fprintf(os.Stderr, "ok: %d nodes, %d unparsed lines, %d dup, %d deprecated, %d empty groups, %d rules dropped (unsupported type)\n",
+		diag.NodeCount, len(diag.SkippedLines), diag.Duplicates, diag.Deprecated, len(diag.EmptyGroups), len(diag.SkippedRules))
 	for _, r := range diag.SkippedRules {
 		fmt.Fprintf(os.Stderr, "  dropped rule (unsupported type): %s\n", r)
 	}

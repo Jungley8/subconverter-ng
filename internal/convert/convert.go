@@ -64,6 +64,8 @@ type Diagnostics struct {
 	SkippedLines []string // subscription lines that did not parse into a node
 	EmptyGroups  []string // proxy-groups that matched no nodes (filled with DIRECT)
 	SkippedRules []string // ruleset entries dropped for an unsupported rule type
+	Duplicates   int      // nodes removed by dedup (&dedup=true)
+	Deprecated   int      // nodes removed by filter-deprecated (&fdn=true)
 
 	// SubscriptionUserinfo is the airport's Subscription-Userinfo response
 	// header from the FIRST subscription fetch (empty if absent). Clash clients
@@ -119,6 +121,8 @@ func Run(ctx context.Context, f Fetcher, req Request) ([]byte, *Diagnostics, err
 		SkippedLines:         skipped,
 		EmptyGroups:          result.EmptyGroups,
 		SkippedRules:         result.SkippedRules,
+		Duplicates:           result.Duplicates,
+		Deprecated:           result.DeprecatedDropped,
 		SubscriptionUserinfo: userinfo,
 	}, nil
 }
