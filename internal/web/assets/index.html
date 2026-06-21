@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>subconverter-ng · 订阅链接生成</title>
+<style>
+  :root {
+    --bg: #f4f5fb;
+    --bg-grad-a: #eef0fb;
+    --bg-grad-b: #f7f3fb;
+    --card: #ffffff;
+    --fg: #1c1d28;
+    --muted: #6b6e80;
+    --border: #e3e5ef;
+    --field: #fafbff;
+    --accent: #5b5bf0;
+    --accent-fg: #ffffff;
+    --accent-soft: #ecedff;
+    --ok: #16a36a;
+    --shadow: 0 18px 50px -22px rgba(40, 40, 90, .35);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0e0f17;
+      --bg-grad-a: #14131f;
+      --bg-grad-b: #0c1018;
+      --card: #181a25;
+      --fg: #e9eaf2;
+      --muted: #9396a8;
+      --border: #2a2d3c;
+      --field: #11131c;
+      --accent: #7d7dff;
+      --accent-fg: #0e0f17;
+      --accent-soft: #232544;
+      --ok: #3ad48f;
+      --shadow: 0 22px 60px -28px rgba(0, 0, 0, .8);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    min-height: 100vh;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+      "Hiragino Sans GB", "Microsoft YaHei", Roboto, Helvetica, Arial, sans-serif;
+    color: var(--fg);
+    background:
+      radial-gradient(1100px 600px at 85% -10%, var(--bg-grad-b), transparent 60%),
+      radial-gradient(900px 500px at -10% 0%, var(--bg-grad-a), transparent 55%),
+      var(--bg);
+    -webkit-font-smoothing: antialiased;
+    line-height: 1.5;
+    padding: 32px 18px 64px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  .wrap { width: 100%; max-width: 560px; }
+  header { text-align: center; margin-bottom: 24px; }
+  .logo {
+    display: inline-flex; align-items: center; gap: 10px;
+    font-weight: 700; font-size: 1.55rem; letter-spacing: -.02em;
+  }
+  .logo .dot {
+    width: 30px; height: 30px; border-radius: 9px;
+    background: linear-gradient(135deg, var(--accent), #9a6bff);
+    display: inline-flex; align-items: center; justify-content: center;
+    color: #fff; font-size: 1rem; box-shadow: 0 6px 16px -6px var(--accent);
+  }
+  header p { color: var(--muted); font-size: .92rem; margin: 8px 0 0; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    padding: 24px;
+    box-shadow: var(--shadow);
+  }
+  .field { margin-bottom: 18px; }
+  label { display: block; font-weight: 600; font-size: .9rem; margin-bottom: 7px; }
+  label .opt { color: var(--muted); font-weight: 400; font-size: .82rem; }
+  textarea, input[type=text] {
+    width: 100%; font: inherit; color: var(--fg);
+    background: var(--field);
+    border: 1px solid var(--border); border-radius: 11px;
+    padding: 11px 13px; resize: vertical;
+    transition: border-color .15s, box-shadow .15s;
+  }
+  textarea { min-height: 96px; line-height: 1.5; }
+  textarea:focus, input[type=text]:focus {
+    outline: none; border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+  .hint { color: var(--muted); font-size: .8rem; margin: 6px 2px 0; }
+  .target {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: var(--accent-soft); color: var(--accent);
+    border-radius: 8px; padding: 6px 12px; font-weight: 600; font-size: .88rem;
+  }
+  .toggles { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  @media (max-width: 420px) { .toggles { grid-template-columns: 1fr; } }
+  .toggle {
+    display: flex; align-items: center; gap: 9px;
+    border: 1px solid var(--border); border-radius: 11px;
+    padding: 10px 12px; cursor: pointer; user-select: none;
+    background: var(--field); transition: border-color .15s, background .15s;
+  }
+  .toggle:hover { border-color: var(--accent); }
+  .toggle input { width: 17px; height: 17px; accent-color: var(--accent); cursor: pointer; }
+  .toggle span { font-size: .9rem; }
+  button.go {
+    width: 100%; margin-top: 6px;
+    font: inherit; font-weight: 700; font-size: 1rem;
+    color: var(--accent-fg);
+    background: linear-gradient(135deg, var(--accent), #8a6bff);
+    border: none; border-radius: 12px; padding: 13px;
+    cursor: pointer; transition: transform .08s, filter .15s;
+    box-shadow: 0 12px 26px -12px var(--accent);
+  }
+  button.go:hover { filter: brightness(1.05); }
+  button.go:active { transform: translateY(1px); }
+  .result { margin-top: 22px; display: none; }
+  .result.show { display: block; animation: fade .25s ease; }
+  @keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+  .result label { display: flex; justify-content: space-between; align-items: center; }
+  .out-wrap { position: relative; }
+  #output {
+    width: 100%; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: .82rem; min-height: 86px; word-break: break-all;
+    background: var(--field); color: var(--fg);
+  }
+  .actions { display: flex; gap: 10px; margin-top: 12px; }
+  .actions a, .actions button {
+    flex: 1; text-align: center; text-decoration: none;
+    font: inherit; font-weight: 600; font-size: .9rem;
+    padding: 10px; border-radius: 10px; cursor: pointer;
+    border: 1px solid var(--border); background: var(--field); color: var(--fg);
+    transition: border-color .15s, background .15s;
+  }
+  .actions a:hover, .actions button:hover { border-color: var(--accent); }
+  #copyBtn.copied { color: var(--ok); border-color: var(--ok); }
+  footer {
+    text-align: center; color: var(--muted); font-size: .82rem;
+    margin-top: 26px; line-height: 1.8;
+  }
+  footer a { color: var(--accent); text-decoration: none; }
+  footer a:hover { text-decoration: underline; }
+  footer .sep { opacity: .4; margin: 0 8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo"><span class="dot">↻</span>subconverter-ng</div>
+    <p>填写订阅与选项，一键生成可粘贴到 Clash 客户端的订阅链接</p>
+  </header>
+
+  <div class="card">
+    <form id="form" onsubmit="return false;">
+      <div class="field">
+        <label for="urls">订阅链接 <span class="opt">每行一个，多个会自动合并</span></label>
+        <textarea id="urls" placeholder="https://your-airport.com/api/v1/client/subscribe?token=xxx&#10;https://another.com/sub"></textarea>
+      </div>
+
+      <div class="field">
+        <label for="config">外部配置 config <span class="opt">可选 · INI 规则 URL</span></label>
+        <input type="text" id="config" placeholder="https://raw.githubusercontent.com/.../config.ini">
+      </div>
+
+      <div class="field">
+        <label>目标 target</label>
+        <span class="target">clash<span class="opt" style="opacity:.7;font-weight:400">（当前唯一支持）</span></span>
+      </div>
+
+      <div class="field">
+        <label>选项</label>
+        <div class="toggles">
+          <label class="toggle"><input type="checkbox" id="sort"><span>节点排序</span></label>
+          <label class="toggle"><input type="checkbox" id="udp"><span>强制 UDP</span></label>
+          <label class="toggle"><input type="checkbox" id="tfo"><span>TCP Fast Open</span></label>
+          <label class="toggle"><input type="checkbox" id="scv"><span>跳过证书校验</span></label>
+          <label class="toggle"><input type="checkbox" id="emoji"><span>添加 emoji</span></label>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="proxy">上游代理 proxy <span class="opt">可选 · 本次请求覆盖全局</span></label>
+        <input type="text" id="proxy" placeholder="socks5://127.0.0.1:1080">
+      </div>
+
+      <button type="submit" class="go" id="genBtn">生成订阅链接</button>
+    </form>
+
+    <div class="result" id="result">
+      <div class="field" style="margin:0">
+        <label>生成的订阅链接</label>
+        <div class="out-wrap">
+          <textarea id="output" readonly></textarea>
+        </div>
+        <div class="actions">
+          <button type="button" id="copyBtn">复制</button>
+          <a id="openLink" href="#" target="_blank" rel="noopener">打开 / 预览</a>
+        </div>
+        <p class="hint">把上面的链接粘贴到 Clash / mihomo 客户端的「配置 URL」即可。</p>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    <a href="https://github.com/Jungley8/subconverter-ng" target="_blank" rel="noopener">GitHub</a>
+    <span class="sep">·</span>GPL-3.0
+    <span class="sep">·</span><a href="https://sub.jungley.net" target="_blank" rel="noopener">使用文档</a>
+  </footer>
+</div>
+
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+
+  function buildURL() {
+    var subs = $('urls').value.split('\n')
+      .map(function (s) { return s.trim(); })
+      .filter(function (s) { return s.length > 0; });
+
+    var params = ['target=clash'];
+    if (subs.length) {
+      params.push('url=' + encodeURIComponent(subs.join('|')));
+    }
+    var config = $('config').value.trim();
+    if (config) { params.push('config=' + encodeURIComponent(config)); }
+
+    ['sort', 'udp', 'tfo', 'scv', 'emoji'].forEach(function (k) {
+      if ($(k).checked) { params.push(k + '=true'); }
+    });
+
+    var proxy = $('proxy').value.trim();
+    if (proxy) { params.push('proxy=' + encodeURIComponent(proxy)); }
+
+    return window.location.origin + '/sub?' + params.join('&');
+  }
+
+  $('form').addEventListener('submit', function () {
+    var subs = $('urls').value.split('\n')
+      .map(function (s) { return s.trim(); })
+      .filter(function (s) { return s.length > 0; });
+    if (!subs.length) {
+      $('urls').focus();
+      return false;
+    }
+    var url = buildURL();
+    $('output').value = url;
+    $('openLink').href = url;
+    $('result').classList.add('show');
+    $('output').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    return false;
+  });
+
+  $('copyBtn').addEventListener('click', function () {
+    var text = $('output').value;
+    if (!text) { return; }
+    var done = function () {
+      var b = $('copyBtn');
+      b.textContent = '已复制 ✓';
+      b.classList.add('copied');
+      setTimeout(function () {
+        b.textContent = '复制';
+        b.classList.remove('copied');
+      }, 1600);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done).catch(fallback);
+    } else {
+      fallback();
+    }
+    function fallback() {
+      var ta = $('output');
+      ta.removeAttribute('readonly');
+      ta.select();
+      try { document.execCommand('copy'); done(); } catch (e) { /* ignore */ }
+      ta.setAttribute('readonly', '');
+    }
+  });
+})();
+</script>
+</body>
+</html>

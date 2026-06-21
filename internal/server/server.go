@@ -13,6 +13,7 @@ import (
 	"github.com/Jungley8/subconverter-ng/internal/convert"
 	"github.com/Jungley8/subconverter-ng/internal/fetch"
 	"github.com/Jungley8/subconverter-ng/internal/generator"
+	"github.com/Jungley8/subconverter-ng/internal/web"
 )
 
 // Server wires the HTTP handlers to the application config.
@@ -27,7 +28,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/sub", s.handleSub)
 	mux.HandleFunc("/version", s.handleVersion)
-	mux.HandleFunc("/", s.handleVersion)
+	mux.Handle("/", web.Handler())
 	return logging(mux)
 }
 

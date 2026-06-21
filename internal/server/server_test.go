@@ -80,6 +80,22 @@ func TestHandleVersion(t *testing.T) {
 	}
 }
 
+func TestHandleRootServesWebUI(t *testing.T) {
+	h := New(config.Default()).Handler()
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "subconverter-ng") {
+		t.Error("body missing branding")
+	}
+	if !strings.Contains(body, `id="urls"`) {
+		t.Error("body missing form marker id=\"urls\"")
+	}
+}
+
 func TestSplitURLs(t *testing.T) {
 	got := splitURLs(" a | b |  | c ")
 	if len(got) != 3 || got[0] != "a" || got[2] != "c" {

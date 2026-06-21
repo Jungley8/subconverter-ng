@@ -35,6 +35,8 @@ go build -o subconverter-ng ./cmd/subconverter-ng
 # http://127.0.0.1:25500/sub?target=clash&url=<订阅URL编码>&config=<规则URL编码>
 ```
 
+> 内置 Web 界面：浏览器打开 <http://127.0.0.1:25500/> 即可可视化生成订阅链接（详见 [docs/web.md](docs/web.md)）。
+
 ### CLI 单次转换
 
 ```bash
