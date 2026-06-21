@@ -18,6 +18,8 @@ include_remarks=(HK|US)
 enable_rule_generator=true
 overwrite_original_rules=true
 clash_rule_base=https://example.com/base.yml
+rename=美国@US
+rename=\[(.+?)\]@\1
 unknown_key=ignored
 `
 
@@ -63,6 +65,9 @@ func TestParse(t *testing.T) {
 	}
 	if cfg.ClashRuleBase != "https://example.com/base.yml" {
 		t.Errorf("clash_rule_base = %q", cfg.ClashRuleBase)
+	}
+	if len(cfg.RenameRules) != 2 || cfg.RenameRules[0] != "美国@US" || cfg.RenameRules[1] != `\[(.+?)\]@\1` {
+		t.Errorf("rename rules parsed wrong: %v", cfg.RenameRules)
 	}
 }
 

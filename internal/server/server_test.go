@@ -115,6 +115,24 @@ func TestBoolParam(t *testing.T) {
 	}
 }
 
+func TestBoolTri(t *testing.T) {
+	for _, on := range []string{"true", "1", "yes", "ON"} {
+		if v := boolTri(on); v == nil || !*v {
+			t.Errorf("boolTri(%q) should be true", on)
+		}
+	}
+	for _, off := range []string{"false", "0", "no", "OFF"} {
+		if v := boolTri(off); v == nil || *v {
+			t.Errorf("boolTri(%q) should be false", off)
+		}
+	}
+	for _, none := range []string{"", "maybe"} {
+		if v := boolTri(none); v != nil {
+			t.Errorf("boolTri(%q) should be nil", none)
+		}
+	}
+}
+
 func TestFirstNonEmpty(t *testing.T) {
 	if firstNonEmpty("", "", "x", "y") != "x" {
 		t.Error("should pick first non-empty")

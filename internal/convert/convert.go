@@ -100,6 +100,7 @@ func Run(ctx context.Context, f Fetcher, req Request) ([]byte, *Diagnostics, err
 	}
 
 	gen := req.Gen
+	gen.RenameRules = generator.CompileRenameRules(cfg.RenameRules)
 	gen.RemoveEmoji, gen.AddEmoji = resolveEmoji(cfg, req)
 	if gen.AddEmoji {
 		if len(cfg.EmojiRules) > 0 {

@@ -34,6 +34,51 @@ type Options struct {
 	RemoveEmoji bool
 	AddEmoji    bool
 	EmojiRules  []emoji.Rule
+
+	// RenameRules rewrite node names via regexp, applied between RemoveEmoji and
+	// AddEmoji (order: remove emoji -> rename -> add emoji).
+	RenameRules []RenameRule
+
+	// UseRuleProviders emits Clash.Meta rule-providers (one per remote ruleset
+	// URL) plus RULE-SET rules instead of inlining every remote rule. It maps to
+	// subconverter's expand=false. The default (false) keeps the inline path
+	// (expand=true). Inline rules ([]GEOIP,CN, []FINAL) stay direct rules.
+	UseRuleProviders bool
+}
+
+// RenameRule is a compiled rename= entry: a regex pattern and its replacement.
+// Replacement uses Go's $N backref syntax (subconverter's \N is translated at
+// compile time).
+type RenameRule struct {
+	Pattern *regexp.Regexp
+	Replace string
+}
+
+// backrefSlash matches subconverter-style \N backrefs (\1, \2, ...) in a
+// replacement string so they can be translated to Go's $N form.
+var backrefSlash = regexp.MustCompile(`\\(\d+)`)
+
+// CompileRenameRules turns raw "pattern@replacement" entries into compiled
+// RenameRules. The first "@" separates pattern from replacement; the
+// replacement may be empty. Backrefs may be written subconverter-style (\1) or
+// Go-style ($1) — \N is translated to $N before use, while existing $N are left
+// untouched. Invalid entries (no "@", or a pattern that fails to compile) are
+// skipped.
+func CompileRenameRules(raw []string) []RenameRule {
+	var out []RenameRule
+	for _, line := range raw {
+		pat, repl, ok := strings.Cut(line, "@")
+		if !ok || pat == "" {
+			continue
+		}
+		re, err := regexp.Compile(pat)
+		if err != nil {
+			continue
+		}
+		repl = backrefSlash.ReplaceAllString(repl, "$$$1")
+		out = append(out, RenameRule{Pattern: re, Replace: repl})
+	}
+	return out
 }
 
 // groupOut is a Clash proxy-group, as a struct so YAML keys stay in a natural
@@ -57,6 +102,7 @@ type clashOut struct {
 	DNS                map[string]any   `yaml:"dns"`
 	Proxies            []map[string]any `yaml:"proxies"`
 	ProxyGroups        []groupOut       `yaml:"proxy-groups"`
+	RuleProviders      map[string]any   `yaml:"rule-providers,omitempty"`
 	Rules              []string         `yaml:"rules"`
 }
 
@@ -85,12 +131,23 @@ func GenerateClash(ctx context.Context, nodes []*proxy.Proxy, cfg *extconfig.Con
 	}
 
 	groups := buildGroups(cfg.ProxyGroups, nodes, names, res)
-	rules, skippedRules := buildRules(ctx, cfg, f)
-	res.SkippedRules = skippedRules
+
+	// Rule output: either inline every rule (default, expand=true) or emit
+	// rule-providers + RULE-SET rules (expand=false).
+	var rules []string
+	var providers map[string]any
+	if opts.UseRuleProviders {
+		rules, providers, res.SkippedRules = buildRuleProviders(cfg)
+	} else {
+		var skippedRules []string
+		rules, skippedRules = buildRules(ctx, cfg, f)
+		res.SkippedRules = skippedRules
+	}
 
 	out := defaultBase()
 	out.Proxies = proxies
 	out.ProxyGroups = groups
+	out.RuleProviders = providers
 	out.Rules = rules
 
 	// A custom base template (clash_rule_base) overrides the default skeleton;
@@ -101,6 +158,9 @@ func GenerateClash(ctx context.Context, nodes []*proxy.Proxy, cfg *extconfig.Con
 			if yaml.Unmarshal(data, &base) == nil && base != nil {
 				base["proxies"] = proxies
 				base["proxy-groups"] = groups
+				if providers != nil {
+					base["rule-providers"] = providers
+				}
 				if cfg.OverwriteRules || base["rules"] == nil {
 					base["rules"] = rules
 				}
@@ -198,6 +258,9 @@ func applyNodeOptions(nodes []*proxy.Proxy, opts Options) {
 	for _, n := range nodes {
 		if opts.RemoveEmoji {
 			n.Rename(emoji.Remove(n.Name))
+		}
+		for _, rr := range opts.RenameRules {
+			n.Rename(rr.Pattern.ReplaceAllString(n.Name, rr.Replace))
 		}
 		if opts.AddEmoji {
 			n.Rename(emoji.Add(n.Name, opts.EmojiRules))
@@ -316,6 +379,56 @@ func buildRules(ctx context.Context, cfg *extconfig.Config, f Fetcher) (rules, s
 		skipped = append(skipped, results[i].skipped...)
 	}
 	return rules, skipped
+}
+
+// buildRuleProviders implements subconverter's expand=false output. Instead of
+// fetching and inlining every remote rule, it emits one Clash.Meta rule-provider
+// per distinct remote ruleset URL and a RULE-SET rule pointing each provider at
+// its group. Inline rulesets ([]GEOIP,CN, []FINAL) stay direct rules so MATCH
+// and inline matchers still work. Providers are deduped by URL: a URL reused
+// across groups yields one provider but a RULE-SET line per (provider,group).
+func buildRuleProviders(cfg *extconfig.Config) (rules []string, providers map[string]any, skipped []string) {
+	if !cfg.EnableRuleGenerator {
+		return nil, nil, nil
+	}
+	providerByURL := map[string]string{} // url -> provider key
+	seenRuleSet := map[string]bool{}     // "provider\x00group" -> emitted
+	for _, rs := range cfg.Rulesets {
+		if rs.Inline != "" {
+			if rule, ok := expandInlineRule(rs.Inline, rs.Group); ok {
+				rules = append(rules, rule)
+			} else {
+				skipped = append(skipped, rs.Inline+","+rs.Group)
+			}
+			continue
+		}
+		if rs.URL == "" {
+			continue
+		}
+		name, ok := providerByURL[rs.URL]
+		if !ok {
+			name = "provider_" + strconv.Itoa(len(providerByURL)+1)
+			providerByURL[rs.URL] = name
+			if providers == nil {
+				providers = map[string]any{}
+			}
+			providers[name] = map[string]any{
+				"type":     "http",
+				"behavior": "classical",
+				"url":      rs.URL,
+				"path":     "./ruleset/" + name + ".list",
+				"interval": 86400,
+				"format":   "text",
+			}
+		}
+		key := name + "\x00" + rs.Group
+		if seenRuleSet[key] {
+			continue // same (provider,group) already emitted
+		}
+		seenRuleSet[key] = true
+		rules = append(rules, "RULE-SET,"+name+","+rs.Group)
+	}
+	return rules, providers, skipped
 }
 
 // validRuleTypes is the set of rule types Clash.Meta (mihomo) accepts. Rules
