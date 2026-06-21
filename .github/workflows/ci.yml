@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: Test with coverage
+        run: go test -coverpkg=./... -coverprofile=coverage.out ./...
+
+      - name: Enforce coverage threshold (>= 80%)
+        run: |
+          total=$(go tool cover -func=coverage.out | tail -1 | awk '{print $3}' | tr -d '%')
+          echo "Total coverage: ${total}%"
+          awk -v c="$total" 'BEGIN { if (c+0 < 80) { printf "FAIL: coverage %.1f%% is below 80%%\n", c; exit 1 } printf "OK: coverage %.1f%%\n", c }'
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.out

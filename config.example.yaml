@@ -1,0 +1,22 @@
+# subconverter-ng application config (all fields optional).
+# Per-request behaviour is driven by URL parameters; this file only sets the
+# server defaults. Environment variables override these:
+#   SUBNG_LISTEN, SUBNG_PROXY, SUBNG_FLARESOLVERR_URL, SUBNG_USER_AGENT
+
+listen: ":25500"
+
+fetch:
+  # User-Agent sent when fetching subscriptions/rulesets. Many panels only
+  # return nodes for a clash-like UA. Leave empty to use the built-in default.
+  user_agent: ""
+
+  # Upstream proxy for airports unreachable directly from this host.
+  #   http://127.0.0.1:7890   or   socks5://127.0.0.1:1080
+  proxy: ""
+
+  # FlareSolverr endpoint to pass Cloudflare's JS challenge. Empty disables it.
+  #   http://127.0.0.1:8191/v1
+  flaresolverr_url: ""
+
+  # Per-fetch timeout.
+  timeout: 30s

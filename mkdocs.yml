@@ -1,0 +1,62 @@
+site_name: subconverter-ng
+site_description: 现代化订阅转换工具 —— 用 Go 重写的 subconverter，专注支持新协议
+site_url: https://sub.jungley.net/
+site_author: Jungley8
+
+repo_url: https://github.com/Jungley8/subconverter-ng
+repo_name: Jungley8/subconverter-ng
+
+copyright: Copyright &copy; 2026 Jungley8 · GPL-3.0
+
+theme:
+  name: material
+  language: zh
+  icon:
+    repo: fontawesome/brands/github
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: 切换到深色模式
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: 切换到浅色模式
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.tracking
+    - content.code.copy
+    - content.code.annotate
+    - search.suggest
+    - toc.follow
+
+nav:
+  - 首页: index.md
+  - 快速开始: quickstart.md
+  - URL 参数: url-params.md
+  - 上游代理与 UA: proxy.md
+  - 绕过 Cloudflare: cloudflare.md
+  - Docker 部署: docker.md
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg

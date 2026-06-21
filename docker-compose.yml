@@ -1,0 +1,32 @@
+# subconverter-ng with an optional FlareSolverr sidecar for Cloudflare-gated
+# subscriptions. If your airports are not behind Cloudflare, you can delete the
+# flaresolverr service and the SUBNG_FLARESOLVERR_URL line.
+services:
+  subconverter-ng:
+    build: .
+    image: ghcr.io/jungley8/subconverter-ng:latest
+    container_name: subconverter-ng
+    restart: unless-stopped
+    ports:
+      - "25500:25500"
+    environment:
+      # Upstream proxy for airports that are only reachable via a proxy.
+      # Examples: http://proxy:8080  |  socks5://proxy:1080
+      - SUBNG_PROXY=${SUBNG_PROXY:-}
+      # FlareSolverr endpoint used to pass Cloudflare's JS challenge.
+      - SUBNG_FLARESOLVERR_URL=http://flaresolverr:8191/v1
+      # Override the default clash.meta User-Agent if your panel needs another.
+      - SUBNG_USER_AGENT=${SUBNG_USER_AGENT:-}
+    depends_on:
+      - flaresolverr
+
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    container_name: flaresolverr
+    restart: unless-stopped
+    environment:
+      - LOG_LEVEL=info
+      - TZ=Asia/Shanghai
+    # Not published to the host — only subconverter-ng needs to reach it.
+    expose:
+      - "8191"
