@@ -17,7 +17,7 @@ http://127.0.0.1:25500/
 1. **Subscription link**: paste your provider's subscription URL into the text box, one per line; multiple lines are automatically joined with `|`.
 2. **External config (optional)**: enter the URL of an INI rules config (subconverter / ACL4SSR compatible).
 3. **target**: choose the output format from the dropdown — `clash` (Clash.Meta / mihomo), `singbox`, `surge`, `shadowrocket`, `quanx`, `loon`, `v2ray`/`mixed`.
-4. **Options**: tick `sort nodes`, `force UDP`, `TCP Fast Open`, `skip cert verify`, `add emoji` as needed.
+4. **Options**: tick `sort nodes`, `dedup nodes`, `force UDP`, `TCP Fast Open`, `skip cert verify`, `filter incompatible nodes`, `append type to name`, `allow emoji` as needed. These map to the [URL parameters](url-params.md) `sort` / `dedup` / `udp` / `tfo` / `scv` / `fdn` / `append_type` / `emoji`.
 5. **Upstream proxy (optional)**: e.g. `socks5://127.0.0.1:1080`, applied to this request only, overriding the global config.
 6. Click **Generate subscription link** and the full `/sub?...` link appears below.
 7. Click **Copy** and paste the link into your Clash / mihomo client's "Config URL"; or click **Open / Preview** to view the converted result directly in a new tab.
