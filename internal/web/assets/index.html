@@ -224,6 +224,38 @@
 (function () {
   var $ = function (id) { return document.getElementById(id); };
 
+  // --- form caching: persist inputs to localStorage so a refresh / revisit
+  // keeps the user's subscription URLs, target and options. ---
+  var STORE_KEY = 'subng.form.v1';
+  var TEXT_FIELDS = ['urls', 'config', 'target', 'proxy']; // value-bearing inputs/selects
+  var FLAG_FIELDS = ['sort', 'udp', 'tfo', 'scv', 'emoji']; // checkboxes
+
+  function saveState() {
+    try {
+      var s = {};
+      TEXT_FIELDS.forEach(function (k) { s[k] = $(k).value; });
+      FLAG_FIELDS.forEach(function (k) { s[k] = $(k).checked; });
+      localStorage.setItem(STORE_KEY, JSON.stringify(s));
+    } catch (e) { /* localStorage unavailable (private mode / disabled): ignore */ }
+  }
+
+  function restoreState() {
+    try {
+      var raw = localStorage.getItem(STORE_KEY);
+      if (!raw) { return; }
+      var s = JSON.parse(raw);
+      TEXT_FIELDS.forEach(function (k) { if (typeof s[k] === 'string') { $(k).value = s[k]; } });
+      FLAG_FIELDS.forEach(function (k) { if (typeof s[k] === 'boolean') { $(k).checked = s[k]; } });
+    } catch (e) { /* corrupt/old payload: ignore */ }
+  }
+
+  restoreState();
+  TEXT_FIELDS.concat(FLAG_FIELDS).forEach(function (k) {
+    var el = $(k);
+    el.addEventListener('input', saveState);
+    el.addEventListener('change', saveState);
+  });
+
   function buildURL() {
     var subs = $('urls').value.split('\n')
       .map(function (s) { return s.trim(); })
