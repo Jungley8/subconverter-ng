@@ -61,9 +61,30 @@ echo $GITHUB_TOKEN | docker login ghcr.io -u <你的用户名> --password-stdin
 docker pull ghcr.io/jungley8/subconverter-ng:latest
 ```
 
+## 启动输出
+
+`serve` 启动时会打印版本号和**当前生效的配置摘要**，便于核对环境变量 / 配置文件是否被正确加载。敏感信息（代理密码、订阅 token）会自动脱敏，可安全用于日志：
+
+```text
+subconverter-ng v0.5.0
+  listen:         :25500
+  user-agent:     (built-in default)
+  upstream proxy: socks5://user:***@127.0.0.1:1080
+  flaresolverr:   http://flaresolverr:8191/v1
+  fetch timeout:  30s
+  fetch cache:    300s (default)
+  rate limit:     30/min, burst 10
+  insert urls:    1 (enabled, prepend)
+    - https://air.com/***
+listening on :25500
+```
+
+- 代理凭据只保留用户名，密码显示为 `***`。
+- 订阅 / 插入链接只保留 `scheme://host`，路径与查询参数中的 token 一律隐藏为 `/***`。
+
 ## 健康检查
 
 ```bash
 curl http://127.0.0.1:25500/version
-# subconverter-ng v0.4.0
+# subconverter-ng v0.5.0
 ```

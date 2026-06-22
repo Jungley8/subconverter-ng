@@ -84,13 +84,9 @@ func cmdServe(args []string) {
 	}
 
 	srv := newHTTPServer(cfg)
-	fmt.Printf("subconverter-ng %s listening on %s\n", version, cfg.Listen)
-	if cfg.Fetch.Proxy != "" {
-		fmt.Printf("  upstream proxy: %s\n", cfg.Fetch.Proxy)
-	}
-	if cfg.Fetch.FlareSolverrURL != "" {
-		fmt.Printf("  flaresolverr:   %s\n", cfg.Fetch.FlareSolverrURL)
-	}
+	fmt.Printf("subconverter-ng %s\n", version)
+	fmt.Print(cfg.Summary()) // effective config, secrets redacted
+	fmt.Printf("listening on %s\n", cfg.Listen)
 	if err := srv.ListenAndServe(); err != nil {
 		fatal("server: %v", err)
 	}

@@ -61,9 +61,33 @@ echo $GITHUB_TOKEN | docker login ghcr.io -u <your-username> --password-stdin
 docker pull ghcr.io/jungley8/subconverter-ng:latest
 ```
 
+## Startup output
+
+On `serve` startup the program prints the version and a **summary of the
+effective config**, so you can confirm your env vars / config file were loaded
+correctly. Secrets (proxy passwords, subscription tokens) are redacted, so the
+output is safe to keep in logs:
+
+```text
+subconverter-ng v0.5.0
+  listen:         :25500
+  user-agent:     (built-in default)
+  upstream proxy: socks5://user:***@127.0.0.1:1080
+  flaresolverr:   http://flaresolverr:8191/v1
+  fetch timeout:  30s
+  fetch cache:    300s (default)
+  rate limit:     30/min, burst 10
+  insert urls:    1 (enabled, prepend)
+    - https://air.com/***
+listening on :25500
+```
+
+- Proxy credentials keep only the username; the password shows as `***`.
+- Subscription / insert links keep only `scheme://host`; any token in the path or query is hidden as `/***`.
+
 ## Health check
 
 ```bash
 curl http://127.0.0.1:25500/version
-# subconverter-ng v0.4.0
+# subconverter-ng v0.5.0
 ```
