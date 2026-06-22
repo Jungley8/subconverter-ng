@@ -29,7 +29,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install MkDocs Material
-        run: pip install "mkdocs-material>=9.5"
+        run: pip install "mkdocs-material>=9.5" "mkdocs-static-i18n>=1.2"
 
       - name: Build site
         run: mkdocs build --strict

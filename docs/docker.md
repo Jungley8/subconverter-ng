@@ -65,5 +65,5 @@ docker pull ghcr.io/jungley8/subconverter-ng:latest
 
 ```bash
 curl http://127.0.0.1:25500/version
-# subconverter-ng (MVP)
+# subconverter-ng v0.4.0
 ```

@@ -8,3 +8,4 @@ dist/
 
 # agent worktrees
 .claude/
+/site/
