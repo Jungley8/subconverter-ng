@@ -100,7 +100,7 @@ func cmdConvert(args []string) {
 	fs := flag.NewFlagSet("convert", flag.ExitOnError)
 	url := fs.String("url", "", "subscription URL(s), '|'-separated (required)")
 	cfgURL := fs.String("config", "", "external INI config URL")
-	target := fs.String("target", "clash", "output target (clash)")
+	target := fs.String("target", "clash", "output target: clash|singbox|surge|shadowrocket|quanx|loon|v2ray")
 	out := fs.String("o", "", "output file (default: stdout)")
 	proxy := fs.String("proxy", "", "upstream proxy URL (http/socks5)")
 	flaresolverr := fs.String("flaresolverr", "", "FlareSolverr endpoint, e.g. http://127.0.0.1:8191/v1")
@@ -117,6 +117,8 @@ func cmdConvert(args []string) {
 	fdn := fs.Bool("fdn", false, "filter nodes Clash.Meta cannot use")
 	list := fs.Bool("list", false, "output only the node list (no groups/rules)")
 	appendType := fs.Bool("append-type", false, "prepend [TYPE] to node names")
+	insert := fs.String("insert", "", "insert_url: extra node source URL(s), '|'-separated, merged into the output")
+	insertPrepend := fs.Bool("insert-prepend", true, "place inserted nodes before subscription nodes")
 	timeout := fs.Duration("timeout", 30*time.Second, "per-fetch timeout")
 	cacheTTL := fs.Duration("cache-ttl", 0, "TTL for the in-memory fetch cache (0=default 300s, negative=disabled)")
 	fs.Parse(args)
@@ -137,9 +139,11 @@ func cmdConvert(args []string) {
 	}
 
 	req := convert.Request{
-		Target:    *target,
-		SubURLs:   splitPipe(*url),
-		ConfigURL: *cfgURL,
+		Target:        *target,
+		SubURLs:       splitPipe(*url),
+		ConfigURL:     *cfgURL,
+		InsertURLs:    splitPipe(*insert),
+		InsertPrepend: *insertPrepend,
 		Gen: generator.Options{
 			Sort: *sortNodes, UDP: *udp, TFO: *tfo, SkipCertVerify: *scv,
 			UseRuleProviders: !*expand,
@@ -159,10 +163,13 @@ func cmdConvert(args []string) {
 	if err != nil {
 		fatal("convert: %v", err)
 	}
-	fmt.Fprintf(os.Stderr, "ok: %d nodes, %d unparsed lines, %d dup, %d deprecated, %d empty groups, %d rules dropped (unsupported type)\n",
-		diag.NodeCount, len(diag.SkippedLines), diag.Duplicates, diag.Deprecated, len(diag.EmptyGroups), len(diag.SkippedRules))
+	fmt.Fprintf(os.Stderr, "ok: %d nodes, %d unparsed lines, %d dup, %d deprecated, %d nodes unsupported by target, %d empty groups, %d rules dropped (unsupported type)\n",
+		diag.NodeCount, len(diag.SkippedLines), diag.Duplicates, diag.Deprecated, len(diag.SkippedNodes), len(diag.EmptyGroups), len(diag.SkippedRules))
 	for _, r := range diag.SkippedRules {
 		fmt.Fprintf(os.Stderr, "  dropped rule (unsupported type): %s\n", r)
+	}
+	for _, n := range diag.SkippedNodes {
+		fmt.Fprintf(os.Stderr, "  node unsupported by target: %s\n", n)
 	}
 
 	if *out == "" {

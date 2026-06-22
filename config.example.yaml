@@ -2,7 +2,8 @@
 # Per-request behaviour is driven by URL parameters; this file only sets the
 # server defaults. Environment variables override these:
 #   SUBNG_LISTEN, SUBNG_PROXY, SUBNG_FLARESOLVERR_URL, SUBNG_USER_AGENT,
-#   SUBNG_CACHE_TTL, SUBNG_RATELIMIT_ENABLED, SUBNG_RATELIMIT_RPM, SUBNG_RATELIMIT_BURST
+#   SUBNG_CACHE_TTL, SUBNG_RATELIMIT_ENABLED, SUBNG_RATELIMIT_RPM, SUBNG_RATELIMIT_BURST,
+#   SUBNG_INSERT_URLS (comma-separated), SUBNG_INSERT_PREPEND, SUBNG_INSERT_ENABLED
 
 listen: ":25500"
 
@@ -47,3 +48,19 @@ ratelimit:
   # before the per-minute rate applies. Generous enough for normal client
   # refreshes from a personal instance.
   burst: 10
+
+# insert_url: extra node sources merged into every conversion (subconverter's
+# insert_url). Useful for pinning your own relay/landing nodes ahead of the
+# airport's. The &insert= URL param overrides `enabled` per request.
+insert:
+  # Node source URLs (subscription or raw share-links). Empty = feature is a
+  # no-op. Each is fetched and parsed like a normal subscription.
+  urls: []
+  #  - https://example.com/my-extra-nodes
+
+  # true: place inserted nodes before the user's subscription nodes; false: after.
+  prepend: true
+
+  # Default for whether insertion happens. &insert=false disables it per request,
+  # &insert=true forces it on.
+  enabled: true

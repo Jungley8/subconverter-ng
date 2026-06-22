@@ -26,9 +26,10 @@ targeting **Clash.Meta / mihomo** so new protocols work right away.
 - ✅ **External config**: parses subconverter's INI external config (`ruleset=` / `custom_proxy_group=` / `exclude_remarks` / `enable_rule_generator` / `clash_rule_base`), ACL4SSR-compatible
 - ✅ **Access layer**: upstream proxy (http/socks5), configurable User-Agent, **automatic Cloudflare challenge bypass** (FlareSolverr)
 - ✅ **Two modes**: HTTP service + one-shot CLI converter, single binary
-- ✅ **Target core**: Clash.Meta / mihomo
+- ✅ **Multiple output targets**: `clash` (Clash.Meta / mihomo), `singbox`, `surge`, `shadowrocket`, `quanx`, `loon`, `v2ray`/`mixed`
+- ✅ **insert_url node insertion**: server-configured nodes merged into every conversion (`&insert=` overrides)
 
-> Output target is currently `clash` only. More output formats are on the roadmap.
+> Parsing uses Clash.Meta fields as the intermediate model, then renders to each target; protocols / rules a target can't express are skipped and logged.
 
 ## Quick start
 
@@ -72,22 +73,23 @@ Full list in [docs/url-params.md](docs/url-params.md). Common ones:
 
 | Param | Description |
 |---|---|
-| `target` | output target (`clash` only) |
+| `target` | output target: `clash` / `singbox` / `surge` / `shadowrocket` / `quanx` / `loon` / `v2ray` |
 | `url` | subscription URL(s), `\|`-separated (required) |
 | `config` | external INI config URL |
+| `insert` | merge the server's `insert_url` nodes (overrides config default) |
 | `sort` | sort nodes by name |
 | `dedup` | remove duplicate nodes |
 | `fdn` | drop nodes Clash.Meta can't use (e.g. SS with a retired cipher) |
-| `list` | output only the node list (no groups / rules) |
+| `list` | output only the node list (no groups / rules, **clash only**) |
 | `append_type` | prepend `[TYPE]` to node names |
-| `expand` | `false` emits rule-providers referencing remote rules |
+| `expand` | `false` emits rule-providers referencing remote rules (**clash only**) |
 | `emoji` `add_emoji` `remove_emoji` | emoji add/remove (subconverter-compatible) |
-| `udp` `tfo` `scv` | per-node toggles |
+| `udp` `tfo` `scv` | per-node toggles (target-dependent) |
 | `filename` `interval` | download filename / client update interval |
 | `nocache` `flushcache` | bypass / flush cache |
 | `proxy` | per-request upstream proxy (overrides global; extension) |
 
-> `insert` and `new_name` are accepted for compatibility but currently have no effect.
+> Per-target applicability is documented in [docs/url-params.md](docs/url-params.md). `new_name` is accepted for compatibility but has no effect.
 
 ## Solving access problems
 

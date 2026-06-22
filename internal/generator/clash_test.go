@@ -147,7 +147,7 @@ func TestGenerateClash_RuleProviders(t *testing.T) {
 		RuleProviders map[string]map[string]any `yaml:"rule-providers"`
 		Rules         []string                  `yaml:"rules"`
 	}
-	if err := yaml.Unmarshal(res.YAML, &doc); err != nil {
+	if err := yaml.Unmarshal(res.Output, &doc); err != nil {
 		t.Fatalf("invalid yaml: %v", err)
 	}
 	// Two distinct URLs -> two providers.
@@ -254,7 +254,7 @@ func TestGenerateClash_DefaultBase(t *testing.T) {
 		t.Errorf("EmptyGroups = %v, want [🇩🇪 DE]", res.EmptyGroups)
 	}
 	var doc map[string]any
-	if err := yaml.Unmarshal(res.YAML, &doc); err != nil {
+	if err := yaml.Unmarshal(res.Output, &doc); err != nil {
 		t.Fatalf("invalid yaml: %v", err)
 	}
 	if doc["mixed-port"] == nil || doc["dns"] == nil {
@@ -281,7 +281,7 @@ rules:
 		t.Fatal(err)
 	}
 	var doc map[string]any
-	if err := yaml.Unmarshal(res.YAML, &doc); err != nil {
+	if err := yaml.Unmarshal(res.Output, &doc); err != nil {
 		t.Fatal(err)
 	}
 	if doc["custom-key"] != "keep-me" || doc["mixed-port"] != 1080 {

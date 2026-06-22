@@ -23,9 +23,10 @@
 - ✅ **外部配置**：解析 subconverter 的 INI 外部配置（`ruleset=` / `custom_proxy_group=` / `exclude_remarks` / `enable_rule_generator` / `clash_rule_base`），兼容 ACL4SSR 规则
 - ✅ **访问层**：上游代理（http/socks5）、可配置 User-Agent、**自动绕过 Cloudflare 5 秒盾**（FlareSolverr）
 - ✅ **两种形态**：HTTP 服务 + CLI 单次转换，单二进制
-- ✅ **目标内核**：Clash.Meta / mihomo
+- ✅ **多输出 target**：`clash`（Clash.Meta / mihomo）、`singbox`、`surge`、`shadowrocket`、`quanx`、`loon`、`v2ray`/`mixed`
+- ✅ **insert_url 节点插入**：服务端固定节点合并进每次转换（`&insert=` 可覆盖）
 
-> 目前输出 target 仅 `clash`。后续逐步支持更多输出格式。
+> 内核解析以 Clash.Meta 字段为中介，再渲染到各 target；目标格式不支持的协议 / 规则会被跳过并记入日志。
 
 ## 快速开始
 
@@ -69,22 +70,23 @@ docker compose up -d
 
 | 参数 | 说明 |
 |---|---|
-| `target` | 输出目标（仅 `clash`） |
+| `target` | 输出目标：`clash` / `singbox` / `surge` / `shadowrocket` / `quanx` / `loon` / `v2ray` |
 | `url` | 订阅链接，多个用 `\|` 分隔（必填） |
 | `config` | 外部 INI 配置 URL |
+| `insert` | 是否合并服务端 `insert_url` 节点（覆盖配置默认） |
 | `sort` | 按节点名排序 |
 | `dedup` | 去除重复节点 |
 | `fdn` | 过滤 Clash.Meta 不支持的节点（如废弃加密的 SS） |
-| `list` | 仅输出节点列表（无分组 / 规则） |
+| `list` | 仅输出节点列表（无分组 / 规则，**仅 clash**） |
 | `append_type` | 节点名前加 `[类型]` |
-| `expand` | `false` 时输出 rule-providers 引用远程规则 |
+| `expand` | `false` 时输出 rule-providers 引用远程规则（**仅 clash**） |
 | `emoji` `add_emoji` `remove_emoji` | emoji 增删（对齐 subconverter） |
-| `udp` `tfo` `scv` | 节点开关 |
+| `udp` `tfo` `scv` | 节点开关（部分 target 有效） |
 | `filename` `interval` | 下载文件名 / 客户端更新间隔 |
 | `nocache` `flushcache` | 绕过 / 清空缓存 |
 | `proxy` | 本次请求的上游代理（覆盖全局，扩展参数） |
 
-> `insert`、`new_name` 为兼容性接收但当前无效果（见文档说明）。
+> 参数对各 target 的适用性见 [docs/url-params.md](docs/url-params.md)。`new_name` 为兼容性接收但当前无效果。
 
 ## 解决访问问题
 
@@ -118,8 +120,8 @@ make run     # 本地起服务
 - [x] 内置 Web 界面
 - [x] 节点去重（`dedup`）、过滤不支持节点（`fdn`）
 - [x] 全量 URL 参数（`list` / `filename` / `interval` / `append_type` …）
-- [ ] 更多输出 target（sing-box、surge、quanx…）
-- [ ] `insert_url` 节点插入、节点测速排序
+- [x] 更多输出 target（sing-box、surge、shadowrocket、quanx、loon、v2ray）
+- [x] `insert_url` 节点插入
 
 ## License
 

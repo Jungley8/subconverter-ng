@@ -167,8 +167,16 @@
       </div>
 
       <div class="field">
-        <label>目标 target</label>
-        <span class="target">clash<span class="opt" style="opacity:.7;font-weight:400">（当前唯一支持）</span></span>
+        <label for="target">目标 target</label>
+        <select id="target">
+          <option value="clash">clash (Clash.Meta / mihomo)</option>
+          <option value="singbox">sing-box</option>
+          <option value="surge">surge</option>
+          <option value="shadowrocket">shadowrocket</option>
+          <option value="quanx">Quantumult X</option>
+          <option value="loon">Loon</option>
+          <option value="v2ray">v2ray / mixed (base64)</option>
+        </select>
       </div>
 
       <div class="field">
@@ -221,7 +229,7 @@
       .map(function (s) { return s.trim(); })
       .filter(function (s) { return s.length > 0; });
 
-    var params = ['target=clash'];
+    var params = ['target=' + ($('target').value || 'clash')];
     if (subs.length) {
       params.push('url=' + encodeURIComponent(subs.join('|')));
     }

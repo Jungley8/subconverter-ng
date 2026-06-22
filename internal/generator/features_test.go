@@ -57,7 +57,7 @@ func TestGenerateClash_ListOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	var doc map[string]any
-	if err := yaml.Unmarshal(res.YAML, &doc); err != nil {
+	if err := yaml.Unmarshal(res.Output, &doc); err != nil {
 		t.Fatal(err)
 	}
 	if doc["proxies"] == nil {

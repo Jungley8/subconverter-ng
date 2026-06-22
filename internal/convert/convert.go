@@ -56,6 +56,13 @@ type Request struct {
 	// for this request (the &nocache=1 param). It is informational to convert;
 	// the actual bypass is wired by the server constructing the Fetcher.
 	NoCache bool
+
+	// InsertURLs are extra node-source URLs (the configured insert_url list) to
+	// merge into the conversion. The caller resolves the enable/disable decision
+	// (server default + &insert= override): an empty slice means no insertion.
+	// InsertPrepend places these nodes before the subscription nodes when true.
+	InsertURLs    []string
+	InsertPrepend bool
 }
 
 // Diagnostics captures non-fatal information about a conversion.
@@ -64,8 +71,13 @@ type Diagnostics struct {
 	SkippedLines []string // subscription lines that did not parse into a node
 	EmptyGroups  []string // proxy-groups that matched no nodes (filled with DIRECT)
 	SkippedRules []string // ruleset entries dropped for an unsupported rule type
+	SkippedNodes []string // nodes the chosen target cannot render
 	Duplicates   int      // nodes removed by dedup (&dedup=true)
 	Deprecated   int      // nodes removed by filter-deprecated (&fdn=true)
+
+	// ContentType is the HTTP Content-Type the rendered output should be served
+	// with (varies by target: YAML for clash, JSON for sing-box, etc.).
+	ContentType string
 
 	// SubscriptionUserinfo is the airport's Subscription-Userinfo response
 	// header from the FIRST subscription fetch (empty if absent). Clash clients
@@ -75,8 +87,9 @@ type Diagnostics struct {
 
 // Run performs the conversion and returns the rendered config bytes.
 func Run(ctx context.Context, f Fetcher, req Request) ([]byte, *Diagnostics, error) {
-	if req.Target != "clash" {
-		return nil, nil, fmt.Errorf("unsupported target %q (MVP supports: clash)", req.Target)
+	target := NormalizeTarget(req.Target)
+	if !supportedTargets[target] {
+		return nil, nil, fmt.Errorf("unsupported target %q (supported: %s)", req.Target, supportedList())
 	}
 	if len(req.SubURLs) == 0 {
 		return nil, nil, fmt.Errorf("no subscription url provided")
@@ -86,6 +99,20 @@ func Run(ctx context.Context, f Fetcher, req Request) ([]byte, *Diagnostics, err
 	if err != nil {
 		return nil, nil, err
 	}
+
+	// insert_url: merge configured insert nodes. Failures are non-fatal (the
+	// user's own subscription must still convert); the userinfo header is taken
+	// from the subscription only, so we discard the insert sources' headers.
+	if len(req.InsertURLs) > 0 {
+		if insNodes, _, _, ierr := fetchAndParseAll(ctx, f, req.InsertURLs); ierr == nil && len(insNodes) > 0 {
+			if req.InsertPrepend {
+				nodes = append(insNodes, nodes...)
+			} else {
+				nodes = append(nodes, insNodes...)
+			}
+		}
+	}
+
 	if len(nodes) == 0 {
 		return nil, nil, fmt.Errorf("no usable nodes parsed from subscription(s); %d lines skipped", len(skipped))
 	}
@@ -112,17 +139,19 @@ func Run(ctx context.Context, f Fetcher, req Request) ([]byte, *Diagnostics, err
 		}
 	}
 
-	result, err := generator.GenerateClash(ctx, nodes, cfg, f, gen)
+	result, err := render(ctx, target, nodes, cfg, f, gen)
 	if err != nil {
 		return nil, nil, err
 	}
-	return result.YAML, &Diagnostics{
+	return result.Output, &Diagnostics{
 		NodeCount:            result.NodeCount,
 		SkippedLines:         skipped,
 		EmptyGroups:          result.EmptyGroups,
 		SkippedRules:         result.SkippedRules,
+		SkippedNodes:         result.SkippedNodes,
 		Duplicates:           result.Duplicates,
 		Deprecated:           result.DeprecatedDropped,
+		ContentType:          result.ContentType,
 		SubscriptionUserinfo: userinfo,
 	}, nil
 }

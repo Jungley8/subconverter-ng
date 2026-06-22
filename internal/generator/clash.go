@@ -5,10 +5,8 @@ package generator
 import (
 	"context"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/Jungley8/subconverter-ng/internal/emoji"
 	"github.com/Jungley8/subconverter-ng/internal/extconfig"
@@ -125,35 +123,28 @@ type clashOut struct {
 
 // Result is the rendered config plus diagnostics worth surfacing to the user.
 type Result struct {
-	YAML              []byte
+	Output            []byte // rendered config bytes for the chosen target
+	ContentType       string // HTTP Content-Type the server should send
 	NodeCount         int
 	EmptyGroups       []string // groups that matched no nodes (filled with DIRECT)
 	SkippedRules      []string // source rules dropped for an unsupported rule type
+	SkippedNodes      []string // nodes a target cannot render (name + reason)
 	Duplicates        int      // nodes removed by dedup
 	DeprecatedDropped int      // nodes removed by filter-deprecated (fdn)
 }
 
+// Content types per target family.
+const (
+	ctYAML = "text/yaml; charset=utf-8"
+	ctJSON = "application/json; charset=utf-8"
+	ctText = "text/plain; charset=utf-8"
+)
+
 // GenerateClash builds a Clash.Meta config.
 func GenerateClash(ctx context.Context, nodes []*proxy.Proxy, cfg *extconfig.Config, f Fetcher, opts Options) (*Result, error) {
-	nodes = filterNodes(nodes, cfg)
+	res := &Result{ContentType: ctYAML}
+	nodes = prepareNodes(nodes, cfg, opts, res)
 
-	res := &Result{}
-	if opts.FilterDeprecated {
-		var dropped int
-		nodes, dropped = filterDeprecated(nodes)
-		res.DeprecatedDropped = dropped
-	}
-	if opts.Dedup {
-		var removed int
-		nodes, removed = dedup(nodes)
-		res.Duplicates = removed
-	}
-	if opts.Sort {
-		sort.SliceStable(nodes, func(i, j int) bool { return nodes[i].Name < nodes[j].Name })
-	}
-	applyNodeOptions(nodes, opts)
-
-	res.NodeCount = len(nodes)
 	proxies := make([]map[string]any, 0, len(nodes))
 	names := make([]string, 0, len(nodes))
 	for _, n := range nodes {
@@ -169,7 +160,7 @@ func GenerateClash(ctx context.Context, nodes []*proxy.Proxy, cfg *extconfig.Con
 		if err != nil {
 			return nil, err
 		}
-		res.YAML = unescapeUnicode(y)
+		res.Output = unescapeUnicode(y)
 		return res, nil
 	}
 
@@ -211,7 +202,7 @@ func GenerateClash(ctx context.Context, nodes []*proxy.Proxy, cfg *extconfig.Con
 				if err != nil {
 					return nil, err
 				}
-				res.YAML = unescapeUnicode(y)
+				res.Output = unescapeUnicode(y)
 				return res, nil
 			}
 		}
@@ -222,7 +213,7 @@ func GenerateClash(ctx context.Context, nodes []*proxy.Proxy, cfg *extconfig.Con
 	if err != nil {
 		return nil, err
 	}
-	res.YAML = unescapeUnicode(y)
+	res.Output = unescapeUnicode(y)
 	return res, nil
 }
 
@@ -449,46 +440,13 @@ func resolveSelectors(selectors []string, nodes []*proxy.Proxy, allNames []strin
 	return out
 }
 
-// buildRules expands all rulesets in declared order. Remote rulesets are
-// fetched concurrently but assembled in order. A trailing MATCH (from []FINAL)
-// is honoured wherever it appears.
+// buildRules expands all rulesets in declared order into Clash rule lines. The
+// concurrent fetch + neutral parsing lives in collectRules (common.go); this
+// just formats each neutral Rule as a Clash rule string.
 func buildRules(ctx context.Context, cfg *extconfig.Config, f Fetcher) (rules, skipped []string) {
-	if !cfg.EnableRuleGenerator {
-		return nil, nil
-	}
-	type fetched struct {
-		lines   []string
-		skipped []string
-	}
-	results := make([]fetched, len(cfg.Rulesets))
-	var wg sync.WaitGroup
-	for i, rs := range cfg.Rulesets {
-		if rs.URL == "" {
-			continue
-		}
-		wg.Add(1)
-		go func(i int, url, group string) {
-			defer wg.Done()
-			data, err := f.Get(ctx, url)
-			if err != nil {
-				return
-			}
-			results[i].lines, results[i].skipped = expandRemoteRuleset(data, group)
-		}(i, rs.URL, rs.Group)
-	}
-	wg.Wait()
-
-	for i, rs := range cfg.Rulesets {
-		if rs.Inline != "" {
-			if rule, ok := expandInlineRule(rs.Inline, rs.Group); ok {
-				rules = append(rules, rule)
-			} else {
-				skipped = append(skipped, rs.Inline+","+rs.Group)
-			}
-			continue
-		}
-		rules = append(rules, results[i].lines...)
-		skipped = append(skipped, results[i].skipped...)
+	neutral, skipped := collectRules(ctx, cfg, f)
+	for _, r := range neutral {
+		rules = append(rules, formatClashRule(r))
 	}
 	return rules, skipped
 }
@@ -561,64 +519,28 @@ func isValidRuleType(typ string) bool {
 	return validRuleTypes[strings.ToUpper(strings.TrimSpace(typ))]
 }
 
-// expandInlineRule turns a []inline body into a Clash rule for group. ok is
-// false when the rule type is not recognised by Clash.Meta.
+// expandInlineRule turns a []inline body into a Clash rule for group (a thin
+// Clash formatter over parseInlineRule). ok is false when the rule type is not
+// recognised by Clash.Meta.
 //
 //	FINAL      -> MATCH,<group>
 //	GEOIP,CN   -> GEOIP,CN,<group>
 //	DOMAIN,x   -> DOMAIN,x,<group>
 func expandInlineRule(body, group string) (string, bool) {
-	if strings.EqualFold(body, "FINAL") {
-		return "MATCH," + group, true
-	}
-	typ, _, _ := strings.Cut(body, ",")
-	if !isValidRuleType(typ) {
+	r, ok := parseInlineRule(body, group)
+	if !ok {
 		return "", false
 	}
-	return body + "," + group, true
+	return formatClashRule(r), true
 }
 
-// expandRemoteRuleset parses an ACL4SSR-style .list file and appends the policy
-// group to each rule, preserving an optional trailing no-resolve. Lines with an
+// expandRemoteRuleset parses an ACL4SSR-style .list file into Clash rule lines
+// for group (a thin Clash formatter over parseRemoteRuleset). Lines with an
 // unsupported rule type are collected into skipped rather than emitted.
 func expandRemoteRuleset(data []byte, group string) (out, skipped []string) {
-	for _, raw := range strings.Split(string(data), "\n") {
-		line := strings.TrimSpace(strings.TrimRight(raw, "\r"))
-		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") || strings.HasPrefix(line, "//") {
-			continue
-		}
-		// Skip provider-style YAML wrappers if present.
-		if strings.HasPrefix(line, "payload:") || strings.HasPrefix(line, "- ") {
-			line = strings.TrimPrefix(line, "- ")
-			line = strings.Trim(line, "'\"")
-			if line == "" || strings.HasPrefix(line, "payload") {
-				continue
-			}
-		}
-		fields := strings.Split(line, ",")
-		for i := range fields {
-			fields[i] = strings.TrimSpace(fields[i])
-		}
-		switch len(fields) {
-		case 2: // TYPE,VALUE
-			if !isValidRuleType(fields[0]) {
-				skipped = append(skipped, line)
-				continue
-			}
-			out = append(out, fields[0]+","+fields[1]+","+group)
-		case 3: // TYPE,VALUE,no-resolve  (insert group before the flag)
-			if !isValidRuleType(fields[0]) {
-				skipped = append(skipped, line)
-				continue
-			}
-			out = append(out, fields[0]+","+fields[1]+","+group+","+fields[2])
-		case 1: // bare keyword like FINAL/MATCH
-			if strings.EqualFold(fields[0], "FINAL") || strings.EqualFold(fields[0], "MATCH") {
-				out = append(out, "MATCH,"+group)
-			} else {
-				skipped = append(skipped, line)
-			}
-		}
+	rules, skipped := parseRemoteRuleset(data, group)
+	for _, r := range rules {
+		out = append(out, formatClashRule(r))
 	}
 	return out, skipped
 }

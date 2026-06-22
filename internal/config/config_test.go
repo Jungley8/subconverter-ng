@@ -17,6 +17,27 @@ func TestDefault(t *testing.T) {
 	}
 }
 
+func TestInsertDefaultsAndEnv(t *testing.T) {
+	c := Default()
+	if !c.Insert.Enabled || !c.Insert.Prepend || len(c.Insert.URLs) != 0 {
+		t.Errorf("insert defaults wrong: %+v", c.Insert)
+	}
+
+	t.Setenv("SUBNG_INSERT_URLS", "https://a/x , https://b/y")
+	t.Setenv("SUBNG_INSERT_PREPEND", "false")
+	t.Setenv("SUBNG_INSERT_ENABLED", "false")
+	c, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Insert.Enabled || c.Insert.Prepend {
+		t.Errorf("insert env bools not applied: %+v", c.Insert)
+	}
+	if len(c.Insert.URLs) != 2 || c.Insert.URLs[0] != "https://a/x" || c.Insert.URLs[1] != "https://b/y" {
+		t.Errorf("insert URLs env not parsed/trimmed: %+v", c.Insert.URLs)
+	}
+}
+
 func TestRateLimitDefaultsBackfilled(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "app.yaml")

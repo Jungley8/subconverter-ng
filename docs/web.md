@@ -16,7 +16,7 @@ http://127.0.0.1:25500/
 
 1. **订阅链接**：在文本框里粘贴机场订阅地址，一行一个，多个会自动用 `|` 合并。
 2. **外部配置 config**（可选）：填入 INI 规则配置的 URL（兼容 subconverter / ACL4SSR）。
-3. **目标 target**：当前仅支持 `clash`（Clash.Meta / mihomo），固定显示。
+3. **目标 target**：下拉选择输出格式 —— `clash`（Clash.Meta / mihomo）、`singbox`、`surge`、`shadowrocket`、`quanx`、`loon`、`v2ray`/`mixed`。
 4. **选项**：按需勾选 `节点排序`、`强制 UDP`、`TCP Fast Open`、`跳过证书校验`、`添加 emoji`。
 5. **上游代理 proxy**（可选）：例如 `socks5://127.0.0.1:1080`，仅对本次请求生效，覆盖全局配置。
 6. 点击 **生成订阅链接**，下方会显示完整的 `/sub?...` 链接。

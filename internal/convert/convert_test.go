@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Jungley8/subconverter-ng/internal/extconfig"
+	"github.com/Jungley8/subconverter-ng/internal/generator"
 	"gopkg.in/yaml.v3"
 )
 
@@ -155,8 +156,57 @@ func TestConvertRules(t *testing.T) {
 	}
 }
 
+// b64Sub wraps one or more node share-links into a base64 subscription body.
+func b64Sub(links ...string) []byte {
+	return []byte(base64.StdEncoding.EncodeToString([]byte(strings.Join(links, "\n"))))
+}
+
+func TestRun_InsertURL(t *testing.T) {
+	ssLink := func(server, name string) string {
+		return "ss://" + b64("aes-256-gcm:pass") + "@" + server + ":8388#" + name
+	}
+	f := fakeFetcher{
+		"main": b64Sub(ssLink("1.1.1.1", "MAIN")),
+		"ins":  b64Sub(ssLink("2.2.2.2", "INSERT")),
+	}
+	names := func(req Request) []string {
+		req.Target = "clash"
+		req.SubURLs = []string{"https://x/main"}
+		req.Gen = generator.Options{ListOnly: true}
+		data, _, err := Run(context.Background(), f, req)
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		var doc struct {
+			Proxies []map[string]any `yaml:"proxies"`
+		}
+		if err := yaml.Unmarshal(data, &doc); err != nil {
+			t.Fatalf("invalid yaml: %v", err)
+		}
+		var out []string
+		for _, p := range doc.Proxies {
+			out = append(out, p["name"].(string))
+		}
+		return out
+	}
+
+	if got := names(Request{InsertURLs: []string{"https://x/ins"}, InsertPrepend: true}); strings.Join(got, ",") != "INSERT,MAIN" {
+		t.Errorf("prepend order = %v, want [INSERT MAIN]", got)
+	}
+	if got := names(Request{InsertURLs: []string{"https://x/ins"}, InsertPrepend: false}); strings.Join(got, ",") != "MAIN,INSERT" {
+		t.Errorf("append order = %v, want [MAIN INSERT]", got)
+	}
+	if got := names(Request{}); strings.Join(got, ",") != "MAIN" {
+		t.Errorf("no-insert = %v, want [MAIN]", got)
+	}
+	// A failing insert source must not break the main conversion.
+	if got := names(Request{InsertURLs: []string{"https://x/missing"}, InsertPrepend: true}); strings.Join(got, ",") != "MAIN" {
+		t.Errorf("insert-failure fallback = %v, want [MAIN]", got)
+	}
+}
+
 func TestRun_UnsupportedTarget(t *testing.T) {
-	_, _, err := Run(context.Background(), fakeFetcher{}, Request{Target: "surge", SubURLs: []string{"x"}})
+	_, _, err := Run(context.Background(), fakeFetcher{}, Request{Target: "quan", SubURLs: []string{"x"}})
 	if err == nil || !strings.Contains(err.Error(), "unsupported target") {
 		t.Errorf("expected unsupported target error, got %v", err)
 	}

@@ -151,10 +151,20 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// insert_url: the &insert= param overrides the server default
+	// (cfg.Insert.Enabled). When enabled and the server has insert URLs
+	// configured, they are merged into the conversion (prepended by default).
+	var insertURLs []string
+	if boolParam(q.Get("insert"), s.cfg.Insert.Enabled) {
+		insertURLs = s.cfg.Insert.URLs
+	}
+
 	req := convert.Request{
-		Target:    target,
-		SubURLs:   splitURLs(rawURL),
-		ConfigURL: q.Get("config"),
+		Target:        target,
+		SubURLs:       splitURLs(rawURL),
+		ConfigURL:     q.Get("config"),
+		InsertURLs:    insertURLs,
+		InsertPrepend: s.cfg.Insert.Prepend,
 		Gen: generator.Options{
 			Sort:           boolParam(q.Get("sort"), false),
 			UDP:            boolParam(q.Get("udp"), false),
@@ -175,9 +185,8 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 		NoCache:     noCache,
 	}
 
-	// `insert` and `new_name` are accepted for compatibility but have no effect:
-	// `insert` needs a configured insert_url feature we don't have yet, and our
-	// node naming is already the "new" style. They are ignored intentionally.
+	// `insert` is handled above (insert_url). `new_name` is accepted for
+	// compatibility but has no effect: our node naming is already the "new" style.
 
 	out, diag, err := convert.Run(r.Context(), client, req)
 	if err != nil {
@@ -185,14 +194,22 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "conversion failed: "+err.Error(), http.StatusBadGateway)
 		return
 	}
-	log.Printf("converted: %d nodes, %d unparsed lines, %d dup, %d deprecated, empty groups: %v, %d rules dropped (unsupported type)",
-		diag.NodeCount, len(diag.SkippedLines), diag.Duplicates, diag.Deprecated, diag.EmptyGroups, len(diag.SkippedRules))
+	log.Printf("converted (%s): %d nodes, %d unparsed lines, %d dup, %d deprecated, %d nodes unsupported by target, empty groups: %v, %d rules dropped (unsupported type)",
+		convert.NormalizeTarget(target), diag.NodeCount, len(diag.SkippedLines), diag.Duplicates, diag.Deprecated, len(diag.SkippedNodes), diag.EmptyGroups, len(diag.SkippedRules))
 	if len(diag.SkippedRules) > 0 {
 		log.Printf("dropped rules (unsupported type): %v", diag.SkippedRules)
 	}
+	if len(diag.SkippedNodes) > 0 {
+		log.Printf("nodes unsupported by target %q: %v", target, diag.SkippedNodes)
+	}
 
-	// Clash clients expect YAML; this content type matches subconverter.
-	w.Header().Set("Content-Type", "text/yaml; charset=utf-8")
+	// Content-Type varies by target (YAML for clash, JSON for sing-box, plain
+	// text for surge/quanx/loon/v2ray). The generator reports the right one.
+	contentType := diag.ContentType
+	if contentType == "" {
+		contentType = "text/yaml; charset=utf-8"
+	}
+	w.Header().Set("Content-Type", contentType)
 
 	// &interval=<hours> overrides the client's profile auto-update interval.
 	updateInterval := "24"
