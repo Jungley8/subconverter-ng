@@ -28,7 +28,7 @@ import (
 func newHTTPServer(cfg *config.Config) *http.Server {
 	return &http.Server{
 		Addr:              cfg.Listen,
-		Handler:           server.New(cfg).Handler(),
+		Handler:           server.New(cfg).WithVersion(version).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 		// Conversions fan out to remote fetches (subscription + rulesets), so
 		// the write timeout is generous.

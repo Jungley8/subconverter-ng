@@ -21,17 +21,27 @@ import (
 
 // Server wires the HTTP handlers to the application config.
 type Server struct {
-	cfg   *config.Config
-	cache *fetch.Cache // shared across requests so the TTL cache survives; nil when caching disabled
+	cfg     *config.Config
+	version string       // build version, surfaced by GET /version; "dev" when unset
+	cache   *fetch.Cache // shared across requests so the TTL cache survives; nil when caching disabled
 }
 
 func New(cfg *config.Config) *Server {
-	s := &Server{cfg: cfg}
+	s := &Server{cfg: cfg, version: "dev"}
 	// A shared cache lives on the Server so repeated /sub requests reuse cached
 	// ruleset/subscription fetches. CacheTTL < 0 disables caching entirely.
 	if cfg.Fetch.CacheTTL >= 0 {
 		ttl := cfg.Fetch.CacheTTL // 0 => NewCache applies the default
 		s.cache = fetch.NewCache(ttl)
+	}
+	return s
+}
+
+// WithVersion sets the build version reported by GET /version. Returns the
+// receiver for chaining: server.New(cfg).WithVersion(v).Handler().
+func (s *Server) WithVersion(v string) *Server {
+	if v != "" {
+		s.version = v
 	}
 	return s
 }
@@ -103,7 +113,7 @@ func (s *Server) handleFlushCache(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Write([]byte("subconverter-ng (MVP)\n"))
+	w.Write([]byte("subconverter-ng " + s.version + "\n"))
 }
 
 func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
