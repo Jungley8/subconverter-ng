@@ -3,6 +3,7 @@ package convert
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"strings"
 	"testing"
 
@@ -233,8 +234,8 @@ func TestRun_SubscriptionFetchError(t *testing.T) {
 func TestRun_NoUsableNodes(t *testing.T) {
 	f := fakeFetcher{"sub": []byte(base64.StdEncoding.EncodeToString([]byte("garbage://nothing\nalso-bad")))}
 	_, _, err := Run(context.Background(), f, Request{Target: "clash", SubURLs: []string{"https://x/sub"}})
-	if err == nil || !strings.Contains(err.Error(), "no usable nodes") {
-		t.Errorf("expected no usable nodes error, got %v", err)
+	if err == nil || !errors.Is(err, ErrNoNodes) {
+		t.Errorf("expected ErrNoNodes, got %v", err)
 	}
 }
 

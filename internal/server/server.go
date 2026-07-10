@@ -4,6 +4,8 @@
 package server
 
 import (
+	"errors"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -201,7 +203,11 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 	out, diag, err := convert.Run(r.Context(), client, req)
 	if err != nil {
 		log.Printf("convert error: %v", err)
-		http.Error(w, "conversion failed: "+err.Error(), http.StatusBadGateway)
+		// Never respond with a 5xx here: Cloudflare (and similar proxies)
+		// replace origin 502/504 with their own error page, so the real cause
+		// never reaches the user. Return 200 with a readable plain-text hint
+		// instead — the subscription client surfaces the message verbatim.
+		writeUserError(w, err)
 		return
 	}
 	log.Printf("converted (%s): %d nodes, %d unparsed lines, %d dup, %d deprecated, %d nodes unsupported by target, empty groups: %v, %d rules dropped (unsupported type)",
@@ -241,6 +247,20 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Subscription-Userinfo", diag.SubscriptionUserinfo)
 	}
 	w.Write(out)
+}
+
+// writeUserError renders a conversion failure as a 200 plain-text hint rather
+// than a 5xx status. A 502/504 would be swallowed by Cloudflare's own error
+// page, hiding the real cause from the user; a 200 body reaches the client
+// intact. The message is prefixed with "#" so a client that still tries to
+// parse it as a config sees only comment lines.
+func writeUserError(w http.ResponseWriter, err error) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	if errors.Is(err, convert.ErrNoNodes) {
+		fmt.Fprintf(w, "# subconverter-ng: %s\n# 订阅无可用节点，请检查订阅链接或订阅内容是否有效。\n", err.Error())
+		return
+	}
+	fmt.Fprintf(w, "# subconverter-ng: 转换失败 / conversion failed\n# %s\n", err.Error())
 }
 
 // splitURLs splits the &url= value on the "|" multi-subscription separator.

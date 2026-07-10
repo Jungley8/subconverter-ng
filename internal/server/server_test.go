@@ -61,6 +61,30 @@ func TestHandleSub_EndToEnd(t *testing.T) {
 	}
 }
 
+func TestHandleSub_NoUsableNodesReturnsHint(t *testing.T) {
+	// An airport that serves an unparseable body must never yield a 5xx —
+	// Cloudflare would swallow it. Expect 200 with a readable plain-text hint.
+	air := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("garbage://nothing\nalso-bad"))
+	}))
+	defer air.Close()
+
+	h := New(config.Default()).Handler()
+	target := "/sub?target=clash&url=" + url.QueryEscape(air.URL+"/x")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (never 5xx)", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "text/plain") {
+		t.Errorf("content-type = %q, want text/plain", ct)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "无可用节点") {
+		t.Errorf("body missing hint: %q", body)
+	}
+}
+
 func TestHandleSub_MissingURL(t *testing.T) {
 	h := New(config.Default()).Handler()
 	rec := httptest.NewRecorder()

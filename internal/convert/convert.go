@@ -5,6 +5,7 @@ package convert
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"sync"
@@ -15,6 +16,12 @@ import (
 	"github.com/Jungley8/subconverter-ng/internal/parser"
 	"github.com/Jungley8/subconverter-ng/internal/proxy"
 )
+
+// ErrNoNodes is returned when a subscription fetched successfully but yielded no
+// usable nodes. It signals a subscription-content problem (empty sub, all lines
+// unparseable) rather than a gateway/fetch failure, so callers can respond with
+// a readable hint instead of a 502. Test with errors.Is.
+var ErrNoNodes = errors.New("no usable nodes parsed from subscription(s)")
 
 // Fetcher is the subset of fetch.Client convert needs (kept as an interface for
 // testability).
@@ -114,7 +121,7 @@ func Run(ctx context.Context, f Fetcher, req Request) ([]byte, *Diagnostics, err
 	}
 
 	if len(nodes) == 0 {
-		return nil, nil, fmt.Errorf("no usable nodes parsed from subscription(s); %d lines skipped", len(skipped))
+		return nil, nil, fmt.Errorf("%w; %d lines skipped", ErrNoNodes, len(skipped))
 	}
 
 	var cfg *extconfig.Config

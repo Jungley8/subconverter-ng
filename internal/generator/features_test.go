@@ -31,6 +31,33 @@ func TestDedup(t *testing.T) {
 	}
 }
 
+func TestUniquifyNames(t *testing.T) {
+	// Three nodes share a name; a fourth already occupies the " 2" slot.
+	a := ssNode("流量已耗尽!", "1.1.1.1", 8388, "aes-256-gcm")
+	b := ssNode("流量已耗尽!", "2.2.2.2", 8388, "aes-256-gcm")
+	c := ssNode("流量已耗尽! 2", "3.3.3.3", 8388, "aes-256-gcm")
+	d := ssNode("流量已耗尽!", "4.4.4.4", 8388, "aes-256-gcm")
+	nodes := []*proxy.Proxy{a, b, c, d}
+	uniquifyNames(nodes)
+
+	seen := map[string]bool{}
+	for _, n := range nodes {
+		if seen[n.Name] {
+			t.Fatalf("duplicate name after uniquify: %q", n.Name)
+		}
+		seen[n.Name] = true
+		// Rename must keep the Clash bag in sync so every generator agrees.
+		if n.Clash["name"] != n.Name {
+			t.Errorf("Clash[name]=%v out of sync with Name=%q", n.Clash["name"], n.Name)
+		}
+	}
+	if b.Name != "流量已耗尽! 2" && b.Name != "流量已耗尽! 3" {
+		// b is the first duplicate; it should have taken " 2" but c already
+		// held it, so it must probe upward to " 3".
+		t.Errorf("unexpected rename for b: %q", b.Name)
+	}
+}
+
 func TestFilterDeprecated(t *testing.T) {
 	good := ssNode("good", "1.1.1.1", 8388, "aes-256-gcm")
 	bad := ssNode("bad", "2.2.2.2", 8388, "rc4") // unsupported cipher

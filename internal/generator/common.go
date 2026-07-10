@@ -15,6 +15,7 @@ package generator
 import (
 	"context"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -43,8 +44,34 @@ func prepareNodes(nodes []*proxy.Proxy, cfg *extconfig.Config, opts Options, res
 		sort.SliceStable(nodes, func(i, j int) bool { return nodes[i].Name < nodes[j].Name })
 	}
 	applyNodeOptions(nodes, opts)
+	uniquifyNames(nodes)
 	res.NodeCount = len(nodes)
 	return nodes
+}
+
+// uniquifyNames guarantees every node has a distinct display name. Clash (and
+// sing-box) reject a config with two proxies sharing a name — a common case
+// when a provider injects marker nodes like "流量已耗尽!" or repeats a name
+// across regions. Duplicates get a " N" suffix (first duplicate -> "name 2"),
+// probing upward until the candidate is free so the suffix itself never
+// collides. Runs after applyNodeOptions so renames/emoji are already applied.
+func uniquifyNames(nodes []*proxy.Proxy) {
+	seen := make(map[string]bool, len(nodes))
+	for _, n := range nodes {
+		if !seen[n.Name] {
+			seen[n.Name] = true
+			continue
+		}
+		var candidate string
+		for i := 2; ; i++ {
+			candidate = n.Name + " " + strconv.Itoa(i)
+			if !seen[candidate] {
+				break
+			}
+		}
+		seen[candidate] = true
+		n.Rename(candidate)
+	}
 }
 
 // Rule is a target-neutral routing rule. Type is the upper-case matcher
