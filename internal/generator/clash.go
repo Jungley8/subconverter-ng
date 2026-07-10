@@ -446,7 +446,11 @@ func resolveSelectors(selectors []string, nodes []*proxy.Proxy, allNames []strin
 func buildRules(ctx context.Context, cfg *extconfig.Config, f Fetcher) (rules, skipped []string) {
 	neutral, skipped := collectRules(ctx, cfg, f)
 	for _, r := range neutral {
-		rules = append(rules, formatClashRule(r))
+		if line, ok := formatClashRule(r); ok {
+			rules = append(rules, line)
+		} else {
+			skipped = append(skipped, r.Type+","+r.Value)
+		}
 	}
 	return rules, skipped
 }
@@ -531,7 +535,7 @@ func expandInlineRule(body, group string) (string, bool) {
 	if !ok {
 		return "", false
 	}
-	return formatClashRule(r), true
+	return formatClashRule(r)
 }
 
 // expandRemoteRuleset parses an ACL4SSR-style .list file into Clash rule lines
@@ -540,7 +544,11 @@ func expandInlineRule(body, group string) (string, bool) {
 func expandRemoteRuleset(data []byte, group string) (out, skipped []string) {
 	rules, skipped := parseRemoteRuleset(data, group)
 	for _, r := range rules {
-		out = append(out, formatClashRule(r))
+		if line, ok := formatClashRule(r); ok {
+			out = append(out, line)
+		} else {
+			skipped = append(skipped, r.Type+","+r.Value)
+		}
 	}
 	return out, skipped
 }

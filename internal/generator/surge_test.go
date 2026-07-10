@@ -86,6 +86,44 @@ func TestGenerateSurge(t *testing.T) {
 	}
 }
 
+// TestURLRegexTargetAware locks in that a URL-REGEX rule survives to a target
+// that supports it (Surge/Loon) but is dropped for Clash, which has no such
+// rule type. The neutral parser must keep the type either way.
+func TestURLRegexTargetAware(t *testing.T) {
+	cfg := &extconfig.Config{
+		EnableRuleGenerator: true,
+		ProxyGroups:         []extconfig.ProxyGroup{{Name: "Proxy", Type: "select", Selectors: []string{".*"}}},
+		Rulesets:            []extconfig.Ruleset{{Group: "Proxy", URL: "https://rules/AD.list"}},
+	}
+	f := fakeFetcher{"AD.list": []byte("URL-REGEX,^https?://ad\\.example\\.com\nDOMAIN-SUFFIX,ok.com\n")}
+	nodes := surgeNodes(t)
+
+	surge, err := GenerateSurge(context.Background(), nodes, cfg, f, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(surge.Output), "URL-REGEX,^https?://ad\\.example\\.com,Proxy") {
+		t.Errorf("surge should keep URL-REGEX:\n%s", surge.Output)
+	}
+
+	clash, err := GenerateClash(context.Background(), nodes, cfg, f, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(clash.Output), "URL-REGEX") {
+		t.Error("clash must not emit URL-REGEX (mihomo rejects it)")
+	}
+	found := false
+	for _, s := range clash.SkippedRules {
+		if strings.Contains(s, "URL-REGEX") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("clash should report URL-REGEX in SkippedRules, got %v", clash.SkippedRules)
+	}
+}
+
 func TestGenerateShadowrocket_VLESS(t *testing.T) {
 	cfg, f := surgeSampleConfig()
 	res, err := GenerateShadowrocket(context.Background(), surgeNodes(t), cfg, f, Options{})
