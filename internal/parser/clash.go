@@ -8,18 +8,16 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// looksLikeClashYAML heuristically detects a Clash/Clash.Meta document so we
-// can lift its proxies instead of trying to base64-decode it.
+// looksLikeClashYAML detects a Clash/Clash.Meta document so we can lift its
+// proxies instead of trying to base64-decode it. A top-level `proxies:` key is
+// enough: neither a base64 blob nor a share-link list contains a line starting
+// with "proxies:", so there is no false positive to guard against — and keying
+// only on it avoids missing configs whose proxy-groups/rules sit far past the
+// header (previously a fixed 4096-byte window with a required secondary marker
+// dropped those). Anchored to line start so a substring inside a node name
+// can't trip it.
 func looksLikeClashYAML(text string) bool {
-	head := text
-	if len(head) > 4096 {
-		head = head[:4096]
-	}
-	return strings.Contains(head, "proxies:") &&
-		(strings.Contains(head, "proxy-groups:") ||
-			strings.Contains(head, "rules:") ||
-			strings.Contains(head, "port:") ||
-			strings.Contains(head, "mixed-port:"))
+	return strings.HasPrefix(text, "proxies:") || strings.Contains(text, "\nproxies:")
 }
 
 type clashDoc struct {

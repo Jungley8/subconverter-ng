@@ -210,4 +210,12 @@ func TestLooksLikeClashYAML(t *testing.T) {
 	if looksLikeClashYAML("ss://abc\nvmess://def") {
 		t.Error("node list misdetected as clash yaml")
 	}
+	// A `proxies:` key alone is enough — no secondary marker, no byte window.
+	if !looksLikeClashYAML("port: 7890\nproxies:\n  - {}") {
+		t.Error("should detect clash yaml with proxies past the header")
+	}
+	// Anchored to line start: a substring inside a value must not trip it.
+	if looksLikeClashYAML("ss://x#my proxies: here") {
+		t.Error("substring inside a node name misdetected as clash yaml")
+	}
 }

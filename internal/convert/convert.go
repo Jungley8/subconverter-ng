@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/Jungley8/subconverter-ng/internal/emoji"
@@ -121,7 +122,12 @@ func Run(ctx context.Context, f Fetcher, req Request) ([]byte, *Diagnostics, err
 	}
 
 	if len(nodes) == 0 {
-		return nil, nil, fmt.Errorf("%w; %d lines skipped", ErrNoNodes, len(skipped))
+		// A successful fetch that yields zero nodes almost always means the
+		// airport returned a notice/error page instead of a node list (e.g. the
+		// sub is only reachable from a given region, or the UA was rejected).
+		// Surface a snippet of what came back so the cause is diagnosable
+		// instead of opaque — the raw body is far more useful than a bare count.
+		return nil, nil, fmt.Errorf("%w; %d lines skipped%s", ErrNoNodes, len(skipped), skippedHint(skipped))
 	}
 
 	var cfg *extconfig.Config
@@ -186,6 +192,27 @@ func resolveEmoji(cfg *extconfig.Config, req Request) (remove, add bool) {
 		remove = true
 	}
 	return remove, add
+}
+
+// skippedHint returns a short ": <snippet>" describing the first unparsed line,
+// or "" when there is nothing to show. It helps distinguish a region-blocked /
+// UA-rejected notice page from a genuinely empty subscription. The snippet is
+// truncated and whitespace-collapsed so it stays on one line in logs and the
+// HTTP hint.
+func skippedHint(skipped []string) string {
+	for _, line := range skipped {
+		s := strings.TrimSpace(line)
+		if s == "" {
+			continue
+		}
+		s = strings.Join(strings.Fields(s), " ")
+		const max = 200
+		if len(s) > max {
+			s = s[:max] + "…"
+		}
+		return ": first skipped line: " + s
+	}
+	return ""
 }
 
 // fetchAndParseAll fetches every subscription concurrently and concatenates the
