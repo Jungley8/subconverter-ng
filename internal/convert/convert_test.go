@@ -380,3 +380,52 @@ func contains(haystack []string, needle string) bool {
 	}
 	return false
 }
+
+func TestRawShareLinkDirect(t *testing.T) {
+	// A node link passed as the subscription URL must be parsed inline. The
+	// empty fakeFetcher fails every fetch, so this test fails if the raw link
+	// is ever treated as a URL to retrieve.
+	f := fakeFetcher{}
+	req := Request{
+		Target:  "clash",
+		SubURLs: []string{"vless://uuid-2@us.example.com:443?encryption=none&security=reality&sni=www.microsoft.com&fp=chrome&pbk=PUBKEY&sid=ab&flow=xtls-rprx-vision&type=tcp#US"},
+	}
+	data, diag, err := Run(context.Background(), f, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diag.NodeCount != 1 || len(diag.SkippedLines) != 0 {
+		t.Fatalf("NodeCount=%d skipped=%v, want 1 and none", diag.NodeCount, diag.SkippedLines)
+	}
+	var doc map[string]any
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	proxies := toAnys(doc["proxies"])
+	if len(proxies) != 1 {
+		t.Fatalf("proxies = %d, want 1", len(proxies))
+	}
+	m, _ := proxies[0].(map[string]any)
+	if m["type"] != "vless" || m["server"] != "us.example.com" {
+		t.Errorf("bad proxy: %v", m)
+	}
+}
+
+func TestRawShareLinkMixedWithSubscription(t *testing.T) {
+	f := fakeFetcher{"client/subscribe": sampleSubscription()}
+	req := Request{
+		Target:  "clash",
+		SubURLs: []string{
+			"https://airport.example.com/api/v1/client/subscribe?token=x",
+			"ss://" + b64("aes-256-gcm:pass") + "@5.5.5.5:8388#Direct",
+		},
+	}
+	_, diag, err := Run(context.Background(), f, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 7 subscription links + 1 inline node; no config means no exclusions.
+	if diag.NodeCount != 8 {
+		t.Fatalf("NodeCount = %d, want 8 (7 from sub + 1 inline)", diag.NodeCount)
+	}
+}

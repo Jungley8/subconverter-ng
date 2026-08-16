@@ -71,7 +71,7 @@ docker compose up -d
 | 参数 | 说明 |
 |---|---|
 | `target` | 输出目标：`clash` / `singbox` / `surge` / `shadowrocket` / `quanx` / `loon` / `v2ray` |
-| `url` | 订阅链接，多个用 `\|` 分隔（必填） |
+| `url` | 订阅链接，多个用 `\|` 分隔（必填）；也可直接粘贴节点链接（`vless://` 等） |
 | `config` | 外部 INI 配置 URL |
 | `insert` | 是否合并服务端 `insert_url` 节点（覆盖配置默认） |
 | `sort` | 按节点名排序 |
