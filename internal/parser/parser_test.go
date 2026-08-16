@@ -219,3 +219,40 @@ func TestLooksLikeClashYAML(t *testing.T) {
 		t.Error("substring inside a node name misdetected as clash yaml")
 	}
 }
+
+func TestIsShareLink(t *testing.T) {
+	links := []string{
+		"ss://" + b64("aes-256-gcm:pw") + "@1.2.3.4:8388#HK",
+		"ssr://abc",
+		"vmess://" + b64(`{"v":"2","ps":"JP"}`),
+		"vless://uuid@h:443?type=tcp#n",
+		"trojan://pass@h:443#n",
+		"hysteria2://auth@h:443#n",
+		"hy2://auth@h:443#n",
+		"hysteria://auth@h:443#n",
+		"hy://auth@h:443#n",
+		"tuic://uuid:pw@h:443#n",
+		"socks://user:pass@h:1080#n",
+		"socks5://h:1080#n",
+		"anytls://pass@h:443#n",
+		"wireguard://key@h:51820#n",
+		"wg://key@h:51820#n",
+	}
+	for _, l := range links {
+		if !IsShareLink(l) {
+			t.Errorf("IsShareLink(%q) = false, want true", l)
+		}
+	}
+	notLinks := []string{
+		"https://airport.com/sub",
+		"http://example.com/x?token=1",
+		"just some text",
+		"",
+		"vless:uuid@h", // missing ://
+	}
+	for _, l := range notLinks {
+		if IsShareLink(l) {
+			t.Errorf("IsShareLink(%q) = true, want false", l)
+		}
+	}
+}

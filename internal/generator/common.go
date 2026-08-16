@@ -90,16 +90,23 @@ func (r Rule) IsMatch() bool {
 	return strings.EqualFold(r.Type, "MATCH") || strings.EqualFold(r.Type, "FINAL")
 }
 
-// formatClashRule renders r as a Clash.Meta rule line.
-func formatClashRule(r Rule) string {
+// formatClashRule renders r as a Clash.Meta rule line. ok is false for a rule
+// type Clash.Meta does not accept — this is the Clash-specific gate (mihomo
+// rejects the WHOLE config on an unknown type). The neutral parsers keep every
+// type so other targets (Surge/Loon URL-REGEX etc.) can still emit theirs; each
+// target's formatter filters to what it supports.
+func formatClashRule(r Rule) (string, bool) {
 	if r.IsMatch() {
-		return "MATCH," + r.Group
+		return "MATCH," + r.Group, true
+	}
+	if !isValidRuleType(r.Type) {
+		return "", false
 	}
 	s := r.Type + "," + r.Value + "," + r.Group
 	if r.Flag != "" {
 		s += "," + r.Flag
 	}
-	return s
+	return s, true
 }
 
 // collectRules expands every ruleset in declared order into neutral Rule values.
@@ -147,8 +154,9 @@ func collectRules(ctx context.Context, cfg *extconfig.Config, f Fetcher) (rules 
 	return rules, skipped
 }
 
-// parseInlineRule turns a []inline body into a neutral Rule. ok is false when
-// the rule type is not a recognised Clash.Meta type.
+// parseInlineRule turns a []inline body into a neutral Rule. Types are kept
+// verbatim (target-neutral); ok is false only when the body is not rule-shaped
+// (a lone token that is neither FINAL nor MATCH).
 //
 //	FINAL      -> {Type: MATCH}
 //	GEOIP,CN   -> {Type: GEOIP, Value: CN}
@@ -157,19 +165,19 @@ func collectRules(ctx context.Context, cfg *extconfig.Config, f Fetcher) (rules 
 // The body after the first comma is kept verbatim as Value (it may itself carry
 // a trailing flag), matching the legacy behaviour of appending the group last.
 func parseInlineRule(body, group string) (Rule, bool) {
-	if strings.EqualFold(body, "FINAL") {
+	if strings.EqualFold(body, "FINAL") || strings.EqualFold(body, "MATCH") {
 		return Rule{Type: "MATCH", Group: group}, true
 	}
-	typ, val, _ := strings.Cut(body, ",")
-	if !isValidRuleType(typ) {
+	typ, val, found := strings.Cut(body, ",")
+	if !found {
 		return Rule{}, false
 	}
 	return Rule{Type: typ, Value: val, Group: group}, true
 }
 
 // parseRemoteRuleset parses an ACL4SSR-style .list file into neutral Rule
-// values, tagging each with group. Lines with an unsupported rule type are
-// collected into skipped rather than emitted.
+// values, tagging each with group. Rule types are kept verbatim so each target
+// can emit what it supports; only lines that are not rule-shaped go to skipped.
 func parseRemoteRuleset(data []byte, group string) (out []Rule, skipped []string) {
 	for _, raw := range strings.Split(string(data), "\n") {
 		line := strings.TrimSpace(strings.TrimRight(raw, "\r"))
@@ -190,16 +198,8 @@ func parseRemoteRuleset(data []byte, group string) (out []Rule, skipped []string
 		}
 		switch len(fields) {
 		case 2: // TYPE,VALUE
-			if !isValidRuleType(fields[0]) {
-				skipped = append(skipped, line)
-				continue
-			}
 			out = append(out, Rule{Type: fields[0], Value: fields[1], Group: group})
 		case 3: // TYPE,VALUE,flag (e.g. no-resolve)
-			if !isValidRuleType(fields[0]) {
-				skipped = append(skipped, line)
-				continue
-			}
 			out = append(out, Rule{Type: fields[0], Value: fields[1], Group: group, Flag: fields[2]})
 		case 1: // bare keyword like FINAL/MATCH
 			if strings.EqualFold(fields[0], "FINAL") || strings.EqualFold(fields[0], "MATCH") {

@@ -135,8 +135,8 @@ var surgeSupportedRuleTypes = map[string]string{
 	"DOMAIN": "DOMAIN", "DOMAIN-SUFFIX": "DOMAIN-SUFFIX", "DOMAIN-KEYWORD": "DOMAIN-KEYWORD",
 	"IP-CIDR": "IP-CIDR", "IP-CIDR6": "IP-CIDR6", "IP-ASN": "IP-ASN", "GEOIP": "GEOIP",
 	"DST-PORT": "DEST-PORT", "SRC-PORT": "SRC-PORT", "IN-PORT": "IN-PORT",
-	"PROCESS-NAME": "PROCESS-NAME", "USER-AGENT": "USER-AGENT", "RULE-SET": "RULE-SET",
-	"AND": "AND", "OR": "OR", "NOT": "NOT",
+	"PROCESS-NAME": "PROCESS-NAME", "USER-AGENT": "USER-AGENT", "URL-REGEX": "URL-REGEX",
+	"RULE-SET": "RULE-SET", "AND": "AND", "OR": "OR", "NOT": "NOT",
 }
 
 // formatSurgeRule renders a neutral rule as a Surge rule line. ok is false for

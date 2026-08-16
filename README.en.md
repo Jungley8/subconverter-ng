@@ -74,7 +74,7 @@ Full list in [docs/url-params.md](docs/url-params.md). Common ones:
 | Param | Description |
 |---|---|
 | `target` | output target: `clash` / `singbox` / `surge` / `shadowrocket` / `quanx` / `loon` / `v2ray` |
-| `url` | subscription URL(s), `\|`-separated (required) |
+| `url` | subscription URL(s), `\|`-separated (required); raw node links (`vless://` etc.) also accepted |
 | `config` | external INI config URL |
 | `insert` | merge the server's `insert_url` nodes (overrides config default) |
 | `sort` | sort nodes by name |

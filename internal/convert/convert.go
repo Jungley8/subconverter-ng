@@ -231,6 +231,15 @@ func fetchAndParseAll(ctx context.Context, f Fetcher, urls []string) ([]*proxy.P
 		wg.Add(1)
 		go func(i int, u string) {
 			defer wg.Done()
+			// A raw share link (vless://, ss://, …) is node content, not a URL
+			// to fetch: parse it inline. The &url= param and the CLI --url flag
+			// both accept node links directly, so a single node can be
+			// converted without a subscription.
+			if parser.IsShareLink(u) {
+				nodes, skipped, err := parser.Parse([]byte(u))
+				results[i] = out{nodes: nodes, skipped: skipped, err: err}
+				return
+			}
 			data, hdr, err := getWithMeta(ctx, f, u)
 			if err != nil {
 				results[i].err = err

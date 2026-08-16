@@ -37,6 +37,23 @@ var registry = map[string]lineParser{
 	"wg://":        parseWireGuard,
 }
 
+// matchScheme returns the registry scheme that prefixes s, or "" when s is
+// not a share link. No scheme in the registry is a prefix of another, so the
+// map iteration order never affects the result.
+func matchScheme(s string) string {
+	for scheme := range registry {
+		if strings.HasPrefix(s, scheme) {
+			return scheme
+		}
+	}
+	return ""
+}
+
+// IsShareLink reports whether s is a single share link (e.g.
+// "vless://uuid@host:443?...#name") rather than a subscription URL to fetch.
+// Callers use it to accept node links directly in place of subscription URLs.
+func IsShareLink(s string) bool { return matchScheme(s) != "" }
+
 // Parse decodes a subscription payload into proxy nodes. Unparseable or
 // unsupported lines are skipped and returned in skipped for diagnostics; a
 // non-nil error is only returned for a payload that is neither a node list nor
@@ -70,16 +87,15 @@ func Parse(payload []byte) (nodes []*proxy.Proxy, skipped []string, err error) {
 }
 
 func dispatch(line string) *proxy.Proxy {
-	for scheme, fn := range registry {
-		if strings.HasPrefix(line, scheme) {
-			p, err := fn(line)
-			if err != nil {
-				return nil
-			}
-			return p
-		}
+	scheme := matchScheme(line)
+	if scheme == "" {
+		return nil
 	}
-	return nil
+	p, err := registry[scheme](line)
+	if err != nil {
+		return nil
+	}
+	return p
 }
 
 // tryBase64 decodes a subscription body that is wrapped in standard or
