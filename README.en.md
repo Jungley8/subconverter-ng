@@ -19,7 +19,7 @@ targeting **Clash.Meta / mihomo** so new protocols work right away.
 
 - ✅ **Compatible API**: `/sub?target=clash&url=...&config=...` — existing clients keep working unchanged
 - ✅ **Protocols**: Shadowsocks, ShadowsocksR, VMess, VLESS (Reality / XTLS-Vision), Trojan, Hysteria (v1/v2), TUIC v5, AnyTLS, SOCKS5, **WireGuard**
-- ✅ **Node processing**: dedup (`dedup`), filter unsupported nodes (`fdn`), append protocol type (`append_type`), regex `rename`, emoji add/remove (subconverter-compatible)
+- ✅ **Node processing**: dedup (`dedup`), filter unsupported nodes (`fdn`), append protocol type (`append_type`), Tailscale DIRECT rules (`tailscale`), regex `rename`, emoji add/remove (subconverter-compatible)
 - ✅ **Cache / rate-limit**: TTL cache for rulesets & subscriptions (on by default, flushable), per-IP rate limiting
 - ✅ **Subscription-Userinfo passthrough**: clients show airport traffic / expiry directly
 - ✅ **rule-providers output** (`expand=false`), proxies-only output (`list`)
@@ -82,6 +82,7 @@ Full list in [docs/url-params.md](docs/url-params.md). Common ones:
 | `fdn` | drop nodes Clash.Meta can't use (e.g. SS with a retired cipher) |
 | `list` | output only the node list (no groups / rules, **clash only**) |
 | `append_type` | prepend `[TYPE]` to node names |
+| `tailscale` | prepend Tailscale DIRECT rules (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`) to rules |
 | `expand` | `false` emits rule-providers referencing remote rules (**clash only**) |
 | `emoji` `add_emoji` `remove_emoji` | emoji add/remove (subconverter-compatible) |
 | `udp` `tfo` `scv` | per-node toggles (target-dependent) |

@@ -59,6 +59,11 @@ type Options struct {
 	// ListOnly emits only the proxies list (the `proxies:` document) with no
 	// groups or rules. Maps to &list=true.
 	ListOnly bool
+
+	// Tailscale, when true, prepends Tailscale DIRECT rules
+	// (100.64.0.0/10 and fd7a:115c:a1e0::/48) to the top of the rule list.
+	// Maps to &tailscale=true.
+	Tailscale bool
 }
 
 // RenameRule is a compiled rename= entry: a regex pattern and its replacement.
@@ -171,10 +176,10 @@ func GenerateClash(ctx context.Context, nodes []*proxy.Proxy, cfg *extconfig.Con
 	var rules []string
 	var providers map[string]any
 	if opts.UseRuleProviders {
-		rules, providers, res.SkippedRules = buildRuleProviders(cfg)
+		rules, providers, res.SkippedRules = buildRuleProviders(cfg, opts)
 	} else {
 		var skippedRules []string
-		rules, skippedRules = buildRules(ctx, cfg, f)
+		rules, skippedRules = buildRules(ctx, cfg, f, opts)
 		res.SkippedRules = skippedRules
 	}
 
@@ -197,6 +202,16 @@ func GenerateClash(ctx context.Context, nodes []*proxy.Proxy, cfg *extconfig.Con
 				}
 				if cfg.OverwriteRules || base["rules"] == nil {
 					base["rules"] = rules
+				} else if opts.Tailscale {
+					ts := []any{
+						"IP-CIDR,100.64.0.0/10,DIRECT,no-resolve",
+						"IP-CIDR,fd7a:115c:a1e0::/48,DIRECT,no-resolve",
+					}
+					if existing, ok := base["rules"].([]any); ok {
+						base["rules"] = append(ts, existing...)
+					} else {
+						base["rules"] = ts
+					}
 				}
 				y, err := yaml.Marshal(base)
 				if err != nil {
@@ -443,8 +458,8 @@ func resolveSelectors(selectors []string, nodes []*proxy.Proxy, allNames []strin
 // buildRules expands all rulesets in declared order into Clash rule lines. The
 // concurrent fetch + neutral parsing lives in collectRules (common.go); this
 // just formats each neutral Rule as a Clash rule string.
-func buildRules(ctx context.Context, cfg *extconfig.Config, f Fetcher) (rules, skipped []string) {
-	neutral, skipped := collectRules(ctx, cfg, f)
+func buildRules(ctx context.Context, cfg *extconfig.Config, f Fetcher, opts Options) (rules, skipped []string) {
+	neutral, skipped := collectRules(ctx, cfg, f, opts)
 	for _, r := range neutral {
 		if line, ok := formatClashRule(r); ok {
 			rules = append(rules, line)
@@ -461,9 +476,15 @@ func buildRules(ctx context.Context, cfg *extconfig.Config, f Fetcher) (rules, s
 // its group. Inline rulesets ([]GEOIP,CN, []FINAL) stay direct rules so MATCH
 // and inline matchers still work. Providers are deduped by URL: a URL reused
 // across groups yields one provider but a RULE-SET line per (provider,group).
-func buildRuleProviders(cfg *extconfig.Config) (rules []string, providers map[string]any, skipped []string) {
+func buildRuleProviders(cfg *extconfig.Config, opts Options) (rules []string, providers map[string]any, skipped []string) {
+	if opts.Tailscale {
+		rules = append(rules,
+			"IP-CIDR,100.64.0.0/10,DIRECT,no-resolve",
+			"IP-CIDR,fd7a:115c:a1e0::/48,DIRECT,no-resolve",
+		)
+	}
 	if !cfg.EnableRuleGenerator {
-		return nil, nil, nil
+		return rules, providers, nil
 	}
 	providerByURL := map[string]string{} // url -> provider key
 	seenRuleSet := map[string]bool{}     // "provider\x00group" -> emitted

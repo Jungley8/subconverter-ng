@@ -299,3 +299,31 @@ func TestClientIP(t *testing.T) {
 		})
 	}
 }
+
+func TestHandleSub_Tailscale(t *testing.T) {
+	air := fakeAirport()
+	defer air.Close()
+
+	h := New(config.Default()).Handler()
+	target := "/sub?target=clash&url=" + url.QueryEscape(air.URL+"/sub.txt") +
+		"&config=" + url.QueryEscape(air.URL+"/config.init") + "&tailscale=true"
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var doc struct {
+		Rules []string `yaml:"rules"`
+	}
+	if err := yaml.Unmarshal(rec.Body.Bytes(), &doc); err != nil {
+		t.Fatalf("invalid yaml: %v", err)
+	}
+	if len(doc.Rules) < 3 {
+		t.Fatalf("rules len=%d, want >=3", len(doc.Rules))
+	}
+	if doc.Rules[0] != "IP-CIDR,100.64.0.0/10,DIRECT,no-resolve" || doc.Rules[1] != "IP-CIDR,fd7a:115c:a1e0::/48,DIRECT,no-resolve" {
+		t.Errorf("rules[0..1] mismatch: %v", doc.Rules[:2])
+	}
+}

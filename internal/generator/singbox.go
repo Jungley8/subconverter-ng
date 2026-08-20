@@ -52,7 +52,7 @@ func GenerateSingbox(ctx context.Context, nodes []*proxy.Proxy, cfg *extconfig.C
 	)
 
 	// Route rules from neutral rules.
-	neutral, skippedRules := collectRules(ctx, cfg, f)
+	neutral, skippedRules := collectRules(ctx, cfg, f, opts)
 	routeRules := []map[string]any{{"protocol": "dns", "outbound": "dns-out"}}
 	final := "direct"
 	for _, r := range neutral {

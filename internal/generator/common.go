@@ -109,13 +109,24 @@ func formatClashRule(r Rule) (string, bool) {
 	return s, true
 }
 
+// tailscaleRules are prepended to the rule list when Options.Tailscale is true.
+var tailscaleRules = []Rule{
+	{Type: "IP-CIDR", Value: "100.64.0.0/10", Group: "DIRECT", Flag: "no-resolve"},
+	{Type: "IP-CIDR", Value: "fd7a:115c:a1e0::/48", Group: "DIRECT", Flag: "no-resolve"},
+}
+
 // collectRules expands every ruleset in declared order into neutral Rule values.
 // Remote rulesets are fetched concurrently but assembled in declared order;
 // inline rulesets ([]GEOIP,CN, []FINAL) are expanded directly. Entries with an
 // unsupported rule type are returned in skipped instead of rules.
-func collectRules(ctx context.Context, cfg *extconfig.Config, f Fetcher) (rules []Rule, skipped []string) {
+// When opts.Tailscale is true, Tailscale direct rules are prepended.
+func collectRules(ctx context.Context, cfg *extconfig.Config, f Fetcher, opts Options) (rules []Rule, skipped []string) {
+	var tsRules []Rule
+	if opts.Tailscale {
+		tsRules = append(tsRules, tailscaleRules...)
+	}
 	if !cfg.EnableRuleGenerator {
-		return nil, nil
+		return tsRules, nil
 	}
 	type fetched struct {
 		rules   []Rule
@@ -151,7 +162,7 @@ func collectRules(ctx context.Context, cfg *extconfig.Config, f Fetcher) (rules 
 		rules = append(rules, results[i].rules...)
 		skipped = append(skipped, results[i].skipped...)
 	}
-	return rules, skipped
+	return append(tsRules, rules...), skipped
 }
 
 // parseInlineRule turns a []inline body into a neutral Rule. Types are kept

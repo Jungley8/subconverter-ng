@@ -113,6 +113,7 @@ func cmdConvert(args []string) {
 	fdn := fs.Bool("fdn", false, "filter nodes Clash.Meta cannot use")
 	list := fs.Bool("list", false, "output only the node list (no groups/rules)")
 	appendType := fs.Bool("append-type", false, "prepend [TYPE] to node names")
+	tailscale := fs.Bool("tailscale", false, "prepend Tailscale DIRECT rules (100.64.0.0/10, fd7a:115c:a1e0::/48)")
 	insert := fs.String("insert", "", "insert_url: extra node source URL(s), '|'-separated, merged into the output")
 	insertPrepend := fs.Bool("insert-prepend", true, "place inserted nodes before subscription nodes")
 	timeout := fs.Duration("timeout", 30*time.Second, "per-fetch timeout")
@@ -147,6 +148,7 @@ func cmdConvert(args []string) {
 			FilterDeprecated: *fdn,
 			AppendType:       *appendType,
 			ListOnly:         *list,
+			Tailscale:        *tailscale,
 		},
 		Emoji:       triFromString(*emoji),
 		AddEmoji:    triFromString(*addEmoji),

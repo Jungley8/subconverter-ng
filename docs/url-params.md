@@ -31,6 +31,7 @@
 | `sort` | 按节点名排序 | :material-check: |
 | `dedup` | 去除重复节点：连接字段（类型/地址/端口/凭据/传输）完全相同的节点只保留第一个 | :material-check: |
 | `append_type` | 节点名前加 `[类型]`（如 `[SS] 香港 01`） | :material-check: |
+| `tailscale` | 在规则最前置入 Tailscale 直连规则（`100.64.0.0/10` 与 `fd7a:115c:a1e0::/48` 直连且 `no-resolve`） | :material-check: |
 | `emoji` | 快捷开关：`true`=去旧 emoji 后按规则统一加旗；`false`=去除 emoji 不再加。等价于 `add_emoji=<值>` 且 `remove_emoji=true` | :material-check: |
 | `add_emoji` | 是否按规则给节点名前加国旗 emoji（默认 `true`） | :material-check: |
 | `remove_emoji` | 是否先移除节点名中已有的 emoji（默认 `true`） | :material-check: |
