@@ -234,9 +234,16 @@ func TestIsShareLink(t *testing.T) {
 		"tuic://uuid:pw@h:443#n",
 		"socks://user:pass@h:1080#n",
 		"socks5://h:1080#n",
+		"socks5://100.106.251.111:1080#Tailscale",
+		"SOCKS5://100.106.251.111:1080#Tailscale",
+		"socks5h://h:1080#n",
+		"socks4://h:1080#n",
+		"socks4a://h:1080#n",
+		"tg://socks?server=h&port=1080",
 		"anytls://pass@h:443#n",
 		"wireguard://key@h:51820#n",
 		"wg://key@h:51820#n",
+		"VLESS://uuid@h:443?type=tcp#n",
 	}
 	for _, l := range links {
 		if !IsShareLink(l) {

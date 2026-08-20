@@ -251,6 +251,17 @@ func nodeSingboxOutbound(n *proxy.Proxy) (map[string]any, bool) {
 		}
 		base["tls"] = singboxTLS(c, cs(c, "sni"), true)
 		return base, true
+
+	case "socks5", "socks":
+		base["type"] = "socks"
+		base["version"] = "5"
+		if u := cs(c, "username"); u != "" {
+			base["username"] = u
+		}
+		if pw := cs(c, "password"); pw != "" {
+			base["password"] = pw
+		}
+		return base, true
 	}
 	return nil, false
 }

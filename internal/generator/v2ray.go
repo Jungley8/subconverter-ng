@@ -155,6 +155,16 @@ func nodeShareLink(n *proxy.Proxy) (string, bool) {
 			q.Set("allow_insecure", "1")
 		}
 		return "tuic://" + cs(c, "uuid") + ":" + cs(c, "password") + "@" + hostport + "?" + q.Encode() + frag, true
+
+	case "socks5", "socks":
+		link := "socks5://"
+		u := cs(c, "username")
+		pw := cs(c, "password")
+		if u != "" || pw != "" {
+			link += url.UserPassword(u, pw).String() + "@"
+		}
+		link += hostport + frag
+		return link, true
 	}
 	return "", false
 }

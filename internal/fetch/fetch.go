@@ -80,6 +80,10 @@ func New(opts Options) (*Client, error) {
 		if err != nil {
 			return nil, fmt.Errorf("invalid proxy %q: %w", opts.Proxy, err)
 		}
+		// Go's http.Transport natively supports "socks5", map "socks5h" to it.
+		if strings.EqualFold(pu.Scheme, "socks5h") {
+			pu.Scheme = "socks5"
+		}
 		tr.Proxy = http.ProxyURL(pu)
 	} else {
 		// Otherwise honour the standard HTTP_PROXY / HTTPS_PROXY / NO_PROXY

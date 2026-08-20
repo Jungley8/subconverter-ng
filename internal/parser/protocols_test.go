@@ -88,6 +88,43 @@ func TestParseSOCKS_PlainAndBase64(t *testing.T) {
 	if p2.Clash["username"] != "alice" || p2.Clash["password"] != "s3cret" {
 		t.Errorf("decoded user/pass = %v/%v", p2.Clash["username"], p2.Clash["password"])
 	}
+
+	// No auth socks5 link (like Tailscale node).
+	p3, err := parseSOCKS("socks5://100.106.251.111:1080#Tailscale")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p3.Type != "socks5" || p3.Server != "100.106.251.111" || p3.Port != 1080 || p3.Name != "Tailscale" {
+		t.Errorf("bad socks5 no-auth fields: %+v", p3)
+	}
+	if _, ok := p3.Clash["username"]; ok {
+		t.Errorf("username should not be set when empty")
+	}
+
+	// Full base64 host part.
+	fullB64 := b64("myuser:mypass@100.106.251.111:1080")
+	p4, err := parseSOCKS("socks5://" + fullB64 + "#B64Tailscale")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p4.Server != "100.106.251.111" || p4.Port != 1080 || p4.Name != "B64Tailscale" {
+		t.Errorf("bad socks5 full-b64 fields: %+v", p4)
+	}
+	if p4.Clash["username"] != "myuser" || p4.Clash["password"] != "mypass" {
+		t.Errorf("bad socks5 full-b64 creds: %v/%v", p4.Clash["username"], p4.Clash["password"])
+	}
+
+	// tg://socks format.
+	p5, err := parseSOCKS("tg://socks?server=100.106.251.111&port=1080&user=tguser&pass=tgpass#TGSocks")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p5.Server != "100.106.251.111" || p5.Port != 1080 || p5.Name != "TGSocks" {
+		t.Errorf("bad tg://socks fields: %+v", p5)
+	}
+	if p5.Clash["username"] != "tguser" || p5.Clash["password"] != "tgpass" {
+		t.Errorf("bad tg://socks creds: %v/%v", p5.Clash["username"], p5.Clash["password"])
+	}
 }
 
 func TestParseAnyTLS(t *testing.T) {

@@ -24,6 +24,7 @@ func TestGenerateV2ray_RoundTrip(t *testing.T) {
 		"trojan://pass@sg.example.com:443?sni=sg.example.com&type=ws&host=sg.example.com&path=/tj#SG",
 		"hysteria2://authpass@hk2.example.com:443?sni=hk2.example.com&insecure=1&obfs=salamander&obfs-password=xyz#HK2",
 		"tuic://uuid-3:tpass@tw.example.com:443?congestion_control=bbr&alpn=h3&sni=tw.example.com#TW",
+		"socks5://user:pass@s.example.com:1080#SK",
 	}
 	sub := []byte(base64.StdEncoding.EncodeToString([]byte(strings.Join(links, "\n"))))
 
@@ -31,8 +32,8 @@ func TestGenerateV2ray_RoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse input: %v", err)
 	}
-	if len(nodes) != 6 {
-		t.Fatalf("parsed %d input nodes, want 6", len(nodes))
+	if len(nodes) != 7 {
+		t.Fatalf("parsed %d input nodes, want 7", len(nodes))
 	}
 
 	res, err := GenerateV2ray(context.Background(), nodes, &extconfig.Config{}, fakeFetcher{}, Options{})
@@ -63,10 +64,10 @@ func TestGenerateV2ray_RoundTrip(t *testing.T) {
 }
 
 func TestGenerateV2ray_SkipsUnsupported(t *testing.T) {
-	// socks5 has no share-link form here -> reported, not emitted.
+	// anytls has no share-link form here -> reported, not emitted.
 	links := []string{
 		"ss://" + b64("aes-256-gcm:pass") + "@1.2.3.4:8388#OK",
-		"socks://" + b64("user:pass") + "@5.6.7.8:1080#SOCKS",
+		"anytls://mypassword@a.example.com:8443?sni=sni.example.com#AT",
 	}
 	sub := []byte(base64.StdEncoding.EncodeToString([]byte(strings.Join(links, "\n"))))
 	nodes, _, err := parser.Parse(sub)

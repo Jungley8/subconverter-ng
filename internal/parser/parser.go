@@ -18,6 +18,29 @@ import (
 // lineParser parses a single share link of one protocol.
 type lineParser func(uri string) (*proxy.Proxy, error)
 
+// schemeOrder defines schemes checked in descending length order to avoid prefix ambiguities.
+var schemeOrder = []string{
+	"hysteria2://",
+	"hysteria://",
+	"wireguard://",
+	"socks5h://",
+	"socks4a://",
+	"socks5://",
+	"socks4://",
+	"socks://",
+	"trojan://",
+	"anytls://",
+	"vmess://",
+	"vless://",
+	"tuic://",
+	"ssr://",
+	"ss://",
+	"hy2://",
+	"hy://",
+	"wg://",
+	"tg://socks",
+}
+
 // registry maps a URI scheme prefix to its parser.
 var registry = map[string]lineParser{
 	"ss://":        parseSS,
@@ -32,17 +55,21 @@ var registry = map[string]lineParser{
 	"tuic://":      parseTUIC,
 	"socks://":     parseSOCKS,
 	"socks5://":    parseSOCKS,
+	"socks5h://":   parseSOCKS,
+	"socks4://":    parseSOCKS,
+	"socks4a://":   parseSOCKS,
+	"tg://socks":   parseSOCKS,
 	"anytls://":    parseAnyTLS,
 	"wireguard://": parseWireGuard,
 	"wg://":        parseWireGuard,
 }
 
-// matchScheme returns the registry scheme that prefixes s, or "" when s is
-// not a share link. No scheme in the registry is a prefix of another, so the
-// map iteration order never affects the result.
+// matchScheme returns the registry scheme that prefixes s (matched case-insensitively),
+// or "" when s is not a share link.
 func matchScheme(s string) string {
-	for scheme := range registry {
-		if strings.HasPrefix(s, scheme) {
+	lower := strings.ToLower(s)
+	for _, scheme := range schemeOrder {
+		if strings.HasPrefix(lower, scheme) {
 			return scheme
 		}
 	}

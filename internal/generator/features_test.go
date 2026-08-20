@@ -2,6 +2,7 @@ package generator
 
 import (
 	"context"
+	"encoding/base64"
 	"strings"
 	"testing"
 
@@ -128,5 +129,59 @@ func TestApplyNodeOptions_AppendType(t *testing.T) {
 	}
 	if nodes[0].Clash["name"] != nodes[0].Name {
 		t.Error("append_type did not sync Clash[name]")
+	}
+}
+
+func TestGenerateSocks5AllTargets(t *testing.T) {
+	node := proxy.New("socks5", "Tailscale", "100.106.251.111", 1080)
+	node.Set("username", "myuser")
+	node.Set("password", "mypass")
+	node.SetRaw("udp", true)
+
+	cfg := &extconfig.Config{
+		EnableRuleGenerator: true,
+		ProxyGroups:         []extconfig.ProxyGroup{{Name: "Proxy", Type: "select", Selectors: []string{".*"}}},
+		Rulesets:            []extconfig.Ruleset{{Group: "Proxy", Inline: "FINAL"}},
+	}
+	f := fakeFetcher{}
+
+	// Clash
+	clash, err := GenerateClash(context.Background(), []*proxy.Proxy{node}, cfg, f, Options{})
+	if err != nil || !strings.Contains(string(clash.Output), "type: socks5") {
+		t.Fatalf("clash socks5 failed: %v\n%s", err, clash.Output)
+	}
+
+	// Singbox
+	singbox, err := GenerateSingbox(context.Background(), []*proxy.Proxy{node}, cfg, f, Options{})
+	if err != nil || !strings.Contains(string(singbox.Output), `"type": "socks"`) {
+		t.Fatalf("singbox socks5 failed: %v\n%s", err, singbox.Output)
+	}
+
+	// Surge
+	surge, err := GenerateSurge(context.Background(), []*proxy.Proxy{node}, cfg, f, Options{})
+	if err != nil || !strings.Contains(string(surge.Output), "socks5, 100.106.251.111, 1080") {
+		t.Fatalf("surge socks5 failed: %v\n%s", err, surge.Output)
+	}
+
+	// Loon
+	loon, err := GenerateLoon(context.Background(), []*proxy.Proxy{node}, cfg, f, Options{})
+	if err != nil || !strings.Contains(string(loon.Output), "SOCKS5,100.106.251.111,1080") {
+		t.Fatalf("loon socks5 failed: %v\n%s", err, loon.Output)
+	}
+
+	// QuanX
+	quanx, err := GenerateQuanX(context.Background(), []*proxy.Proxy{node}, cfg, f, Options{})
+	if err != nil || !strings.Contains(string(quanx.Output), "socks5=100.106.251.111:1080") {
+		t.Fatalf("quanx socks5 failed: %v\n%s", err, quanx.Output)
+	}
+
+	// V2Ray
+	v2ray, err := GenerateV2ray(context.Background(), []*proxy.Proxy{node}, cfg, f, Options{})
+	if err != nil {
+		t.Fatalf("v2ray socks5 failed: %v", err)
+	}
+	v2decoded, _ := base64.StdEncoding.DecodeString(string(v2ray.Output))
+	if !strings.Contains(string(v2decoded), "socks5://myuser:mypass@100.106.251.111:1080#Tailscale") {
+		t.Fatalf("v2ray socks5 share link mismatch: %s", v2decoded)
 	}
 }
