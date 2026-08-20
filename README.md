@@ -16,7 +16,7 @@
 
 - ✅ **接口兼容**：`/sub?target=clash&url=...&config=...`，老客户端无需改动
 - ✅ **协议**：Shadowsocks、ShadowsocksR、VMess、VLESS（含 Reality / XTLS-Vision）、Trojan、Hysteria（v1/v2）、TUIC v5、AnyTLS、SOCKS5、**WireGuard**
-- ✅ **节点处理**：去重（`dedup`）、过滤不支持的节点（`fdn`）、追加协议类型（`append_type`）、`rename` 正则重命名、emoji 增删（对齐 subconverter）
+- ✅ **节点处理**：去重（`dedup`）、过滤不支持的节点（`fdn`）、追加协议类型（`append_type`）、Tailscale 直连规则（`tailscale`）、`rename` 正则重命名、emoji 增删（对齐 subconverter）
 - ✅ **缓存 / 限流**：规则与订阅 TTL 缓存（默认开，可清除）、按 IP 限流防滥用
 - ✅ **Subscription-Userinfo 透传**：客户端直接显示机场流量 / 到期
 - ✅ **rule-providers 输出**（`expand=false`）、仅节点列表输出（`list`）
@@ -79,6 +79,7 @@ docker compose up -d
 | `fdn` | 过滤 Clash.Meta 不支持的节点（如废弃加密的 SS） |
 | `list` | 仅输出节点列表（无分组 / 规则，**仅 clash**） |
 | `append_type` | 节点名前加 `[类型]` |
+| `tailscale` | 在规则最前面添加 Tailscale 直连规则（`100.64.0.0/10`, `fd7a:115c:a1e0::/48`） |
 | `expand` | `false` 时输出 rule-providers 引用远程规则（**仅 clash**） |
 | `emoji` `add_emoji` `remove_emoji` | emoji 增删（对齐 subconverter） |
 | `udp` `tfo` `scv` | 节点开关（部分 target 有效） |

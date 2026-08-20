@@ -189,6 +189,7 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 			FilterDeprecated: boolParam(q.Get("fdn"), false),
 			AppendType:       boolParam(q.Get("append_type"), false),
 			ListOnly:         boolParam(q.Get("list"), false),
+			Tailscale:        boolParam(q.Get("tailscale"), false),
 		},
 		// Emoji tribools (nil when the param is absent) resolved in convert.
 		Emoji:       boolTri(q.Get("emoji")),

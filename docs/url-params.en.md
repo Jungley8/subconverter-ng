@@ -32,6 +32,7 @@ Query parameters for `GET /sub`, kept as compatible as possible with [tindy2013/
 | `sort` | Sort by node name | :material-check: |
 | `dedup` | Remove duplicate nodes: nodes with identical connection fields (type/address/port/credentials/transport) keep only the first | :material-check: |
 | `append_type` | Prefix node names with `[type]` (e.g. `[SS] HK 01`) | :material-check: |
+| `tailscale` | Prepend Tailscale DIRECT rules (`100.64.0.0/10` and `fd7a:115c:a1e0::/48` with `no-resolve`) to the very beginning of the rules list | :material-check: |
 | `emoji` | Shortcut: `true` = strip old emoji then add flags by rule; `false` = strip emoji and add none. Equivalent to `add_emoji=<value>` plus `remove_emoji=true` | :material-check: |
 | `add_emoji` | Whether to prepend flag emoji to node names by rule (default `true`) | :material-check: |
 | `remove_emoji` | Whether to first remove existing emoji in node names (default `true`) | :material-check: |

@@ -185,3 +185,79 @@ func TestGenerateSocks5AllTargets(t *testing.T) {
 		t.Fatalf("v2ray socks5 share link mismatch: %s", v2decoded)
 	}
 }
+
+func TestGenerateTailscaleRules(t *testing.T) {
+	nodes := mkNodes()
+	cfg := &extconfig.Config{
+		EnableRuleGenerator: true,
+		ProxyGroups:         []extconfig.ProxyGroup{{Name: "Proxy", Type: "select", Selectors: []string{".*"}}},
+		Rulesets:            []extconfig.Ruleset{{Group: "Proxy", Inline: "FINAL"}},
+	}
+	f := fakeFetcher{}
+
+	// Clash (Inline)
+	clash, err := GenerateClash(context.Background(), nodes, cfg, f, Options{Tailscale: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Rules []string `yaml:"rules"`
+	}
+	if err := yaml.Unmarshal(clash.Output, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Rules) < 3 {
+		t.Fatalf("clash rules len=%d, want >=3", len(doc.Rules))
+	}
+	if doc.Rules[0] != "IP-CIDR,100.64.0.0/10,DIRECT,no-resolve" || doc.Rules[1] != "IP-CIDR,fd7a:115c:a1e0::/48,DIRECT,no-resolve" {
+		t.Errorf("clash rules[0..1] mismatch: %v", doc.Rules[:2])
+	}
+
+	// Clash (RuleProviders)
+	clashRP, err := GenerateClash(context.Background(), nodes, cfg, f, Options{Tailscale: true, UseRuleProviders: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var docRP struct {
+		Rules []string `yaml:"rules"`
+	}
+	if err := yaml.Unmarshal(clashRP.Output, &docRP); err != nil {
+		t.Fatal(err)
+	}
+	if len(docRP.Rules) < 2 {
+		t.Fatalf("clashRP rules len=%d, want >=2", len(docRP.Rules))
+	}
+	if docRP.Rules[0] != "IP-CIDR,100.64.0.0/10,DIRECT,no-resolve" || docRP.Rules[1] != "IP-CIDR,fd7a:115c:a1e0::/48,DIRECT,no-resolve" {
+		t.Errorf("clashRP rules[0..1] mismatch: %v", docRP.Rules[:2])
+	}
+
+	// Surge
+	surge, err := GenerateSurge(context.Background(), nodes, cfg, f, Options{Tailscale: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(surge.Output)
+	ruleIdx := strings.Index(s, "[Rule]\n")
+	if ruleIdx == -1 {
+		t.Fatal("surge missing [Rule]")
+	}
+	ruleSection := s[ruleIdx+len("[Rule]\n"):]
+	if !strings.HasPrefix(ruleSection, "IP-CIDR,100.64.0.0/10,DIRECT,no-resolve\nIP-CIDR,fd7a:115c:a1e0::/48,DIRECT,no-resolve\n") {
+		t.Errorf("surge rule section does not start with tailscale rules:\n%s", ruleSection)
+	}
+
+	// QuanX
+	quanx, err := GenerateQuanX(context.Background(), nodes, cfg, f, Options{Tailscale: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	qs := string(quanx.Output)
+	filterIdx := strings.Index(qs, "[filter_local]\n")
+	if filterIdx == -1 {
+		t.Fatal("quanx missing [filter_local]")
+	}
+	filterSection := qs[filterIdx+len("[filter_local]\n"):]
+	if !strings.HasPrefix(filterSection, "ip-cidr, 100.64.0.0/10, DIRECT, no-resolve\nip-cidr, fd7a:115c:a1e0::/48, DIRECT, no-resolve\n") {
+		t.Errorf("quanx filter section does not start with tailscale rules:\n%s", filterSection)
+	}
+}

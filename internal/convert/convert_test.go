@@ -455,3 +455,33 @@ func TestRawSocks5ShareLinkDirect(t *testing.T) {
 		})
 	}
 }
+
+func TestRun_TailscaleOption(t *testing.T) {
+	f := fakeFetcher{
+		"client/subscribe": sampleSubscription(),
+		"config.init":      []byte(sampleINI),
+		"PROXY.list":       []byte(samplePROXYList),
+	}
+	req := Request{
+		Target:    "clash",
+		SubURLs:   []string{"https://airport.example.com/api/v1/client/subscribe?token=x"},
+		ConfigURL: "https://github.com/x/config.init",
+	}
+	req.Gen.Tailscale = true
+	data, _, err := Run(context.Background(), f, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Rules []string `yaml:"rules"`
+	}
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Rules) < 2 {
+		t.Fatalf("rules len=%d, want >=2", len(doc.Rules))
+	}
+	if doc.Rules[0] != "IP-CIDR,100.64.0.0/10,DIRECT,no-resolve" || doc.Rules[1] != "IP-CIDR,fd7a:115c:a1e0::/48,DIRECT,no-resolve" {
+		t.Errorf("rules[0..1] mismatch with tailscale option: %v", doc.Rules[:2])
+	}
+}
