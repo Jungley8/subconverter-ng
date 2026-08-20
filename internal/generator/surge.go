@@ -230,6 +230,19 @@ func surgeNodeLine(flavor surgeFlavor, n *proxy.Proxy) (string, bool) {
 		}
 		parts = append(parts, surgeWSParts(c)...)
 		return head + strings.Join(parts, ", "), true
+
+	case "socks5", "socks":
+		parts := []string{"socks5", server, port}
+		if u := cs(c, "username"); u != "" {
+			parts = append(parts, "username="+u)
+		}
+		if pw := cs(c, "password"); pw != "" {
+			parts = append(parts, "password="+pw)
+		}
+		if cb(c, "udp") {
+			parts = append(parts, "udp-relay=true")
+		}
+		return head + strings.Join(parts, ", "), true
 	}
 	return "", false
 }
@@ -320,6 +333,18 @@ func loonNodeLine(n *proxy.Proxy) (string, bool) {
 		}
 		if cb(c, "skip-cert-verify") {
 			parts = append(parts, "skip-cert-verify=true")
+		}
+		return head + strings.Join(parts, ","), true
+
+	case "socks5", "socks":
+		parts := []string{"SOCKS5", server, port}
+		u := cs(c, "username")
+		pw := cs(c, "password")
+		if u != "" || pw != "" {
+			parts = append(parts, q(u), q(pw))
+		}
+		if cb(c, "udp") {
+			parts = append(parts, "udp=true")
 		}
 		return head + strings.Join(parts, ","), true
 	}

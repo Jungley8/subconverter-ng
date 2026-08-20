@@ -189,6 +189,20 @@ func quanxNodeLine(n *proxy.Proxy) (string, bool) {
 		}
 		parts = append(parts, tag)
 		return strings.Join(parts, ", "), true
+
+	case "socks5", "socks":
+		parts := []string{"socks5=" + addr}
+		if u := cs(c, "username"); u != "" {
+			parts = append(parts, "username="+u)
+		}
+		if pw := cs(c, "password"); pw != "" {
+			parts = append(parts, "password="+pw)
+		}
+		if cb(c, "udp") {
+			parts = append(parts, "udp-relay=true")
+		}
+		parts = append(parts, tag)
+		return strings.Join(parts, ", "), true
 	}
 	return "", false
 }

@@ -429,3 +429,29 @@ func TestRawShareLinkMixedWithSubscription(t *testing.T) {
 		t.Fatalf("NodeCount = %d, want 8 (7 from sub + 1 inline)", diag.NodeCount)
 	}
 }
+
+func TestRawSocks5ShareLinkDirect(t *testing.T) {
+	// A socks5 link (like socks5://100.106.251.111:1080#Tailscale) passed directly
+	// in SubURLs must be parsed inline and converted for all targets without network fetch.
+	f := fakeFetcher{}
+	socks5URL := "socks5://100.106.251.111:1080#Tailscale"
+
+	for _, target := range []string{"clash", "singbox", "surge", "shadowrocket", "loon", "quanx", "v2ray"} {
+		t.Run(target, func(t *testing.T) {
+			req := Request{
+				Target:  target,
+				SubURLs: []string{socks5URL},
+			}
+			data, diag, err := Run(context.Background(), f, req)
+			if err != nil {
+				t.Fatalf("Run target %s: %v", target, err)
+			}
+			if diag.NodeCount != 1 {
+				t.Fatalf("NodeCount = %d, want 1", diag.NodeCount)
+			}
+			if len(data) == 0 {
+				t.Fatalf("empty output for target %s", target)
+			}
+		})
+	}
+}
