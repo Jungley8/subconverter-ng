@@ -26,7 +26,7 @@ Query parameters for `GET /sub`, kept as compatible as possible with [tindy2013/
 | Parameter | Description | Status |
 |---|---|---|
 | `target` | Output target (see table above), defaults to `clash` | :material-check: |
-| `url` | Subscription link; separate multiple with `\|` (required). Raw node links (e.g. `vless://…`, `ss://…`) are also accepted directly, so a single node can be converted without a subscription | :material-check: |
+| `url` | Subscription link; separate multiple with `\|` (required in anonymous mode). Raw node links (e.g. `vless://…`, `ss://…`) are also accepted directly, so a single node can be converted without a subscription | :material-check: |
 | `config` | External INI config URL (source of groups and rules) | :material-check: |
 | `insert` | Whether to merge the server-side `insert_url` nodes; overrides the config default (see below) | :material-check: |
 | `sort` | Sort by node name | :material-check: |
@@ -39,8 +39,17 @@ Query parameters for `GET /sub`, kept as compatible as possible with [tindy2013/
 | `filename` | Set the download filename (`Content-Disposition`) | :material-check: |
 | `interval` | Client subscription auto-update interval (hours, default 24, `Profile-Update-Interval` header) | :material-check: |
 | `proxy` | Upstream proxy for **this request**, overriding the global config (extension param) | :material-check: |
+| `token` | Managed subscription token; replaces `url` / `config` when server access control is enabled | :material-check: |
 | `nocache` | When `1`, bypass this request's TTL cache and force a refetch | :material-check: |
 | `flushcache` | When `1`, clear the entire shared cache before handling this request (there is also a `GET /flushcache` endpoint) | :material-check: |
+
+## Managed subscriptions and expiry
+
+With `access.enabled: true`, `/sub` requires a configured `token`. Each token binds fixed subscription URLs, an optional rules config, and an RFC3339 expiry. Use `https://your-host/sub?token=<token>&target=clash&interval=1`; unknown tokens return `401`. Expired or disabled Clash profiles receive a valid node-free replacement, while other targets return `410`, without fetching upstream data.
+
+Managed requests cannot override `url`, `config`, `proxy`, `nocache`, or `flushcache`. A normally refreshing client should clear its proxy nodes within about one hour. Users can still bypass this by disabling refresh or copying node credentials; reliable immediate revocation requires control of the proxy server credentials.
+
+The Web UI can also call `POST /access/create` to generate a temporary random token without static access configuration. These profiles are stored in memory and disappear after restart. The endpoint currently has no administrator authentication, so every visitor can use it on a public deployment.
 
 ## Node-processing parameters (apply to some targets)
 

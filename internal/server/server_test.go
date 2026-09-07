@@ -118,6 +118,21 @@ func TestHandleRootServesWebUI(t *testing.T) {
 	if !strings.Contains(body, `id="urls"`) {
 		t.Error("body missing form marker id=\"urls\"")
 	}
+	if !strings.Contains(body, `id="token"`) {
+		t.Error("body missing managed subscription token field")
+	}
+	if !strings.Contains(body, `id="expires"`) || !strings.Contains(body, `id="createTokenBtn"`) {
+		t.Error("body missing temporary token creation controls")
+	}
+	if !strings.Contains(body, `id="tokenExpiry"`) {
+		t.Error("body missing token expiry display")
+	}
+	if strings.Index(body, `id="createTokenBtn"`) > strings.Index(body, `id="token"`) {
+		t.Error("token creation controls must appear above the access token field")
+	}
+	if strings.Count(body, "showResult(buildURL())") != 1 {
+		t.Error("only the Generate subscription link action may reveal the result")
+	}
 }
 
 func TestSplitURLs(t *testing.T) {

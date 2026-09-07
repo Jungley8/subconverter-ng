@@ -1,0 +1,7 @@
+.git
+config.yaml
+bin
+out
+dist
+*.log
+*.test

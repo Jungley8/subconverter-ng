@@ -19,6 +19,7 @@
 - ✅ **节点处理**：去重（`dedup`）、过滤不支持的节点（`fdn`）、追加协议类型（`append_type`）、Tailscale 直连规则（`tailscale`）、`rename` 正则重命名、emoji 增删（对齐 subconverter）
 - ✅ **缓存 / 限流**：规则与订阅 TTL 缓存（默认开，可清除）、按 IP 限流防滥用
 - ✅ **Subscription-Userinfo 透传**：客户端直接显示机场流量 / 到期
+- ✅ **受控订阅**：网页生成临时令牌，绑定上游和到期时间；到期刷新后清除 Clash 节点
 - ✅ **rule-providers 输出**（`expand=false`）、仅节点列表输出（`list`）
 - ✅ **外部配置**：解析 subconverter 的 INI 外部配置（`ruleset=` / `custom_proxy_group=` / `exclude_remarks` / `enable_rule_generator` / `clash_rule_base`），兼容 ACL4SSR 规则
 - ✅ **访问层**：上游代理（http/socks5）、可配置 User-Agent、**自动绕过 Cloudflare 5 秒盾**（FlareSolverr）
@@ -71,7 +72,7 @@ docker compose up -d
 | 参数 | 说明 |
 |---|---|
 | `target` | 输出目标：`clash` / `singbox` / `surge` / `shadowrocket` / `quanx` / `loon` / `v2ray` |
-| `url` | 订阅链接，多个用 `\|` 分隔（必填）；也可直接粘贴节点链接（`vless://` 等） |
+| `url` | 订阅链接，多个用 `\|` 分隔（匿名模式必填）；也可直接粘贴节点链接（`vless://` 等） |
 | `config` | 外部 INI 配置 URL |
 | `insert` | 是否合并服务端 `insert_url` 节点（覆盖配置默认） |
 | `sort` | 按节点名排序 |
@@ -86,6 +87,7 @@ docker compose up -d
 | `filename` `interval` | 下载文件名 / 客户端更新间隔 |
 | `nocache` `flushcache` | 绕过 / 清空缓存 |
 | `proxy` | 本次请求的上游代理（覆盖全局，扩展参数） |
+| `token` | 受控订阅访问令牌（服务端启用 `access` 时必填） |
 
 > 参数对各 target 的适用性见 [docs/url-params.md](docs/url-params.md)。`new_name` 为兼容性接收但当前无效果。
 

@@ -1,8 +1,10 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -161,5 +163,87 @@ func TestCacheTTLFromFileAndEnv(t *testing.T) {
 	}
 	if c.Fetch.CacheTTL != 45*time.Second {
 		t.Errorf("cache_ttl from env = %v, want 45s", c.Fetch.CacheTTL)
+	}
+}
+
+func TestLoadAccessProfiles(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "app.yaml")
+	token := strings.Repeat("a", 32)
+	data := "access:\n  enabled: true\n  profiles:\n" +
+		"    - name: user-a\n      token: " + token + "\n      enabled: true\n" +
+		"      expires_at: 2026-10-01T00:00:00+09:00\n" +
+		"      urls:\n        - https://air.example/sub\n" +
+		"      config_url: https://rules.example/config.ini\n"
+	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.Access.Enabled || len(c.Access.Profiles) != 1 {
+		t.Fatalf("access config not loaded: %+v", c.Access)
+	}
+	p := c.Access.Profiles[0]
+	if !p.Enabled || p.Token != token || p.ExpiresAt.Format(time.RFC3339) != "2026-10-01T00:00:00+09:00" {
+		t.Errorf("profile fields wrong: %+v", p)
+	}
+}
+
+func TestAccessValidation(t *testing.T) {
+	valid := func() *Config {
+		c := Default()
+		c.Access.Enabled = true
+		c.Access.Profiles = []AccessProfile{{
+			Name: "user-a", Token: strings.Repeat("a", 32), Enabled: true,
+			ExpiresAt: ExpiryTime{Time: time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)},
+			URLs:      []string{"https://air.example/sub"},
+		}}
+		return c
+	}
+	cases := []struct {
+		name   string
+		mutate func(*Config)
+	}{
+		{"no profiles", func(c *Config) { c.Access.Profiles = nil }},
+		{"short token", func(c *Config) { c.Access.Profiles[0].Token = "short" }},
+		{"missing expiry", func(c *Config) { c.Access.Profiles[0].ExpiresAt = ExpiryTime{} }},
+		{"missing urls", func(c *Config) { c.Access.Profiles[0].URLs = nil }},
+		{"empty url", func(c *Config) { c.Access.Profiles[0].URLs = []string{" "} }},
+		{"duplicate token", func(c *Config) { c.Access.Profiles = append(c.Access.Profiles, c.Access.Profiles[0]) }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := valid()
+			tc.mutate(c)
+			if err := c.Validate(); err == nil {
+				t.Fatal("Validate returned nil")
+			}
+		})
+	}
+
+	c := valid()
+	c.Access.Enabled = false
+	c.Access.Profiles[0].Token = "short"
+	if err := c.Validate(); err != nil {
+		t.Errorf("disabled access should ignore profiles: %v", err)
+	}
+}
+
+func TestLoadAccessRejectsExpiryWithoutTimezone(t *testing.T) {
+	dir := t.TempDir()
+	for i, expiry := range []string{"2026-10-01T00:00:00", "2026-10-01"} {
+		path := filepath.Join(dir, fmt.Sprintf("app-%d.yaml", i))
+		data := "access:\n  enabled: true\n  profiles:\n" +
+			"    - token: " + strings.Repeat("a", 32) + "\n" +
+			"      enabled: true\n      expires_at: " + expiry + "\n" +
+			"      urls: [https://air.example/sub]\n"
+		if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(path); err == nil {
+			t.Fatalf("Load accepted expires_at %q without timezone", expiry)
+		}
 	}
 }

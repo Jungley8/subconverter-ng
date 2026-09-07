@@ -22,6 +22,7 @@ targeting **Clash.Meta / mihomo** so new protocols work right away.
 - ✅ **Node processing**: dedup (`dedup`), filter unsupported nodes (`fdn`), append protocol type (`append_type`), Tailscale DIRECT rules (`tailscale`), regex `rename`, emoji add/remove (subconverter-compatible)
 - ✅ **Cache / rate-limit**: TTL cache for rulesets & subscriptions (on by default, flushable), per-IP rate limiting
 - ✅ **Subscription-Userinfo passthrough**: clients show airport traffic / expiry directly
+- ✅ **Managed subscriptions**: create expiring tokens; Clash refreshes receive a node-free replacement after expiry
 - ✅ **rule-providers output** (`expand=false`), proxies-only output (`list`)
 - ✅ **External config**: parses subconverter's INI external config (`ruleset=` / `custom_proxy_group=` / `exclude_remarks` / `enable_rule_generator` / `clash_rule_base`), ACL4SSR-compatible
 - ✅ **Access layer**: upstream proxy (http/socks5), configurable User-Agent, **automatic Cloudflare challenge bypass** (FlareSolverr)
@@ -74,7 +75,7 @@ Full list in [docs/url-params.md](docs/url-params.md). Common ones:
 | Param | Description |
 |---|---|
 | `target` | output target: `clash` / `singbox` / `surge` / `shadowrocket` / `quanx` / `loon` / `v2ray` |
-| `url` | subscription URL(s), `\|`-separated (required); raw node links (`vless://` etc.) also accepted |
+| `url` | subscription URL(s), `\|`-separated (required in anonymous mode); raw node links (`vless://` etc.) also accepted |
 | `config` | external INI config URL |
 | `insert` | merge the server's `insert_url` nodes (overrides config default) |
 | `sort` | sort nodes by name |
@@ -89,6 +90,7 @@ Full list in [docs/url-params.md](docs/url-params.md). Common ones:
 | `filename` `interval` | download filename / client update interval |
 | `nocache` `flushcache` | bypass / flush cache |
 | `proxy` | per-request upstream proxy (overrides global; extension) |
+| `token` | managed subscription access token (required when server `access` is enabled) |
 
 > Per-target applicability is documented in [docs/url-params.md](docs/url-params.md). `new_name` is accepted for compatibility but has no effect.
 
