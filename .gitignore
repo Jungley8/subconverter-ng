@@ -4,6 +4,7 @@
 *.test
 *.log
 .env
+/config.yaml
 dist/
 
 # agent worktrees

@@ -77,13 +77,22 @@ func TestSummaryRedactsAndCoversFields(t *testing.T) {
 	cfg.Fetch.FlareSolverrURL = "http://flaresolverr:8191/v1"
 	cfg.Fetch.Timeout = 30 * time.Second
 	cfg.Insert.URLs = []string{"https://air.com/sub?token=leakme"}
+	cfg.Access.Enabled = true
+	cfg.Access.Profiles = []AccessProfile{{
+		Name: "user-a", Token: "profile-token-must-never-appear-123", Enabled: true,
+		ExpiresAt: ExpiryTime{Time: time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)},
+		URLs:      []string{"https://managed.example/secret-sub-path"},
+		ConfigURL: "https://rules.example/config.ini?key=secret-config-key",
+	}}
 
 	out := cfg.Summary()
 
-	if strings.Contains(out, "topsecret") || strings.Contains(out, "leakme") {
-		t.Fatalf("Summary leaked a secret:\n%s", out)
+	for _, secret := range []string{"topsecret", "leakme", "profile-token-must-never-appear-123", "secret-sub-path", "secret-config-key"} {
+		if strings.Contains(out, secret) {
+			t.Fatalf("Summary leaked %q:\n%s", secret, out)
+		}
 	}
-	for _, want := range []string{"listen:", "user-agent:", "upstream proxy:", "flaresolverr:", "rate limit:", "insert urls:"} {
+	for _, want := range []string{"listen:", "user-agent:", "upstream proxy:", "flaresolverr:", "rate limit:", "insert urls:", "access control:"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("Summary missing %q field:\n%s", want, out)
 		}

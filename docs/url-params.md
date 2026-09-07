@@ -25,7 +25,7 @@
 | 参数 | 说明 | 状态 |
 |---|---|---|
 | `target` | 输出目标（见上表），缺省 `clash` | :material-check: |
-| `url` | 订阅链接，多个用 `\|` 分隔（必填）；也支持直接粘贴节点链接（如 `vless://…`、`ss://…`），单个或多个节点可不用订阅直接转换 | :material-check: |
+| `url` | 订阅链接，多个用 `\|` 分隔（匿名模式必填）；也支持直接粘贴节点链接（如 `vless://…`、`ss://…`），单个或多个节点可不用订阅直接转换 | :material-check: |
 | `config` | 外部 INI 配置 URL（分组与规则来源） | :material-check: |
 | `insert` | 是否合并服务端配置的 `insert_url` 节点；覆盖配置默认值（见下方说明） | :material-check: |
 | `sort` | 按节点名排序 | :material-check: |
@@ -38,8 +38,32 @@
 | `filename` | 设置下载文件名（`Content-Disposition`） | :material-check: |
 | `interval` | 客户端订阅自动更新间隔（小时，默认 24，`Profile-Update-Interval` 头） | :material-check: |
 | `proxy` | **本次请求**的上游代理，覆盖全局配置（扩展参数） | :material-check: |
+| `token` | 受控订阅访问令牌；启用服务端 `access` 后代替 `url` / `config` | :material-check: |
 | `nocache` | `1` 时绕过本次请求的 TTL 缓存，强制重新抓取 | :material-check: |
 | `flushcache` | `1` 时先清空整个共享缓存再处理本次请求（另有 `GET /flushcache` 端点） | :material-check: |
+
+## 受控订阅与到期时间
+
+服务端配置 `access.enabled: true` 后，`/sub` 必须携带配置中已登记的 `token`。每个令牌固定绑定订阅源、规则配置和到期时间：
+
+```yaml
+access:
+  enabled: true
+  profiles:
+    - name: user-a
+      token: "0123456789abcdef0123456789abcdef"
+      enabled: true
+      expires_at: "2026-10-01T00:00:00+09:00"
+      urls:
+        - "https://airport.example/sub?token=secret"
+      config_url: "https://rules.example/config.ini"
+```
+
+分享地址为 `https://你的域名/sub?token=<令牌>&target=clash&interval=1`。未知令牌返回 `401`。Clash 令牌禁用或到期后返回可加载的空节点配置，让客户端下次刷新时覆盖旧节点；其他 target 返回 `410`。受控模式拒绝请求覆盖 `url`、`config`、`proxy`、`nocache` 和 `flushcache`；到期时间同时写入 `Subscription-Userinfo` 供客户端显示。修改静态配置后需重启服务。
+
+网页生成的受控链接设置 `interval=1`，客户端正常遵循刷新间隔时最多约一小时后清除代理节点。用户关闭自动更新或复制节点凭据仍可绕过；需要强制立即断开时，必须在节点服务端轮换凭据或封禁用户。
+
+Web 页面也可以通过 `POST /access/create` 直接生成随机临时令牌，无需启用静态 `access` 配置。请求包含 `urls`、可选 `config_url` 和带时区的 `expires_at`；令牌只保存在内存中，服务重启后失效。该接口暂时没有管理员鉴权，公网部署时所有访问者均可调用。
 
 ## 节点处理参数（部分 target 有效）
 

@@ -43,6 +43,36 @@ docker compose up -d
 
 See [Bypass Cloudflare](cloudflare.md) for details.
 
+## Managed subscriptions
+
+Copy `config.example.yaml` to the Git-ignored `config.yaml`, configure `access.profiles`, and mount it read-only:
+
+```bash
+docker run -d --name subconverter-ng \
+  -p 25500:25500 \
+  -v "$PWD/config.yaml:/etc/subconverter-ng/config.yaml:ro" \
+  --restart unless-stopped \
+  ghcr.io/jungley8/subconverter-ng:latest \
+  --config /etc/subconverter-ng/config.yaml
+```
+
+For Compose, add the same volume and `command: ["--config", "/etc/subconverter-ng/config.yaml"]`. Never commit the real config because it contains access tokens and upstream credentials.
+
+## Managed subscriptions
+
+Copy `config.example.yaml` to the Git-ignored `config.yaml`, configure `access.profiles`, and mount it read-only:
+
+```bash
+docker run -d --name subconverter-ng \
+  -p 25500:25500 \
+  -v "$PWD/config.yaml:/etc/subconverter-ng/config.yaml:ro" \
+  --restart unless-stopped \
+  ghcr.io/jungley8/subconverter-ng:latest \
+  --config /etc/subconverter-ng/config.yaml
+```
+
+For Compose, add the same volume and `command: ["--config", "/etc/subconverter-ng/config.yaml"]`. Never commit the real config because it contains access tokens and upstream credentials.
+
 ## Environment variables
 
 | Variable | Description | Example |

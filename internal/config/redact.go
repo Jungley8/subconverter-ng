@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 // RedactURL returns a display-safe form of a URL for logging. It masks the
@@ -165,6 +166,23 @@ func (c *Config) Summary() string {
 		for _, u := range c.Insert.URLs {
 			fmt.Fprintf(&b, "    - %s\n", RedactSubURL(u))
 		}
+	}
+
+	if c.Access.Enabled {
+		fmt.Fprintf(&b, "  access control: enabled (%d profiles)\n", len(c.Access.Profiles))
+		for _, p := range c.Access.Profiles {
+			state := "enabled"
+			if !p.Enabled {
+				state = "disabled"
+			}
+			fmt.Fprintf(&b, "    - %s (%s, expires %s, %d urls)\n",
+				p.Name, state, p.ExpiresAt.Format(time.RFC3339), len(p.URLs))
+			for _, u := range p.URLs {
+				fmt.Fprintf(&b, "      - %s\n", RedactSubURL(u))
+			}
+		}
+	} else {
+		b.WriteString("  access control: disabled\n")
 	}
 
 	return b.String()

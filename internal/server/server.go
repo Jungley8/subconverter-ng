@@ -4,6 +4,10 @@
 package server
 
 import (
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -11,6 +15,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Jungley8/subconverter-ng/internal/config"
@@ -26,10 +31,17 @@ type Server struct {
 	cfg     *config.Config
 	version string       // build version, surfaced by GET /version; "dev" when unset
 	cache   *fetch.Cache // shared across requests so the TTL cache survives; nil when caching disabled
+	now     func() time.Time
+
+	profilesMu sync.RWMutex
+	profiles   map[string]config.AccessProfile
 }
 
 func New(cfg *config.Config) *Server {
-	s := &Server{cfg: cfg, version: "dev"}
+	s := &Server{
+		cfg: cfg, version: "dev", now: time.Now,
+		profiles: make(map[string]config.AccessProfile),
+	}
 	// A shared cache lives on the Server so repeated /sub requests reuse cached
 	// ruleset/subscription fetches. CacheTTL < 0 disables caching entirely.
 	if cfg.Fetch.CacheTTL >= 0 {
@@ -54,6 +66,7 @@ func (s *Server) WithVersion(v string) *Server {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/sub", s.rateLimit(http.HandlerFunc(s.handleSub)))
+	mux.Handle("/access/create", s.rateLimit(http.HandlerFunc(s.handleCreateAccess)))
 	mux.HandleFunc("/flushcache", s.handleFlushCache)
 	mux.HandleFunc("/version", s.handleVersion)
 	mux.Handle("/", web.Handler())
@@ -126,6 +139,40 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 		target = "clash"
 	}
 	rawURL := q.Get("url")
+	configURL := q.Get("config")
+	proxyURL := firstNonEmpty(q.Get("proxy"), s.cfg.Fetch.Proxy)
+	noCache := boolParam(q.Get("nocache"), false)
+	var accessProfile *config.AccessProfile
+	if s.cfg.Access.Enabled || q.Get("token") != "" {
+		p := s.findAccessProfile(q.Get("token"))
+		if p == nil {
+			http.Error(w, "missing or invalid subscription token", http.StatusUnauthorized)
+			return
+		}
+		if !p.Enabled || !s.now().Before(p.ExpiresAt.Time) {
+			if convert.NormalizeTarget(target) == "clash" {
+				expiry := p.ExpiresAt.Unix()
+				if now := s.now().Unix(); now < expiry || !p.Enabled {
+					expiry = now
+				}
+				writeExpiredClash(w, expiry)
+			} else {
+				http.Error(w, "subscription expired or revoked", http.StatusGone)
+			}
+			return
+		}
+		for _, blocked := range []string{"url", "config", "proxy", "nocache", "flushcache"} {
+			if q.Has(blocked) {
+				http.Error(w, "parameter not allowed for managed subscriptions: "+blocked, http.StatusBadRequest)
+				return
+			}
+		}
+		accessProfile = p
+		rawURL = strings.Join(p.URLs, "|")
+		configURL = p.ConfigURL
+		proxyURL = s.cfg.Fetch.Proxy
+		noCache = false
+	}
 	if rawURL == "" {
 		http.Error(w, "missing required parameter: url", http.StatusBadRequest)
 		return
@@ -136,18 +183,13 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 		s.cache.Flush()
 	}
 
-	// &nocache=1 bypasses the cache for this request only. We do that by giving
-	// this per-request client a disabled cache (CacheTTL < 0) instead of the
-	// shared one.
-	noCache := boolParam(q.Get("nocache"), false)
-
 	// Build a fetch client, allowing a per-request &proxy= override of the
 	// configured upstream proxy. The shared cache is injected so cached
 	// ruleset/subscription fetches persist across requests (keyed by URL only;
 	// per-request proxy differences are intentionally ignored).
 	opts := fetch.Options{
 		UserAgent:       s.cfg.Fetch.UserAgent,
-		Proxy:           firstNonEmpty(q.Get("proxy"), s.cfg.Fetch.Proxy),
+		Proxy:           proxyURL,
 		FlareSolverrURL: s.cfg.Fetch.FlareSolverrURL,
 		Timeout:         s.cfg.Fetch.Timeout,
 	}
@@ -174,7 +216,7 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 	req := convert.Request{
 		Target:        target,
 		SubURLs:       splitURLs(rawURL),
-		ConfigURL:     q.Get("config"),
+		ConfigURL:     configURL,
 		InsertURLs:    insertURLs,
 		InsertPrepend: s.cfg.Insert.Prepend,
 		Gen: generator.Options{
@@ -244,10 +286,137 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 
 	// Pass through the airport's traffic/expiry metadata so Clash clients can
 	// display it.
-	if diag.SubscriptionUserinfo != "" {
-		w.Header().Set("Subscription-Userinfo", diag.SubscriptionUserinfo)
+	userinfo := diag.SubscriptionUserinfo
+	if accessProfile != nil {
+		userinfo = withExpiry(userinfo, accessProfile.ExpiresAt.Unix())
+	}
+	if userinfo != "" {
+		w.Header().Set("Subscription-Userinfo", userinfo)
 	}
 	w.Write(out)
+}
+
+func (s *Server) findAccessProfile(token string) *config.AccessProfile {
+	if token == "" {
+		return nil
+	}
+	if s.cfg.Access.Enabled {
+		for i := range s.cfg.Access.Profiles {
+			if subtle.ConstantTimeCompare([]byte(s.cfg.Access.Profiles[i].Token), []byte(token)) == 1 {
+				return &s.cfg.Access.Profiles[i]
+			}
+		}
+	}
+	s.profilesMu.RLock()
+	p, ok := s.profiles[token]
+	s.profilesMu.RUnlock()
+	if ok {
+		return &p
+	}
+	return nil
+}
+
+type createAccessRequest struct {
+	URLs      []string `json:"urls"`
+	ConfigURL string   `json:"config_url"`
+	ExpiresAt string   `json:"expires_at"`
+}
+
+type createAccessResponse struct {
+	Token     string `json:"token"`
+	ExpiresAt string `json:"expires_at"`
+	Path      string `json:"path"`
+}
+
+// handleCreateAccess creates an in-memory managed profile for the web UI.
+// This endpoint intentionally has no administrator authentication yet; callers
+// should disable public access to it at their reverse proxy if needed.
+func (s *Server) handleCreateAccess(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	var req createAccessRequest
+	if err := dec.Decode(&req); err != nil {
+		http.Error(w, "invalid JSON request", http.StatusBadRequest)
+		return
+	}
+	if len(req.URLs) == 0 {
+		http.Error(w, "at least one subscription URL is required", http.StatusBadRequest)
+		return
+	}
+	for _, u := range req.URLs {
+		if strings.TrimSpace(u) == "" {
+			http.Error(w, "subscription URLs cannot be empty", http.StatusBadRequest)
+			return
+		}
+	}
+	expires, err := time.Parse(time.RFC3339, req.ExpiresAt)
+	if err != nil {
+		http.Error(w, "expires_at must be RFC3339 with a timezone", http.StatusBadRequest)
+		return
+	}
+	if !s.now().Before(expires) {
+		http.Error(w, "expires_at must be in the future", http.StatusBadRequest)
+		return
+	}
+	tokenBytes := make([]byte, 32)
+	if _, err := rand.Read(tokenBytes); err != nil {
+		http.Error(w, "could not generate access token", http.StatusInternalServerError)
+		return
+	}
+	token := hex.EncodeToString(tokenBytes)
+	profile := config.AccessProfile{
+		Name: "web-generated", Token: token, Enabled: true,
+		ExpiresAt: config.ExpiryTime{Time: expires},
+		URLs:      append([]string(nil), req.URLs...),
+		ConfigURL: req.ConfigURL,
+	}
+	s.profilesMu.Lock()
+	s.profiles[token] = profile
+	s.profilesMu.Unlock()
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(createAccessResponse{
+		Token: token, ExpiresAt: expires.Format(time.RFC3339),
+		Path: "/sub?token=" + token,
+	})
+}
+
+// withExpiry preserves upstream traffic fields while replacing any existing
+// expire field with the managed profile's authoritative expiry timestamp.
+func withExpiry(userinfo string, unix int64) string {
+	parts := strings.Split(userinfo, ";")
+	out := make([]string, 0, len(parts)+1)
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		key, _, _ := strings.Cut(part, "=")
+		if strings.EqualFold(strings.TrimSpace(key), "expire") {
+			continue
+		}
+		out = append(out, part)
+	}
+	out = append(out, "expire="+strconv.FormatInt(unix, 10))
+	return strings.Join(out, "; ")
+}
+
+// writeExpiredClash returns a valid replacement profile with no proxy nodes.
+// Clients that refresh successfully can replace their cached subscription
+// instead of retaining the last good profile after an HTTP error.
+func writeExpiredClash(w http.ResponseWriter, unix int64) {
+	w.Header().Set("Content-Type", "text/yaml; charset=utf-8")
+	w.Header().Set("Profile-Update-Interval", "1")
+	w.Header().Set("Subscription-Userinfo", "expire="+strconv.FormatInt(unix, 10))
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("mode: rule\nproxies: []\nproxy-groups: []\nrules:\n  - MATCH,DIRECT\n"))
 }
 
 // writeUserError renders a conversion failure as a 200 plain-text hint rather

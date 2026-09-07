@@ -64,3 +64,19 @@ insert:
   # Default for whether insertion happens. &insert=false disables it per request,
   # &insert=true forces it on.
   enabled: true
+
+# Optional managed subscription access. Keep the real config.yaml out of
+# source control because both token and urls are secrets.
+access:
+  enabled: false
+  profiles:
+    - name: "user-a"
+      # Generate with: openssl rand -hex 32
+      token: "replace-with-at-least-32-random-characters"
+      enabled: true
+      # RFC3339 with an explicit timezone.
+      expires_at: "2026-10-01T00:00:00+09:00"
+      urls:
+        - "https://your-airport.example/api/v1/client/subscribe?token=secret"
+      # Optional subconverter-compatible INI rules config.
+      config_url: "https://rules.example/config.ini"

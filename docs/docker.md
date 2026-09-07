@@ -43,6 +43,36 @@ docker compose up -d
 
 详见 [绕过 Cloudflare](cloudflare.md)。
 
+## 启用受控订阅
+
+复制 `config.example.yaml` 为不会提交到 Git 的 `config.yaml`，配置 `access.profiles` 后只读挂载：
+
+```bash
+docker run -d --name subconverter-ng \
+  -p 25500:25500 \
+  -v "$PWD/config.yaml:/etc/subconverter-ng/config.yaml:ro" \
+  --restart unless-stopped \
+  ghcr.io/jungley8/subconverter-ng:latest \
+  --config /etc/subconverter-ng/config.yaml
+```
+
+使用 Compose 时，为 `subconverter-ng` 服务增加同一 `volumes` 挂载和 `command: ["--config", "/etc/subconverter-ng/config.yaml"]`。真实配置包含访问令牌和上游订阅凭据，不要写入镜像或提交到仓库。
+
+## 启用受控订阅
+
+复制 `config.example.yaml` 为不会提交到 Git 的 `config.yaml`，配置 `access.profiles` 后只读挂载：
+
+```bash
+docker run -d --name subconverter-ng \
+  -p 25500:25500 \
+  -v "$PWD/config.yaml:/etc/subconverter-ng/config.yaml:ro" \
+  --restart unless-stopped \
+  ghcr.io/jungley8/subconverter-ng:latest \
+  --config /etc/subconverter-ng/config.yaml
+```
+
+使用 Compose 时，为 `subconverter-ng` 服务增加同一 `volumes` 挂载和 `command: ["--config", "/etc/subconverter-ng/config.yaml"]`。真实配置包含访问令牌和上游订阅凭据，不要写入镜像或提交到仓库。
+
 ## 环境变量
 
 | 变量 | 说明 | 示例 |

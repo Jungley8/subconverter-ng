@@ -4,6 +4,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -42,11 +43,44 @@ type Insert struct {
 	Enabled bool     `yaml:"enabled"`
 }
 
+// ExpiryTime accepts only RFC3339 timestamps, which always include an explicit
+// UTC marker or numeric timezone offset.
+type ExpiryTime struct {
+	time.Time
+}
+
+func (t *ExpiryTime) UnmarshalYAML(value *yaml.Node) error {
+	parsed, err := time.Parse(time.RFC3339, value.Value)
+	if err != nil {
+		return fmt.Errorf("expires_at must be RFC3339 with a timezone: %w", err)
+	}
+	t.Time = parsed
+	return nil
+}
+
+// AccessProfile binds one opaque access token to fixed subscription sources.
+type AccessProfile struct {
+	Name      string     `yaml:"name"`
+	Token     string     `yaml:"token"`
+	Enabled   bool       `yaml:"enabled"`
+	ExpiresAt ExpiryTime `yaml:"expires_at"`
+	URLs      []string   `yaml:"urls"`
+	ConfigURL string     `yaml:"config_url"`
+}
+
+// Access enables token-controlled subscription URLs. When disabled, the
+// original /sub?url=... API remains unchanged.
+type Access struct {
+	Enabled  bool            `yaml:"enabled"`
+	Profiles []AccessProfile `yaml:"profiles"`
+}
+
 type Config struct {
 	Listen    string    `yaml:"listen"`
 	Fetch     Fetch     `yaml:"fetch"`
 	RateLimit RateLimit `yaml:"ratelimit"`
 	Insert    Insert    `yaml:"insert"`
+	Access    Access    `yaml:"access"`
 }
 
 // Default returns a config with sane defaults applied.
@@ -93,7 +127,47 @@ func Load(path string) (*Config, error) {
 	if cfg.RateLimit.Burst == 0 {
 		cfg.RateLimit.Burst = 10
 	}
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
 	return cfg, nil
+}
+
+// Validate checks security-sensitive access configuration before the server
+// starts. Profiles are ignored when access control itself is disabled.
+func (c *Config) Validate() error {
+	if !c.Access.Enabled {
+		return nil
+	}
+	if len(c.Access.Profiles) == 0 {
+		return fmt.Errorf("access enabled but no profiles configured")
+	}
+	seen := make(map[string]bool, len(c.Access.Profiles))
+	for i, p := range c.Access.Profiles {
+		label := p.Name
+		if label == "" {
+			label = fmt.Sprintf("profiles[%d]", i)
+		}
+		if p.Token != strings.TrimSpace(p.Token) || len(p.Token) < 32 {
+			return fmt.Errorf("access profile %q: token must be at least 32 characters with no surrounding whitespace", label)
+		}
+		if seen[p.Token] {
+			return fmt.Errorf("access profile %q: duplicate token", label)
+		}
+		seen[p.Token] = true
+		if p.ExpiresAt.IsZero() {
+			return fmt.Errorf("access profile %q: expires_at is required and must be RFC3339 with a timezone", label)
+		}
+		if len(p.URLs) == 0 {
+			return fmt.Errorf("access profile %q: at least one subscription URL is required", label)
+		}
+		for _, u := range p.URLs {
+			if strings.TrimSpace(u) == "" {
+				return fmt.Errorf("access profile %q: subscription URLs cannot be empty", label)
+			}
+		}
+	}
+	return nil
 }
 
 func applyEnv(cfg *Config) {
