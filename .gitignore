@@ -10,3 +10,6 @@ dist/
 .claude/
 .omo/
 /site/
+
+# local build output at repo root (use `make build` -> bin/ instead)
+subconverter-ng

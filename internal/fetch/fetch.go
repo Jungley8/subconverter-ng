@@ -135,6 +135,12 @@ func (c *Client) GetWithMeta(ctx context.Context, target string) ([]byte, http.H
 
 	body, hdr, status, err := c.do(ctx, target, nil)
 	if err == nil && !isCloudflareChallenge(status, body) {
+		// Fail closed on non-200: a 404/500 body is an error page, not a
+		// subscription or config. Returning it as success would let callers
+		// silently render garbage (e.g. an empty ruleset from a 404 page).
+		if status != http.StatusOK {
+			return nil, nil, fmt.Errorf("fetch %s: unexpected status %d", target, status)
+		}
 		c.maybeCache(target, status, body, hdr)
 		return body, hdr, nil
 	}
@@ -154,6 +160,9 @@ func (c *Client) GetWithMeta(ctx context.Context, target string) ([]byte, http.H
 	body, hdr, status, err = c.do(ctx, target, &replay{cookies: cookies, userAgent: ua})
 	if err != nil {
 		return nil, nil, fmt.Errorf("fetch %s: replay after solve failed: %w", target, err)
+	}
+	if status != http.StatusOK {
+		return nil, nil, fmt.Errorf("fetch %s: unexpected status %d", target, status)
 	}
 	c.maybeCache(target, status, body, hdr)
 	return body, hdr, nil

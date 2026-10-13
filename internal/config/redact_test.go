@@ -90,3 +90,15 @@ func TestSummaryRedactsAndCoversFields(t *testing.T) {
 		}
 	}
 }
+
+func TestSummaryDefaultConfigUnset(t *testing.T) {
+	// Without a default config URL the banner must say so explicitly, so an
+	// operator does not mistake an empty summary for a loaded value.
+	out := Default().Summary()
+	if !strings.Contains(out, "default config:") {
+		t.Fatalf("Summary missing default config line:\n%s", out)
+	}
+	if !strings.Contains(out, "&config=") {
+		t.Errorf("unset default config should hint at per-request &config=:\n%s", out)
+	}
+}

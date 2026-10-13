@@ -15,6 +15,9 @@ func TestDefault(t *testing.T) {
 	if !c.RateLimit.Enabled || c.RateLimit.RequestsPerMinute != 30 || c.RateLimit.Burst != 10 {
 		t.Errorf("ratelimit defaults wrong: %+v", c.RateLimit)
 	}
+	if c.DefaultConfigURL != "" {
+		t.Errorf("default config URL should be empty by default, got %q", c.DefaultConfigURL)
+	}
 }
 
 func TestInsertDefaultsAndEnv(t *testing.T) {

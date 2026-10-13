@@ -414,7 +414,7 @@ func TestRawShareLinkDirect(t *testing.T) {
 func TestRawShareLinkMixedWithSubscription(t *testing.T) {
 	f := fakeFetcher{"client/subscribe": sampleSubscription()}
 	req := Request{
-		Target:  "clash",
+		Target: "clash",
 		SubURLs: []string{
 			"https://airport.example.com/api/v1/client/subscribe?token=x",
 			"ss://" + b64("aes-256-gcm:pass") + "@5.5.5.5:8388#Direct",

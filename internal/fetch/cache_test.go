@@ -176,9 +176,9 @@ func TestCache_DoesNotCacheNon200(t *testing.T) {
 
 	c, _ := New(Options{})
 	for i := 0; i < 2; i++ {
-		// 404 is not a Cloudflare challenge and not an error, but must not cache.
-		if _, _, err := c.GetWithMeta(context.Background(), srv.URL); err != nil {
-			t.Fatal(err)
+		// Non-200 is an error (fail closed) and must not cache.
+		if _, _, err := c.GetWithMeta(context.Background(), srv.URL); err == nil {
+			t.Fatal("expected error for 404")
 		}
 	}
 	if hits != 2 {

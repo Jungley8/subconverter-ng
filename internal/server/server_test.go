@@ -133,6 +133,36 @@ func TestHandleSub_BrokenDefaultConfigFailsClosed(t *testing.T) {
 	}
 }
 
+func TestHandleSub_BrokenDefaultConfig500FailsClosed(t *testing.T) {
+	// A 500 from the default-config origin is an upstream failure, not an empty
+	// config: same fail-closed expectation as the 404 case.
+	air := fakeAirport()
+	defer air.Close()
+	broken := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("boom"))
+	}))
+	defer broken.Close()
+
+	cfg := config.Default()
+	cfg.DefaultConfigURL = broken.URL + "/config.init"
+	h := New(cfg).Handler()
+
+	target := "/sub?target=clash&url=" + url.QueryEscape(air.URL+"/sub.txt")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200-with-hint (never 5xx)", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "fetch external config") {
+		t.Errorf("expected fetch-external-config error hint, got:\n%s", body)
+	}
+	if strings.Contains(body, "proxy-groups:") {
+		t.Error("must not fall back to rendering on default-config failure")
+	}
+}
+
 func TestHandleSub_NoUsableNodesReturnsHint(t *testing.T) {
 	// An airport that serves an unparseable body must never yield a 5xx —
 	// Cloudflare would swallow it. Expect 200 with a readable plain-text hint.
