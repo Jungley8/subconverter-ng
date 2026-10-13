@@ -27,7 +27,7 @@ Query parameters for `GET /sub`, kept as compatible as possible with [tindy2013/
 |---|---|---|
 | `target` | Output target (see table above), defaults to `clash` | :material-check: |
 | `url` | Subscription link; separate multiple with `\|` (required). Raw node links (e.g. `vless://…`, `ss://…`) are also accepted directly, so a single node can be converted without a subscription | :material-check: |
-| `config` | External INI config URL (source of groups and rules) | :material-check: |
+| `config` | External INI config URL (source of groups and rules); when omitted, the server's `default_config_url` is used (no groups/rules if that is unset either) | :material-check: |
 | `insert` | Whether to merge the server-side `insert_url` nodes; overrides the config default (see below) | :material-check: |
 | `sort` | Sort by node name | :material-check: |
 | `dedup` | Remove duplicate nodes: nodes with identical connection fields (type/address/port/credentials/transport) keep only the first | :material-check: |

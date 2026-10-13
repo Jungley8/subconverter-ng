@@ -167,5 +167,11 @@ func (c *Config) Summary() string {
 		}
 	}
 
+	if c.DefaultConfigURL != "" {
+		fmt.Fprintf(&b, "  default config: %s\n", RedactURL(c.DefaultConfigURL))
+	} else {
+		b.WriteString("  default config: (none — &config= required per request)\n")
+	}
+
 	return b.String()
 }

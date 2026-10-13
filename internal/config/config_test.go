@@ -38,6 +38,42 @@ func TestInsertDefaultsAndEnv(t *testing.T) {
 	}
 }
 
+func TestDefaultConfigURLFromFileAndEnv(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "app.yaml")
+	yaml := "default_config_url: https://example.com/config.init\n"
+	if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.DefaultConfigURL != "https://example.com/config.init" {
+		t.Errorf("default_config_url from file = %q", c.DefaultConfigURL)
+	}
+
+	// Env overrides the file.
+	t.Setenv("SUBNG_DEFAULT_CONFIG_URL", "https://env.example.com/other.init")
+	c, err = Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.DefaultConfigURL != "https://env.example.com/other.init" {
+		t.Errorf("default_config_url from env = %q", c.DefaultConfigURL)
+	}
+
+	// Blank/whitespace env must not wipe the file value.
+	t.Setenv("SUBNG_DEFAULT_CONFIG_URL", "   ")
+	c, err = Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.DefaultConfigURL != "https://example.com/config.init" {
+		t.Errorf("blank env wiped file value: %q", c.DefaultConfigURL)
+	}
+}
+
 func TestRateLimitDefaultsBackfilled(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "app.yaml")

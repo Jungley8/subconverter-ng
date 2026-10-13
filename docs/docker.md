@@ -43,6 +43,19 @@ docker compose up -d
 
 详见 [绕过 Cloudflare](cloudflare.md)。
 
+## 默认外部配置（省去每次传 `config=`）
+
+服务端可固定一套外部 INI 规则配置（`custom_proxy_group` / `ruleset` 来源，远端 URL），`/sub` 请求省略 `&config=` 时自动使用；显式传 `&config=` 时仍以请求参数为准。
+
+```bash
+export SUBNG_DEFAULT_CONFIG_URL=https://raw.githubusercontent.com/you/clash-rule/main/config.init
+docker compose up -d
+```
+
+或写进配置文件（见 `config.example.yaml` 的 `default_config_url`）。
+
+注意：默认配置抓取失败时**请求直接报错**，不会静默回落到无规则输出——请保证该 URL 可达（启动日志的 `default config:` 行可核对是否生效，token 已脱敏）。
+
 ## 环境变量
 
 | 变量 | 说明 | 示例 |
@@ -51,6 +64,7 @@ docker compose up -d
 | `SUBNG_PROXY` | 全局上游代理 | `socks5://127.0.0.1:1080` |
 | `SUBNG_FLARESOLVERR_URL` | FlareSolverr 端点 | `http://flaresolverr:8191/v1` |
 | `SUBNG_USER_AGENT` | 抓订阅的 UA | `clash-verge/v1.6.0` |
+| `SUBNG_DEFAULT_CONFIG_URL` | 默认外部 INI 规则配置（远端 URL） | `https://raw.githubusercontent.com/.../config.ini` |
 
 ## 私有镜像拉取
 
@@ -76,6 +90,7 @@ subconverter-ng v0.5.0
   rate limit:     30/min, burst 10
   insert urls:    1 (enabled, prepend)
     - https://air.com/***
+  default config: https://raw.githubusercontent.com/you/clash-rule?token=***
 listening on :25500
 ```
 

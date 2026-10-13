@@ -61,6 +61,78 @@ func TestHandleSub_EndToEnd(t *testing.T) {
 	}
 }
 
+func TestHandleSub_DefaultConfigURL(t *testing.T) {
+	air := fakeAirport()
+	defer air.Close()
+
+	cfg := config.Default()
+	cfg.DefaultConfigURL = air.URL + "/config.init"
+	h := New(cfg).Handler()
+
+	// No &config=: the server default is used — groups/rules must be present.
+	target := "/sub?target=clash&url=" + url.QueryEscape(air.URL+"/sub.txt")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var doc map[string]any
+	if err := yaml.Unmarshal(rec.Body.Bytes(), &doc); err != nil {
+		t.Fatalf("invalid yaml output: %v", err)
+	}
+	if doc["proxy-groups"] == nil || doc["rules"] == nil {
+		t.Error("default config not applied: missing groups/rules")
+	}
+}
+
+func TestHandleSub_ExplicitConfigWinsOverDefault(t *testing.T) {
+	air := fakeAirport()
+	defer air.Close()
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("[custom]\nruleset=🐟 Final,[]FINAL\ncustom_proxy_group=Other`select`.*`\n"))
+	}))
+	defer other.Close()
+
+	cfg := config.Default()
+	cfg.DefaultConfigURL = other.URL + "/other.init"
+	h := New(cfg).Handler()
+
+	target := "/sub?target=clash&url=" + url.QueryEscape(air.URL+"/sub.txt") +
+		"&config=" + url.QueryEscape(air.URL+"/config.init")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "🚀 Select") || strings.Contains(body, "Other") {
+		t.Errorf("explicit &config= did not win over default, body:\n%s", body)
+	}
+}
+
+func TestHandleSub_BrokenDefaultConfigFailsClosed(t *testing.T) {
+	// fakeAirport serves no /missing.init -> fetch fails.
+	air := fakeAirport()
+	defer air.Close()
+
+	cfg := config.Default()
+	cfg.DefaultConfigURL = air.URL + "/missing.init"
+	h := New(cfg).Handler()
+
+	target := "/sub?target=clash&url=" + url.QueryEscape(air.URL+"/sub.txt")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200-with-hint (never 5xx)", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "fetch external config") {
+		t.Errorf("expected fetch-external-config error hint, got:\n%s", body)
+	}
+	if strings.Contains(body, "proxy-groups:") {
+		t.Error("must not fall back to rendering on default-config failure")
+	}
+}
+
 func TestHandleSub_NoUsableNodesReturnsHint(t *testing.T) {
 	// An airport that serves an unparseable body must never yield a 5xx —
 	// Cloudflare would swallow it. Expect 200 with a readable plain-text hint.

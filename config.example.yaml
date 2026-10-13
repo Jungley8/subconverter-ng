@@ -3,9 +3,16 @@
 # server defaults. Environment variables override these:
 #   SUBNG_LISTEN, SUBNG_PROXY, SUBNG_FLARESOLVERR_URL, SUBNG_USER_AGENT,
 #   SUBNG_CACHE_TTL, SUBNG_RATELIMIT_ENABLED, SUBNG_RATELIMIT_RPM, SUBNG_RATELIMIT_BURST,
-#   SUBNG_INSERT_URLS (comma-separated), SUBNG_INSERT_PREPEND, SUBNG_INSERT_ENABLED
+#   SUBNG_INSERT_URLS (comma-separated), SUBNG_INSERT_PREPEND, SUBNG_INSERT_ENABLED,
+#   SUBNG_DEFAULT_CONFIG_URL
 
 listen: ":25500"
+
+# Default external INI config (the &config= groups/rules source, remote URL only)
+# used when a /sub request omits &config=. An explicit &config= param always
+# wins. When set but the fetch fails, the request fails instead of silently
+# falling back to an empty (rules-less) config.
+default_config_url: ""
 
 fetch:
   # User-Agent sent when fetching subscriptions/rulesets. Many panels only
