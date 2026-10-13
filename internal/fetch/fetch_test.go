@@ -65,6 +65,40 @@ func TestGet_OKAndUserAgent(t *testing.T) {
 	}
 }
 
+func TestGet_Non200FailsClosed(t *testing.T) {
+	// A 404 body is an error page, not a subscription/config: it must surface
+	// as an error rather than a successful fetch of garbage.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte("404 page not found"))
+	}))
+	defer srv.Close()
+
+	c, _ := New(Options{})
+	if _, err := c.Get(context.Background(), srv.URL); err == nil {
+		t.Fatal("expected error for 404")
+	} else if !strings.Contains(err.Error(), "unexpected status 404") {
+		t.Errorf("error = %q, want unexpected-status mention", err)
+	}
+}
+
+func TestGet_Non200ServerErrorFailsClosed(t *testing.T) {
+	// Same fail-closed behaviour for 5xx: an upstream error page must not be
+	// parsed as a subscription or config.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("internal error"))
+	}))
+	defer srv.Close()
+
+	c, _ := New(Options{})
+	if _, err := c.Get(context.Background(), srv.URL); err == nil {
+		t.Fatal("expected error for 500")
+	} else if !strings.Contains(err.Error(), "unexpected status 500") {
+		t.Errorf("error = %q, want unexpected-status mention", err)
+	}
+}
+
 func TestIsCloudflareChallenge(t *testing.T) {
 	if !isCloudflareChallenge(403, []byte("<title>Just a moment...</title>")) {
 		t.Error("should detect 'Just a moment'")

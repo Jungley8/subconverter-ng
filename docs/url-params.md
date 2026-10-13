@@ -26,7 +26,7 @@
 |---|---|---|
 | `target` | 输出目标（见上表），缺省 `clash` | :material-check: |
 | `url` | 订阅链接，多个用 `\|` 分隔（必填）；也支持直接粘贴节点链接（如 `vless://…`、`ss://…`），单个或多个节点可不用订阅直接转换 | :material-check: |
-| `config` | 外部 INI 配置 URL（分组与规则来源） | :material-check: |
+| `config` | 外部 INI 配置 URL（分组与规则来源）；省略时用服务端 `default_config_url`（若未配置则无分组无规则） | :material-check: |
 | `insert` | 是否合并服务端配置的 `insert_url` 节点；覆盖配置默认值（见下方说明） | :material-check: |
 | `sort` | 按节点名排序 | :material-check: |
 | `dedup` | 去除重复节点：连接字段（类型/地址/端口/凭据/传输）完全相同的节点只保留第一个 | :material-check: |

@@ -47,6 +47,12 @@ type Config struct {
 	Fetch     Fetch     `yaml:"fetch"`
 	RateLimit RateLimit `yaml:"ratelimit"`
 	Insert    Insert    `yaml:"insert"`
+
+	// DefaultConfigURL is the remote external INI config (the &config=
+	// groups/rules source) used when a /sub request omits &config=. URL only.
+	// An explicit &config= param always wins. When set but the fetch fails,
+	// the request fails instead of silently falling back to an empty config.
+	DefaultConfigURL string `yaml:"default_config_url"`
 }
 
 // Default returns a config with sane defaults applied.
@@ -147,6 +153,9 @@ func applyEnv(cfg *Config) {
 		if b, err := parseBool(v); err == nil {
 			cfg.Insert.Enabled = b
 		}
+	}
+	if v := strings.TrimSpace(os.Getenv("SUBNG_DEFAULT_CONFIG_URL")); v != "" {
+		cfg.DefaultConfigURL = v
 	}
 }
 

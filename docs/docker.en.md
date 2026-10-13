@@ -43,6 +43,23 @@ docker compose up -d
 
 See [Bypass Cloudflare](cloudflare.md) for details.
 
+## Default external config (skip `config=` on every request)
+
+The server can pin one remote external INI rules config (the `custom_proxy_group` /
+`ruleset` source) that `/sub` requests use when they omit `&config=`. An explicit
+`&config=` param always wins.
+
+```bash
+export SUBNG_DEFAULT_CONFIG_URL=https://raw.githubusercontent.com/you/clash-rule/main/config.init
+docker compose up -d
+```
+
+Or set `default_config_url` in the config file (see `config.example.yaml`).
+
+Note: when the default config fetch fails, **the request errors out** instead of
+silently falling back to a rules-less output — keep that URL reachable (check the
+`default config:` line in the startup log; tokens are redacted).
+
 ## Environment variables
 
 | Variable | Description | Example |
@@ -51,6 +68,7 @@ See [Bypass Cloudflare](cloudflare.md) for details.
 | `SUBNG_PROXY` | Global upstream proxy | `socks5://127.0.0.1:1080` |
 | `SUBNG_FLARESOLVERR_URL` | FlareSolverr endpoint | `http://flaresolverr:8191/v1` |
 | `SUBNG_USER_AGENT` | UA used when fetching subscriptions | `clash-verge/v1.6.0` |
+| `SUBNG_DEFAULT_CONFIG_URL` | Default external INI rules config (remote URL) | `https://raw.githubusercontent.com/.../config.ini` |
 
 ## Pulling a private image
 
@@ -79,6 +97,7 @@ subconverter-ng v0.5.0
   rate limit:     30/min, burst 10
   insert urls:    1 (enabled, prepend)
     - https://air.com/***
+  default config: https://raw.githubusercontent.com/you/clash-rule?token=***
 listening on :25500
 ```
 

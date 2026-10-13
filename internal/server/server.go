@@ -174,7 +174,7 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 	req := convert.Request{
 		Target:        target,
 		SubURLs:       splitURLs(rawURL),
-		ConfigURL:     q.Get("config"),
+		ConfigURL:     firstNonEmpty(q.Get("config"), s.cfg.DefaultConfigURL),
 		InsertURLs:    insertURLs,
 		InsertPrepend: s.cfg.Insert.Prepend,
 		Gen: generator.Options{

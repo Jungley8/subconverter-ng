@@ -17,6 +17,10 @@ services:
       - SUBNG_FLARESOLVERR_URL=http://flaresolverr:8191/v1
       # Override the default clash.meta User-Agent if your panel needs another.
       - SUBNG_USER_AGENT=${SUBNG_USER_AGENT:-}
+      # Default external INI config (groups/rules) used when /sub omits &config=.
+      # An explicit &config= param always wins. Example:
+      # - SUBNG_DEFAULT_CONFIG_URL=https://raw.githubusercontent.com/you/clash-rule/main/config.init
+      - SUBNG_DEFAULT_CONFIG_URL=${SUBNG_DEFAULT_CONFIG_URL:-}
     depends_on:
       - flaresolverr
 

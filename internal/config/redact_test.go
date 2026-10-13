@@ -77,15 +77,28 @@ func TestSummaryRedactsAndCoversFields(t *testing.T) {
 	cfg.Fetch.FlareSolverrURL = "http://flaresolverr:8191/v1"
 	cfg.Fetch.Timeout = 30 * time.Second
 	cfg.Insert.URLs = []string{"https://air.com/sub?token=leakme"}
+	cfg.DefaultConfigURL = "https://rules.example.com/config.init?token=leakme-too"
 
 	out := cfg.Summary()
 
 	if strings.Contains(out, "topsecret") || strings.Contains(out, "leakme") {
 		t.Fatalf("Summary leaked a secret:\n%s", out)
 	}
-	for _, want := range []string{"listen:", "user-agent:", "upstream proxy:", "flaresolverr:", "rate limit:", "insert urls:"} {
+	for _, want := range []string{"listen:", "user-agent:", "upstream proxy:", "flaresolverr:", "rate limit:", "insert urls:", "default config:"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("Summary missing %q field:\n%s", want, out)
 		}
+	}
+}
+
+func TestSummaryDefaultConfigUnset(t *testing.T) {
+	// Without a default config URL the banner must say so explicitly, so an
+	// operator does not mistake an empty summary for a loaded value.
+	out := Default().Summary()
+	if !strings.Contains(out, "default config:") {
+		t.Fatalf("Summary missing default config line:\n%s", out)
+	}
+	if !strings.Contains(out, "&config=") {
+		t.Errorf("unset default config should hint at per-request &config=:\n%s", out)
 	}
 }
