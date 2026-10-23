@@ -49,10 +49,18 @@ func TestGenerateSingbox(t *testing.T) {
 
 	// Must be valid JSON.
 	var doc struct {
+		HTTPClients []map[string]any `json:"http_clients"`
+		DNS         struct {
+			Servers []map[string]any `json:"servers"`
+		} `json:"dns"`
+		Inbounds  []map[string]any `json:"inbounds"`
 		Outbounds []map[string]any `json:"outbounds"`
 		Route     struct {
-			Rules []map[string]any `json:"rules"`
-			Final string           `json:"final"`
+			Rules              []map[string]any `json:"rules"`
+			RuleSets           []map[string]any `json:"rule_set"`
+			Final              string           `json:"final"`
+			DefaultHTTPClient  string           `json:"default_http_client"`
+			DefaultDNSResolver string           `json:"default_domain_resolver"`
 		} `json:"route"`
 	}
 	if err := json.Unmarshal(res.Output, &doc); err != nil {
@@ -83,32 +91,130 @@ func TestGenerateSingbox(t *testing.T) {
 	if tags["Auto"]["type"] != "urltest" {
 		t.Errorf("Auto group type = %v, want urltest", tags["Auto"]["type"])
 	}
-	// Builtins.
-	if tags["direct"] == nil || tags["block"] == nil {
-		t.Error("missing direct/block builtins")
+	// Builtin. Rejections are route actions in current sing-box releases.
+	if tags["direct"] == nil {
+		t.Error("missing direct builtin")
+	}
+	if tags["block"] != nil {
+		t.Error("legacy block outbound should not be emitted")
 	}
 	// VLESS reality + utls carried into tls.
 	vlessTLS, _ := tags["US"]["tls"].(map[string]any)
 	if vlessTLS == nil || vlessTLS["reality"] == nil || vlessTLS["utls"] == nil {
 		t.Errorf("vless tls missing reality/utls: %v", tags["US"]["tls"])
 	}
-	// Route: FINAL -> route.final = Proxy; dns/domain_suffix/geosite rules present.
+	// Route: FINAL -> route.final = Proxy; DNS handling and modern rule-sets
+	// are present.
 	if doc.Route.Final != "Proxy" {
 		t.Errorf("route.final = %q, want Proxy", doc.Route.Final)
 	}
-	var sawDomainSuffix, sawDNS, sawGeosite bool
+	if doc.Route.DefaultHTTPClient != "rule-set-download" {
+		t.Errorf("route.default_http_client = %q", doc.Route.DefaultHTTPClient)
+	}
+	if doc.Route.DefaultDNSResolver != "local" {
+		t.Errorf("route.default_domain_resolver = %q", doc.Route.DefaultDNSResolver)
+	}
+	var sawSniff, sawDNSHijack bool
 	for _, r := range doc.Route.Rules {
-		if r["protocol"] == "dns" {
-			sawDNS = true
+		if r["action"] == "sniff" {
+			sawSniff = true
 		}
-		if _, ok := r["domain_suffix"]; ok {
-			sawDomainSuffix = true
-		}
-		if _, ok := r["geosite"]; ok {
-			sawGeosite = true
+		if r["protocol"] == "dns" && r["action"] == "hijack-dns" {
+			sawDNSHijack = true
 		}
 	}
-	if !sawDNS || !sawDomainSuffix || !sawGeosite {
-		t.Errorf("route rules missing dns/domain_suffix/geosite: %+v", doc.Route.Rules)
+	if !sawSniff || !sawDNSHijack {
+		t.Errorf("route rules missing sniff/dns hijack: %+v", doc.Route.Rules)
+	}
+
+	var sawInlineDomain, sawInlineIP, sawGeosite, sawGeoIP bool
+	for _, rs := range doc.Route.RuleSets {
+		tag, _ := rs["tag"].(string)
+		switch {
+		case tag == "geosite-google":
+			sawGeosite = rs["type"] == "remote"
+		case tag == "geoip-cn":
+			sawGeoIP = rs["type"] == "remote"
+		case rs["type"] == "inline":
+			rules, _ := rs["rules"].([]any)
+			for _, raw := range rules {
+				rule, _ := raw.(map[string]any)
+				if _, ok := rule["domain_suffix"]; ok {
+					sawInlineDomain = true
+				}
+				if _, ok := rule["ip_cidr"]; ok {
+					sawInlineIP = true
+				}
+			}
+		}
+	}
+	if !sawInlineDomain || !sawInlineIP || !sawGeosite || !sawGeoIP {
+		t.Errorf("rule-sets missing compacted or remote entries: %+v", doc.Route.RuleSets)
+	}
+
+	// Current DNS and explicit HTTP client formats.
+	if len(doc.HTTPClients) != 1 || doc.HTTPClients[0]["tag"] != "rule-set-download" {
+		t.Errorf("unexpected http_clients: %+v", doc.HTTPClients)
+	}
+	if len(doc.DNS.Servers) != 2 ||
+		doc.DNS.Servers[0]["type"] != "tls" ||
+		doc.DNS.Servers[1]["type"] != "https" {
+		t.Errorf("unexpected DNS servers: %+v", doc.DNS.Servers)
+	}
+
+	// The profile includes an Apple-compatible IPv4-only TUN without removed
+	// platform options.
+	var tun map[string]any
+	for _, inbound := range doc.Inbounds {
+		if inbound["type"] == "tun" {
+			tun = inbound
+			break
+		}
+	}
+	if tun == nil {
+		t.Fatal("missing TUN inbound")
+	}
+	for _, field := range []string{"inet6_address", "strict_route", "gso", "interface_name"} {
+		if _, exists := tun[field]; exists {
+			t.Errorf("unsupported Apple TUN field emitted: %s", field)
+		}
+	}
+}
+
+func TestCompactSingboxRouteRules(t *testing.T) {
+	rules := []map[string]any{
+		{"outbound": "Proxy", "domain_suffix": []string{"a.example", "shared.example"}},
+		{"outbound": "Proxy", "domain_suffix": []string{"shared.example", "b.example"}},
+		{"outbound": "Proxy", "ip_cidr": []string{"192.0.2.0/24"}},
+		{"outbound": "direct", "domain": []string{"direct.example"}},
+		{"outbound": "Proxy", "domain": []string{"later.example"}},
+		{"action": "reject", "domain": []string{"ads.example"}},
+	}
+
+	compacted, ruleSets := compactSingboxRouteRules(rules, nil)
+	if len(compacted) != 4 {
+		t.Fatalf("compacted route rules = %d, want 4", len(compacted))
+	}
+	if len(ruleSets) != 4 {
+		t.Fatalf("rule-sets = %d, want 4", len(ruleSets))
+	}
+
+	firstTag, _ := compacted[0]["rule_set"].(string)
+	if firstTag == "" || compacted[0]["outbound"] != "Proxy" {
+		t.Fatalf("first compacted rule = %+v", compacted[0])
+	}
+	headless, _ := ruleSets[0]["rules"].([]map[string]any)
+	if len(headless) != 2 {
+		t.Fatalf("first rule-set headless rules = %d, want 2", len(headless))
+	}
+	domainValues, _ := headless[0]["domain_suffix"].([]any)
+	if len(domainValues) != 3 {
+		t.Errorf("deduplicated domain_suffix values = %v", domainValues)
+	}
+	if compacted[1]["outbound"] != "direct" {
+		t.Errorf("destination boundary lost: %+v", compacted[1])
+	}
+	if compacted[3]["action"] != "reject" {
+		t.Errorf("reject rule not preserved: %+v", compacted[3])
 	}
 }
