@@ -37,7 +37,7 @@ func TestGenerateSingbox(t *testing.T) {
 			{Group: "Proxy", Inline: "FINAL"},
 		},
 	}
-	f := fakeFetcher{"PROXY.list": []byte("DOMAIN-SUFFIX,google.com\nIP-CIDR,8.8.8.8/32,no-resolve\nGEOSITE,google\n")}
+	f := fakeFetcher{"PROXY.list": []byte("DOMAIN-SUFFIX,google.com\nIP-CIDR,8.8.8.8/32,no-resolve\nGEOSITE,google\nPROCESS-NAME,ios.process\n")}
 
 	res, err := GenerateSingbox(context.Background(), nodes, cfg, f, Options{})
 	if err != nil {
@@ -52,6 +52,7 @@ func TestGenerateSingbox(t *testing.T) {
 		HTTPClients []map[string]any `json:"http_clients"`
 		DNS         struct {
 			Servers []map[string]any `json:"servers"`
+			Final   string           `json:"final"`
 		} `json:"dns"`
 		Inbounds  []map[string]any `json:"inbounds"`
 		Outbounds []map[string]any `json:"outbounds"`
@@ -127,7 +128,7 @@ func TestGenerateSingbox(t *testing.T) {
 		t.Errorf("route rules missing sniff/dns hijack: %+v", doc.Route.Rules)
 	}
 
-	var sawInlineDomain, sawInlineIP, sawGeosite, sawGeoIP bool
+	var sawInlineDomain, sawInlineIP, sawGeosite, sawGeoIP, sawProcess bool
 	for _, rs := range doc.Route.RuleSets {
 		tag, _ := rs["tag"].(string)
 		switch {
@@ -145,20 +146,37 @@ func TestGenerateSingbox(t *testing.T) {
 				if _, ok := rule["ip_cidr"]; ok {
 					sawInlineIP = true
 				}
+				if _, ok := rule["process_name"]; ok {
+					sawProcess = true
+				}
 			}
 		}
 	}
 	if !sawInlineDomain || !sawInlineIP || !sawGeosite || !sawGeoIP {
 		t.Errorf("rule-sets missing compacted or remote entries: %+v", doc.Route.RuleSets)
 	}
+	if sawProcess {
+		t.Error("process_name must not be emitted for cross-platform sing-box profiles")
+	}
+	foundSkippedProcess := false
+	for _, skipped := range res.SkippedRules {
+		if skipped == "PROCESS-NAME,ios.process" {
+			foundSkippedProcess = true
+			break
+		}
+	}
+	if !foundSkippedProcess {
+		t.Errorf("PROCESS-NAME rule not reported as skipped: %v", res.SkippedRules)
+	}
 
 	// Current DNS and explicit HTTP client formats.
 	if len(doc.HTTPClients) != 1 || doc.HTTPClients[0]["tag"] != "rule-set-download" {
 		t.Errorf("unexpected http_clients: %+v", doc.HTTPClients)
 	}
-	if len(doc.DNS.Servers) != 2 ||
-		doc.DNS.Servers[0]["type"] != "tls" ||
-		doc.DNS.Servers[1]["type"] != "https" {
+	if doc.DNS.Final != "local" {
+		t.Errorf("dns.final = %q, want local", doc.DNS.Final)
+	}
+	if len(doc.DNS.Servers) != 1 || doc.DNS.Servers[0]["type"] != "https" {
 		t.Errorf("unexpected DNS servers: %+v", doc.DNS.Servers)
 	}
 

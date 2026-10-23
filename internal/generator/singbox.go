@@ -124,10 +124,9 @@ func GenerateSingbox(ctx context.Context, nodes []*proxy.Proxy, cfg *extconfig.C
 		"log":          map[string]any{"level": "info", "timestamp": true},
 		"dns": map[string]any{
 			"servers": []map[string]any{
-				{"type": "tls", "tag": "remote", "server": "8.8.8.8"},
 				{"type": "https", "tag": "local", "server": "223.5.5.5", "path": "/dns-query"},
 			},
-			"final": "remote",
+			"final": "local",
 		},
 		"inbounds": []map[string]any{
 			{
@@ -248,7 +247,6 @@ var singboxRuleField = map[string]string{
 	"DOMAIN": "domain", "DOMAIN-SUFFIX": "domain_suffix", "DOMAIN-KEYWORD": "domain_keyword",
 	"DOMAIN-REGEX": "domain_regex",
 	"IP-CIDR":      "ip_cidr", "IP-CIDR6": "ip_cidr", "DST-PORT": "port", "SRC-PORT": "source_port",
-	"PROCESS-NAME": "process_name",
 }
 
 // singboxRouteRule builds a single route rule object. ok is false for rule types
@@ -300,7 +298,6 @@ var singboxCompactFieldOrder = []string{
 	"ip_cidr",
 	"port",
 	"source_port",
-	"process_name",
 }
 
 // compactSingboxRouteRules groups consecutive rules that share a destination
