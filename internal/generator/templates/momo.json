@@ -401,6 +401,12 @@
     },
     {
       "listen": "::",
+      "listen_port": 9887,
+      "type": "redirect",
+      "tag": "redirect-in"
+    },
+    {
+      "listen": "::",
       "listen_port": 9888,
       "type": "tproxy",
       "tag": "tproxy-in",
