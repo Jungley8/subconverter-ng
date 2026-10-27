@@ -125,6 +125,28 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 	if target == "" {
 		target = "clash"
 	}
+	// Early target validation: reject unknown names and malformed versions
+	// (e.g. "singbox/abc") before any fetch work happens.
+	name, ver, err := convert.ParseTarget(target)
+	if err != nil {
+		http.Error(w, "invalid target: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// &source=<preset> selects the fetch User-Agent from a named client preset
+	// (clash.meta, v2ray, singbox, ...), useful when the upstream subscription
+	// serves different content per client UA. Explicit &ua= still wins.
+	src := strings.TrimSpace(q.Get("source"))
+	var presetUA string
+	if src != "" {
+		ua, ok := fetch.UAPreset(src)
+		if !ok {
+			http.Error(w, fmt.Sprintf("unsupported source %q (supported: %s)", src, strings.Join(fetch.UAPresetNames(), ", ")), http.StatusBadRequest)
+			return
+		}
+		presetUA = ua
+	}
+
 	rawURL := q.Get("url")
 	if rawURL == "" {
 		http.Error(w, "missing required parameter: url", http.StatusBadRequest)
@@ -145,8 +167,11 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 	// configured upstream proxy. The shared cache is injected so cached
 	// ruleset/subscription fetches persist across requests (keyed by URL only;
 	// per-request proxy differences are intentionally ignored).
+	// UA precedence: explicit &ua= > &source= preset > configured user_agent.
+	// An empty result keeps current behaviour: fetch.New fills in its default.
+	resolvedUA := firstNonEmpty(strings.TrimSpace(q.Get("ua")), presetUA, s.cfg.Fetch.UserAgent)
 	opts := fetch.Options{
-		UserAgent:       s.cfg.Fetch.UserAgent,
+		UserAgent:       resolvedUA,
 		Proxy:           firstNonEmpty(q.Get("proxy"), s.cfg.Fetch.Proxy),
 		FlareSolverrURL: s.cfg.Fetch.FlareSolverrURL,
 		Timeout:         s.cfg.Fetch.Timeout,
@@ -211,13 +236,19 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 		writeUserError(w, err)
 		return
 	}
+	// Log the canonical target name, with the major.minor version when the
+	// client asked for one (e.g. "singbox/1.3").
+	display := name
+	if ver != nil {
+		display = fmt.Sprintf("%s/%d.%d", name, ver.Major, ver.Minor)
+	}
 	log.Printf("converted (%s): %d nodes, %d unparsed lines, %d dup, %d deprecated, %d nodes unsupported by target, empty groups: %v, %d rules dropped (unsupported type)",
-		convert.NormalizeTarget(target), diag.NodeCount, len(diag.SkippedLines), diag.Duplicates, diag.Deprecated, len(diag.SkippedNodes), diag.EmptyGroups, len(diag.SkippedRules))
+		display, diag.NodeCount, len(diag.SkippedLines), diag.Duplicates, diag.Deprecated, len(diag.SkippedNodes), diag.EmptyGroups, len(diag.SkippedRules))
 	if len(diag.SkippedRules) > 0 {
 		log.Printf("dropped rules (unsupported type): %v", diag.SkippedRules)
 	}
 	if len(diag.SkippedNodes) > 0 {
-		log.Printf("nodes unsupported by target %q: %v", target, diag.SkippedNodes)
+		log.Printf("nodes unsupported by target %q: %v", name, diag.SkippedNodes)
 	}
 
 	// Content-Type varies by target (YAML for clash, JSON for sing-box, plain

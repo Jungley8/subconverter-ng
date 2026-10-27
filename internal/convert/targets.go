@@ -3,6 +3,7 @@ package convert
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/Jungley8/subconverter-ng/internal/extconfig"
@@ -40,6 +41,66 @@ func NormalizeTarget(t string) string {
 		return c
 	}
 	return key
+}
+
+// ParseTarget splits a raw target spec of the form "name[/version]" into the
+// canonical target name and the parsed version, e.g. "singbox/1.3.xx" ->
+// ("singbox", Version{1, 3, 0}). A spec without "/" yields a nil version.
+// The name part goes through NormalizeTarget (its validity is the caller's
+// concern, via supportedTargets); the version part must contain at least one
+// fully-numeric "." segment or an error is returned.
+func ParseTarget(raw string) (string, *generator.Version, error) {
+	name, version, hasVersion := strings.Cut(strings.TrimSpace(raw), "/")
+	target := NormalizeTarget(name)
+	if !hasVersion {
+		return target, nil, nil
+	}
+	ver, err := parseTargetVersion(version)
+	if err != nil {
+		return "", nil, err
+	}
+	return target, ver, nil
+}
+
+// parseTargetVersion parses "major[.minor[.patch]]" (e.g. "1.3.xx" -> 1.3.0).
+// Segments are consumed left to right while they parse fully as integers; the
+// first non-numeric segment stops parsing and trailing garbage is ignored.
+// Fewer than one numeric segment ("abc", "") is an error.
+func parseTargetVersion(s string) (*generator.Version, error) {
+	s = strings.TrimSpace(s)
+	var v generator.Version
+	n := 0
+	for _, seg := range strings.Split(s, ".") {
+		num, err := strconv.Atoi(seg)
+		if err != nil {
+			break
+		}
+		switch n {
+		case 0:
+			v.Major = num
+		case 1:
+			v.Minor = num
+		case 2:
+			v.Patch = num
+		}
+		n++
+	}
+	if n == 0 {
+		return nil, fmt.Errorf("invalid target version %q", s)
+	}
+	return &v, nil
+}
+
+// describeTarget renders a target for error messages: the canonical name plus
+// "/major.minor[.patch]" when a version was declared (e.g. "singbox/9.9").
+func describeTarget(name string, ver *generator.Version) string {
+	if ver == nil {
+		return name
+	}
+	if ver.Patch != 0 {
+		return fmt.Sprintf("%s/%d.%d.%d", name, ver.Major, ver.Minor, ver.Patch)
+	}
+	return fmt.Sprintf("%s/%d.%d", name, ver.Major, ver.Minor)
 }
 
 // targetOrder is the stable display order for supportedList.

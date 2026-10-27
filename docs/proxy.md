@@ -43,6 +43,32 @@ export SUBNG_USER_AGENT="clash-verge/v1.6.0"
 subconverter-ng convert --url '<订阅>' --ua "ClashforWindows/0.20.39"
 ```
 
+### 按请求覆盖（`&ua=` / `&source=`）
+
+`/sub` 请求还可用扩展参数按请求覆盖抓取 UA：
+
+- **`&ua=<字符串>`**：直接指定 UA，对本次请求的**全部远程抓取**（订阅 / 规则 / 外部配置）生效。
+- **`&source=<预设>`**：按订阅源格式映射为对应 UA，无需手记 UA 字符串；未知预设返回 400 并列出支持值。
+
+优先级：**`&ua=` > `&source=` > `fetch.user_agent` 配置（环境变量 `SUBNG_USER_AGENT` 同效） > 内置默认 `clash.meta/1.18.0 mihomo/1.18.0`**。
+
+`source` 预设与映射 UA：
+
+| 预设 | 映射 UA |
+|---|---|
+| `clash.meta` / `clash` / `mihomo` | `clash.meta/1.18.0 mihomo/1.18.0` |
+| `v2ray` / `v2rayn` | `v2rayN/6.45` |
+| `singbox` / `sing-box` | `sing-box/1.3.0` |
+| `surge` | `Surge/5.9.0` |
+| `shadowrocket` | `Shadowrocket/2.2.50` |
+| `quanx` | `Quantumult X/1.0.30` |
+| `loon` | `Loon/3.2.4` |
+
+!!! warning "⚠️ 可解析性"
+    只有返回 **Clash YAML 或 base64 分享链接**的预设（`clash.meta`、`v2ray`，以及部分面板对其它 UA
+    也返回兼容载荷）当前可被本工具解析；`singbox` / `surge` / `quanx` / `loon` 等原始格式订阅本工具
+    暂不能解析，此类预设仅供面板返回兼容载荷时使用。
+
 ## 排错
 
 - **订阅解析出 0 个节点**：先确认 UA。用 `curl -A "<你的UA>" '<订阅>' | base64 -d | head` 看机场到底返回了什么。

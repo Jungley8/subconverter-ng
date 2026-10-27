@@ -23,6 +23,22 @@ import (
 	"github.com/Jungley8/subconverter-ng/internal/proxy"
 )
 
+// Version is a parsed client version from a "name/version" target spec
+// (e.g. "singbox/1.3.11" -> {1, 13, 11}).
+type Version struct {
+	Major, Minor, Patch int
+}
+
+// AtLeast reports whether v's (Major, Minor) pair is lexicographically >=
+// (major, minor); Patch does not participate. A nil *Version means "no version
+// declared" and callers skip the comparison entirely.
+func (v *Version) AtLeast(major, minor int) bool {
+	if v.Major != major {
+		return v.Major > major
+	}
+	return v.Minor >= minor
+}
+
 // prepareNodes runs the target-agnostic node pipeline and records its
 // diagnostics (dedup/deprecated counts, final NodeCount) into res. The returned
 // slice is the processed node list every generator renders from. Node options

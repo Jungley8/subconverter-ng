@@ -137,6 +137,38 @@ func TestCache_SharedAcrossClients(t *testing.T) {
 	}
 }
 
+func TestCache_KeyIncludesUserAgent(t *testing.T) {
+	// Panels serve different content per UA, so two Clients with different
+	// User-Agents must not share cache entries even for the same URL.
+	var hits int32
+	srv := httptest.NewServer(countingHandler(&hits, "ua-keyed", nil))
+	defer srv.Close()
+
+	shared := NewCache(time.Hour)
+	c1, _ := New(Options{Cache: shared, UserAgent: "ua-a"})
+	c2, _ := New(Options{Cache: shared, UserAgent: "ua-b"})
+
+	if _, err := c1.Get(context.Background(), srv.URL); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c2.Get(context.Background(), srv.URL); err != nil {
+		t.Fatal(err)
+	}
+	if hits != 2 {
+		t.Fatalf("hits = %d, want 2 (second UA must miss the cache)", hits)
+	}
+	// Each client now hits its own cache entry: no further origin traffic.
+	if _, err := c1.Get(context.Background(), srv.URL); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c2.Get(context.Background(), srv.URL); err != nil {
+		t.Fatal(err)
+	}
+	if hits != 2 {
+		t.Errorf("hits = %d, want 2 (both served from cache)", hits)
+	}
+}
+
 func TestGetWithMeta_ReturnsHeaderAndCaches(t *testing.T) {
 	var hits int32
 	hdr := http.Header{"Subscription-Userinfo": []string{"upload=1; download=2; total=3; expire=4"}}

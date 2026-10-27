@@ -95,9 +95,12 @@ type Diagnostics struct {
 
 // Run performs the conversion and returns the rendered config bytes.
 func Run(ctx context.Context, f Fetcher, req Request) ([]byte, *Diagnostics, error) {
-	target := NormalizeTarget(req.Target)
-	if !supportedTargets[target] {
-		return nil, nil, fmt.Errorf("unsupported target %q (supported: %s)", req.Target, supportedList())
+	name, ver, err := ParseTarget(req.Target)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !supportedTargets[name] {
+		return nil, nil, fmt.Errorf("unsupported target %q (supported: %s)", describeTarget(name, ver), supportedList())
 	}
 	if len(req.SubURLs) == 0 {
 		return nil, nil, fmt.Errorf("no subscription url provided")
@@ -142,6 +145,7 @@ func Run(ctx context.Context, f Fetcher, req Request) ([]byte, *Diagnostics, err
 	}
 
 	gen := req.Gen
+	gen.TargetVersion = ver
 	gen.RenameRules = generator.CompileRenameRules(cfg.RenameRules)
 	gen.RemoveEmoji, gen.AddEmoji = resolveEmoji(cfg, req)
 	if gen.AddEmoji {
@@ -152,7 +156,7 @@ func Run(ctx context.Context, f Fetcher, req Request) ([]byte, *Diagnostics, err
 		}
 	}
 
-	result, err := render(ctx, target, nodes, cfg, f, gen)
+	result, err := render(ctx, name, nodes, cfg, f, gen)
 	if err != nil {
 		return nil, nil, err
 	}

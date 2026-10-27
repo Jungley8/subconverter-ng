@@ -64,6 +64,12 @@ type Options struct {
 	// (100.64.0.0/10 and fd7a:115c:a1e0::/48) to the top of the rule list.
 	// Maps to &tailscale=true.
 	Tailscale bool
+
+	// TargetVersion is the optional client version parsed from a "name/version"
+	// target spec (e.g. "singbox/1.3"); nil means no version was declared, in
+	// which case generators behave exactly as before. The sing-box generator
+	// uses it to gate protocols the client cannot render.
+	TargetVersion *Version
 }
 
 // RenameRule is a compiled rename= entry: a regex pattern and its replacement.

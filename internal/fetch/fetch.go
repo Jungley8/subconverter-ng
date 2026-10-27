@@ -122,13 +122,15 @@ func (c *Client) Get(ctx context.Context, target string) ([]byte, error) {
 // (origin or FlareSolverr-replay) response. Callers use this to capture
 // airport metadata such as the Subscription-Userinfo header.
 //
-// Caching: successful (200, non-empty) responses are cached by URL. Cached
-// entries also retain their headers so repeated reads see Subscription-Userinfo.
+// Caching: successful (200, non-empty) responses are cached under a key that
+// combines the Client's User-Agent and the URL (two UAs must not share entries,
+// as panels serve different content per UA). Cached entries also retain their
+// headers so repeated reads see Subscription-Userinfo.
 // Pass a context value (see NoCache) is not used here; cache bypass is decided
 // by the caller wiring a Client with caching disabled or by clearing the cache.
 func (c *Client) GetWithMeta(ctx context.Context, target string) ([]byte, http.Header, error) {
 	if c.cache != nil {
-		if body, hdr, ok := c.cache.get(target); ok {
+		if body, hdr, ok := c.cache.get(c.cacheKey(target)); ok {
 			return body, hdr, nil
 		}
 	}
@@ -173,7 +175,14 @@ func (c *Client) maybeCache(target string, status int, body []byte, hdr http.Hea
 	if c.cache == nil || status != http.StatusOK || len(body) == 0 {
 		return
 	}
-	c.cache.set(target, body, hdr)
+	c.cache.set(c.cacheKey(target), body, hdr)
+}
+
+// cacheKey derives the cache key for a target URL. The Client's User-Agent is
+// part of the key because many panels return different subscription content
+// depending on the UA; two Clients differing only in UA must not share entries.
+func (c *Client) cacheKey(target string) string {
+	return c.opts.UserAgent + "\x1f" + target
 }
 
 // FlushCache clears all cached entries. Safe to call when caching is disabled.

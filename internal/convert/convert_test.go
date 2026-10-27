@@ -3,6 +3,7 @@ package convert
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -210,6 +211,44 @@ func TestRun_UnsupportedTarget(t *testing.T) {
 	_, _, err := Run(context.Background(), fakeFetcher{}, Request{Target: "quan", SubURLs: []string{"x"}})
 	if err == nil || !strings.Contains(err.Error(), "unsupported target") {
 		t.Errorf("expected unsupported target error, got %v", err)
+	}
+}
+
+func TestRun_VersionedTarget(t *testing.T) {
+	// A "name/version" target must be accepted: singbox/1.3.xx selects the
+	// sing-box generator with version 1.3, so hysteria2 (needs >= 1.5) is
+	// gated out instead of failing the conversion.
+	f := fakeFetcher{"client/subscribe": sampleSubscription()}
+	data, diag, err := Run(context.Background(), f, Request{
+		Target:  "singbox/1.3.xx",
+		SubURLs: []string{"https://airport.example.com/api/v1/client/subscribe?token=x"},
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	var doc struct {
+		Outbounds []map[string]any `json:"outbounds"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+	joined := strings.Join(diag.SkippedNodes, "\n")
+	if !strings.Contains(joined, "requires sing-box >= 1.5") {
+		t.Errorf("hysteria2 not gated for sing-box 1.3, skipped = %v", diag.SkippedNodes)
+	}
+}
+
+func TestRun_UnsupportedTargetWithVersion(t *testing.T) {
+	// An unsupported name keeps the raw-name error but shows the declared
+	// version alongside it.
+	_, _, err := Run(context.Background(), fakeFetcher{}, Request{Target: "nope/9.9", SubURLs: []string{"x"}})
+	if err == nil || !strings.Contains(err.Error(), `unsupported target "nope/9.9"`) {
+		t.Errorf("expected versioned unsupported target error, got %v", err)
+	}
+	// An invalid version is rejected outright with its own error.
+	_, _, err = Run(context.Background(), fakeFetcher{}, Request{Target: "clash/abc", SubURLs: []string{"x"}})
+	if err == nil || !strings.Contains(err.Error(), `invalid target version`) {
+		t.Errorf("expected invalid target version error, got %v", err)
 	}
 }
 
