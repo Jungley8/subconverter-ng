@@ -289,6 +289,9 @@ func TestGenerateSingboxSchemaSwitch(t *testing.T) {
 			{Group: "AdBlock", Inline: "GEOSITE,ads"},
 			{Group: "Proxy", Inline: "GEOIP,CN"},
 			{Group: "Proxy", Inline: "GEOIP,private"},
+			{Group: "Proxy", Inline: "GEOIP,LAN"},
+			{Group: "Proxy", Inline: "GEOIP,TWITTER"},
+			{Group: "Proxy", Inline: "GEOSITE,google-cn"},
 			{Group: "Proxy", Inline: "FINAL"},
 		},
 	}
@@ -356,8 +359,9 @@ func TestGenerateSingboxSchemaSwitch(t *testing.T) {
 		t.Errorf("route.final = %q, want Proxy", doc.Route.Final)
 	}
 	// The REJECT-targeted rule becomes an action rule; geo rules become
-	// rule_set references; geoip:private becomes ip_is_private.
-	var sawReject, sawGeosite, sawGeoipCN, sawIPPrivate bool
+	// rule_set references; geoip:private/lan become ip_is_private; geosite
+	// google-cn maps to its renamed upstream category google@cn.
+	var sawReject, sawGeosite, sawGeoipCN, sawIPPrivate, sawGoogleCN bool
 	for _, r := range doc.Route.Rules {
 		if _, ok := r["geosite"]; ok {
 			t.Errorf("inline geosite field must not appear at 1.13: %v", r)
@@ -374,6 +378,8 @@ func TestGenerateSingboxSchemaSwitch(t *testing.T) {
 				sawGeosite = true
 			case "geoip-cn":
 				sawGeoipCN = true
+			case "geosite-google@cn":
+				sawGoogleCN = true
 			}
 		}
 		if r["ip_is_private"] == true {
@@ -383,16 +389,24 @@ func TestGenerateSingboxSchemaSwitch(t *testing.T) {
 	if !sawReject {
 		t.Errorf("REJECT rule must become action reject at 1.13: %+v", doc.Route.Rules)
 	}
-	if !sawGeosite || !sawGeoipCN {
+	if !sawGeosite || !sawGeoipCN || !sawGoogleCN {
 		t.Errorf("GEOSITE/GEOIP rules must become rule_set references at 1.13: %+v", doc.Route.Rules)
 	}
 	if !sawIPPrivate {
 		t.Errorf("GEOIP,private must become ip_is_private at 1.13: %+v", doc.Route.Rules)
 	}
-	// Top-level rule_set definitions: geosite-ads + geoip-cn, no geoip-private.
+	// GEOIP,TWITTER: sing-geoip publishes only country codes; the rule is
+	// skipped instead of emitting a rule_set that would 404 at startup.
+	skipped := strings.Join(res.SkippedRules, "\n")
+	if !strings.Contains(skipped, "GEOIP,TWITTER") {
+		t.Errorf("GEOIP,TWITTER must be skipped at 1.13, skipped rules: %v", res.SkippedRules)
+	}
+	// Top-level rule_set definitions: geosite-ads + geoip-cn + geosite-google@cn,
+	// no geoip-private (ip_is_private) and no geoip-twitter (skipped).
 	wantSets := map[string]string{
-		"geosite-ads": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-ads.srs",
-		"geoip-cn":    "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs",
+		"geosite-ads":      "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-ads.srs",
+		"geoip-cn":         "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs",
+		"geosite-google@cn": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-google@cn.srs",
 	}
 	if len(doc.RuleSet) != len(wantSets) {
 		t.Errorf("top-level rule_set has %d entries, want %d: %v", len(doc.RuleSet), len(wantSets), doc.RuleSet)

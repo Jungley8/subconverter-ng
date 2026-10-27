@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -92,29 +93,7 @@ func GenerateSingbox(ctx context.Context, nodes []*proxy.Proxy, cfg *extconfig.C
 	schema := singboxSchemaFor(opts)
 
 	// Node outbounds.
-	var outbounds []map[string]any
-	emitted := map[string]bool{}
-	allNames := make([]string, 0, len(nodes))
-	for _, n := range nodes {
-		// Version gate: drop protocols the declared sing-box release cannot
-		// render. Skipped nodes stay out of emitted/allNames, so groups and
-		// rules never reference them.
-		if opts.TargetVersion != nil {
-			if floor, ok := singboxProtocolFloor[n.Type]; ok && !opts.TargetVersion.AtLeast(floor[0], floor[1]) {
-				res.SkippedNodes = append(res.SkippedNodes,
-					fmt.Sprintf("%s (%s: requires sing-box >= %d.%d)", n.Name, n.Type, floor[0], floor[1]))
-				continue
-			}
-		}
-		ob, ok := nodeSingboxOutbound(n)
-		if !ok {
-			res.SkippedNodes = append(res.SkippedNodes, n.Name+" ("+n.Type+": unsupported by sing-box generator)")
-			continue
-		}
-		outbounds = append(outbounds, ob)
-		emitted[n.Name] = true
-		allNames = append(allNames, n.Name)
-	}
+	outbounds, emitted, allNames := nodeOutbounds(nodes, opts, res)
 
 	// Group outbounds (selector / urltest). Names of all groups so member refs to
 	// other groups survive the emitted-filter.
@@ -206,6 +185,35 @@ func GenerateSingbox(ctx context.Context, nodes []*proxy.Proxy, cfg *extconfig.C
 	return res, nil
 }
 
+// nodeOutbounds renders one sing-box outbound per node, applying the version
+// gate and recording unsupported nodes in res. emitted/allNames let the group
+// and rule builders skip nodes that never made it into the output.
+func nodeOutbounds(nodes []*proxy.Proxy, opts Options, res *Result) (outbounds []map[string]any, emitted map[string]bool, allNames []string) {
+	emitted = map[string]bool{}
+	allNames = make([]string, 0, len(nodes))
+	for _, n := range nodes {
+		// Version gate: drop protocols the declared sing-box release cannot
+		// render. Skipped nodes stay out of emitted/allNames, so groups and
+		// rules never reference them.
+		if opts.TargetVersion != nil {
+			if floor, ok := singboxProtocolFloor[n.Type]; ok && !opts.TargetVersion.AtLeast(floor[0], floor[1]) {
+				res.SkippedNodes = append(res.SkippedNodes,
+					fmt.Sprintf("%s (%s: requires sing-box >= %d.%d)", n.Name, n.Type, floor[0], floor[1]))
+				continue
+			}
+		}
+		ob, ok := nodeSingboxOutbound(n)
+		if !ok {
+			res.SkippedNodes = append(res.SkippedNodes, n.Name+" ("+n.Type+": unsupported by sing-box generator)")
+			continue
+		}
+		outbounds = append(outbounds, ob)
+		emitted[n.Name] = true
+		allNames = append(allNames, n.Name)
+	}
+	return outbounds, emitted, allNames
+}
+
 // singboxOutboundRef maps a selector member / rule group to a sing-box outbound
 // tag (DIRECT->direct, REJECT->block; node tags kept only when emitted).
 func singboxOutboundRef(m string, emitted, groupNames map[string]bool) string {
@@ -274,6 +282,16 @@ var singboxRuleField = map[string]string{
 	"PROCESS-NAME": "process_name",
 }
 
+// geoipCountryRe matches the two-letter country codes SagerNet/sing-geoip
+// publishes as rule sets.
+var geoipCountryRe = regexp.MustCompile(`^[a-z]{2}$`)
+
+// geositeAlias maps geosite categories that no longer exist upstream to their
+// current sing-geosite equivalents (v2fly renamed google-cn to google@cn).
+var geositeAlias = map[string]string{
+	"google-cn": "google@cn",
+}
+
 // singboxRouteRule builds a single route rule object. ok is false for rule types
 // sing-box has no field for. Under the action schema (schema.actions) a
 // REJECT/REJECT-DROP target becomes an "action": "reject" rule; under the
@@ -300,12 +318,25 @@ func singboxRouteRule(r Rule, emitted, groupNames map[string]bool, schema *singb
 	case "geoip", "geosite":
 		v := strings.ToLower(r.Value)
 		if schema != nil && schema.ruleSets {
-			if field == "geoip" && v == "private" {
-				// geoip:private is sing-box's built-in private-network match,
-				// migrated to the ip_is_private rule item, not a rule set.
-				rule["ip_is_private"] = true
+			if field == "geoip" {
+				if v == "private" || v == "lan" {
+					// Private-network matching is a built-in rule item, not a
+					// rule set; LAN is mihomo's alias for the same thing.
+					rule["ip_is_private"] = true
+				} else if !geoipCountryRe.MatchString(v) {
+					// SagerNet/sing-geoip publishes only two-letter country
+					// codes; other categories would 404 and abort startup.
+					return nil, false
+				} else {
+					tag := "geoip-" + v
+					rule["rule_set"] = []string{tag}
+					collector.add(tag)
+				}
 			} else {
-				tag := field + "-" + v
+				if t, ok := geositeAlias[v]; ok {
+					v = t
+				}
+				tag := "geosite-" + v
 				rule["rule_set"] = []string{tag}
 				collector.add(tag)
 			}

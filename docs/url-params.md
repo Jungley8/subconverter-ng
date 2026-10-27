@@ -50,6 +50,9 @@ sing-box 协议能力表（best-effort，依据 sing-box 官方 release notes）
 !!! note
     `direct` 出站从未弃用，所有版本均保留；`rule_set` 引用不写 `download_detour`（1.14 已弃用）。
 
+!!! note "rule_set 映射细节"
+    `GEOIP` 规则仅支持两字母国家码（SagerNet/sing-geoip 只发布国家码类目）；`GEOIP,PRIVATE/LAN` 映射为内置规则项 `ip_is_private: true`，其余非国家码类目（如 `GEOIP,TWITTER`）会被跳过并在诊断中报告，避免生成 404 的 rule_set 导致内核启动失败。`GEOSITE` 类目与 sing-geosite 仓库一一对应，上游已更名的类目自动映射（`google-cn` → `google@cn`）。GEOIP/IP-CIDR 等规则尾参（`no-resolve`、`src`）会被剥离保留，其它未知尾参（如旧式 `policy` 标记）会被丢弃。
+
 ## 通用参数（对所有 target 有效）
 
 | 参数 | 说明 | 状态 |
@@ -57,6 +60,7 @@ sing-box 协议能力表（best-effort，依据 sing-box 官方 release notes）
 | `target` | 输出目标（见上表），缺省 `clash` | :material-check: |
 | `url` | 订阅链接，多个用 `\|` 分隔（必填）；也支持直接粘贴节点链接（如 `vless://…`、`ss://…`），单个或多个节点可不用订阅直接转换 | :material-check: |
 | `config` | 外部 INI 配置 URL（分组与规则来源）；省略时用服务端 `default_config_url`（若未配置则无分组无规则） | :material-check: |
+| `template` | 用内置/远程 sing-box 模板渲染**完整配置**：`momo` = 路由器 momo 模板（自带入站、DNS/fake-ip、rule_set 与分流规则），节点与 `NotesName` 分组自动注入；指定后 target 固定为 `singbox`（扩展参数） | :material-check: |
 | `insert` | 是否合并服务端配置的 `insert_url` 节点；覆盖配置默认值（见下方说明） | :material-check: |
 | `sort` | 按节点名排序 | :material-check: |
 | `dedup` | 去除重复节点：连接字段（类型/地址/端口/凭据/传输）完全相同的节点只保留第一个 | :material-check: |
