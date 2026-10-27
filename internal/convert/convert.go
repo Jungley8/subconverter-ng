@@ -51,6 +51,11 @@ type Request struct {
 	Target    string   // currently only "clash"
 	SubURLs   []string // subscription URLs (the &url= param, split on |)
 	ConfigURL string   // external INI config (the &config= param)
+
+	// Template, when non-empty, renders the nodes into a full sing-box JSON
+	// template (a built-in name such as "momo", or an http(s) URL) instead of
+	// generating a bare config. See generator.GenerateSingboxTemplate.
+	Template string
 	Gen       generator.Options
 
 	// Emoji intent from URL params, as tribools (nil = unspecified). Emoji is
@@ -156,11 +161,29 @@ func Run(ctx context.Context, f Fetcher, req Request) ([]byte, *Diagnostics, err
 		}
 	}
 
+	if req.Template != "" {
+		tmpl, err := resolveTemplate(ctx, f, req.Template)
+		if err != nil {
+			return nil, nil, err
+		}
+		result, err := generator.GenerateSingboxTemplate(ctx, nodes, cfg, tmpl, gen)
+		if err != nil {
+			return nil, nil, err
+		}
+		return result.Output, diagnosticsFor(result, skipped, userinfo), nil
+	}
+
 	result, err := render(ctx, name, nodes, cfg, f, gen)
 	if err != nil {
 		return nil, nil, err
 	}
-	return result.Output, &Diagnostics{
+	return result.Output, diagnosticsFor(result, skipped, userinfo), nil
+}
+
+// diagnosticsFor assembles the Diagnostics returned alongside a rendered config,
+// shared by the regular and template render paths.
+func diagnosticsFor(result *generator.Result, skipped []string, userinfo string) *Diagnostics {
+	return &Diagnostics{
 		NodeCount:            result.NodeCount,
 		SkippedLines:         skipped,
 		EmptyGroups:          result.EmptyGroups,
@@ -170,7 +193,20 @@ func Run(ctx context.Context, f Fetcher, req Request) ([]byte, *Diagnostics, err
 		Deprecated:           result.DeprecatedDropped,
 		ContentType:          result.ContentType,
 		SubscriptionUserinfo: userinfo,
-	}, nil
+	}
+}
+
+// resolveTemplate loads the &template= value: an http(s) URL is fetched, any
+// other value must name a built-in template (e.g. "momo").
+func resolveTemplate(ctx context.Context, f Fetcher, spec string) ([]byte, error) {
+	spec = strings.TrimSpace(spec)
+	if strings.HasPrefix(spec, "http://") || strings.HasPrefix(spec, "https://") {
+		return f.Get(ctx, spec)
+	}
+	if b, ok := generator.BuiltinTemplate(spec); ok {
+		return b, nil
+	}
+	return nil, fmt.Errorf("unknown template %q (built-in: %s)", spec, strings.Join(generator.BuiltinTemplateNames(), ", "))
 }
 
 // resolveEmoji decides remove/add emoji flags using subconverter's precedence:

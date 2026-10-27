@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -136,6 +137,14 @@ func (c *Client) GetWithMeta(ctx context.Context, target string) ([]byte, http.H
 	}
 
 	body, hdr, status, err := c.do(ctx, target, nil)
+	// Gateway hiccups (airport panels intermittently answer 502/504) are worth a
+	// retry or two. The retry URL carries a unique _r= param because
+	// subconverter deployments cache by full URL and would otherwise replay the
+	// cached failure.
+	for attempt := 1; attempt <= c.opts.MaxRetries && err == nil && isTransientStatus(status); attempt++ {
+		time.Sleep(retryBackoff)
+		body, hdr, status, err = c.do(ctx, cacheBusted(target, attempt), nil)
+	}
 	if err == nil && !isCloudflareChallenge(status, body) {
 		// Fail closed on non-200: a 404/500 body is an error page, not a
 		// subscription or config. Returning it as success would let callers
@@ -230,6 +239,28 @@ func (c *Client) do(ctx context.Context, target string, r *replay) ([]byte, http
 		return body, resp.Header, resp.StatusCode, nil
 	}
 	return nil, nil, 0, lastErr
+}
+
+// isTransientStatus reports upstream gateway failures worth retrying. 4xx
+// statuses are permanent (a 404 body is an error page) and never retried.
+func isTransientStatus(status int) bool {
+	return status == http.StatusBadGateway || status == http.StatusGatewayTimeout
+}
+
+// retryBackoff keeps retries snappy: these gateway hiccups clear within ~1s.
+const retryBackoff = 400 * time.Millisecond
+
+// cacheBusted appends a unique _r=<n> query param so an upstream cache keyed by
+// the full URL misses and the request reaches the origin again.
+func cacheBusted(target string, attempt int) string {
+	u, err := url.Parse(target)
+	if err != nil {
+		return target
+	}
+	q := u.Query()
+	q.Set("_r", strconv.FormatInt(time.Now().UnixNano()+int64(attempt), 10))
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 // isCloudflareChallenge detects the JS interstitial / managed-challenge page.

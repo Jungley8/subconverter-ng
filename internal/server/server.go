@@ -125,6 +125,12 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 	if target == "" {
 		target = "clash"
 	}
+	// &template= renders a full sing-box config, so it pins the target; a
+	// conflicting target= would inject nodes into a non-JSON template.
+	template := strings.TrimSpace(q.Get("template"))
+	if template != "" {
+		target = convert.TargetSingbox
+	}
 	// Early target validation: reject unknown names and malformed versions
 	// (e.g. "singbox/abc") before any fetch work happens.
 	name, ver, err := convert.ParseTarget(target)
@@ -200,6 +206,7 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 		Target:        target,
 		SubURLs:       splitURLs(rawURL),
 		ConfigURL:     firstNonEmpty(q.Get("config"), s.cfg.DefaultConfigURL),
+		Template:      template,
 		InsertURLs:    insertURLs,
 		InsertPrepend: s.cfg.Insert.Prepend,
 		Gen: generator.Options{
