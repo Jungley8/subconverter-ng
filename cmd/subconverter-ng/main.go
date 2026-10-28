@@ -96,11 +96,13 @@ func cmdConvert(args []string) {
 	fs := flag.NewFlagSet("convert", flag.ExitOnError)
 	url := fs.String("url", "", "subscription URL(s), '|'-separated (required)")
 	cfgURL := fs.String("config", "", "external INI config URL")
+	template := fs.String("template", "", "render into a sing-box template: built-in name (momo) or http(s) URL")
 	target := fs.String("target", "clash", "output target: clash|singbox|surge|shadowrocket|quanx|loon|v2ray")
 	out := fs.String("o", "", "output file (default: stdout)")
 	proxy := fs.String("proxy", "", "upstream proxy URL (http/socks5)")
 	flaresolverr := fs.String("flaresolverr", "", "FlareSolverr endpoint, e.g. http://127.0.0.1:8191/v1")
 	ua := fs.String("ua", "", "User-Agent for fetches")
+	source := fs.String("source", "", "source format preset for fetch UA: clash.meta|v2ray|singbox|surge|shadowrocket|quanx|loon")
 	sortNodes := fs.Bool("sort", false, "sort nodes by name")
 	udp := fs.Bool("udp", false, "force udp on all nodes")
 	tfo := fs.Bool("tfo", false, "enable tcp-fast-open")
@@ -116,6 +118,8 @@ func cmdConvert(args []string) {
 	tailscale := fs.Bool("tailscale", false, "prepend Tailscale DIRECT rules (100.64.0.0/10, fd7a:115c:a1e0::/48)")
 	insert := fs.String("insert", "", "insert_url: extra node source URL(s), '|'-separated, merged into the output")
 	insertPrepend := fs.Bool("insert-prepend", true, "place inserted nodes before subscription nodes")
+	includeRe := fs.String("include", "", "keep only nodes whose name matches this regex (overrides config include_remarks)")
+	excludeRe := fs.String("exclude", "", "drop nodes whose name matches this regex (overrides config exclude_remarks)")
 	timeout := fs.Duration("timeout", 30*time.Second, "per-fetch timeout")
 	cacheTTL := fs.Duration("cache-ttl", 0, "TTL for the in-memory fetch cache (0=default 300s, negative=disabled)")
 	fs.Parse(args)
@@ -124,8 +128,12 @@ func cmdConvert(args []string) {
 		fatal("--url is required")
 	}
 
+	resolvedUA, err := resolveUserAgent(*ua, *source)
+	if err != nil {
+		fatal("%v", err)
+	}
 	client, err := fetch.New(fetch.Options{
-		UserAgent:       *ua,
+		UserAgent:       resolvedUA,
 		Proxy:           *proxy,
 		FlareSolverrURL: *flaresolverr,
 		Timeout:         *timeout,
@@ -139,6 +147,7 @@ func cmdConvert(args []string) {
 		Target:        *target,
 		SubURLs:       splitPipe(*url),
 		ConfigURL:     *cfgURL,
+		Template:      *template,
 		InsertURLs:    splitPipe(*insert),
 		InsertPrepend: *insertPrepend,
 		Gen: generator.Options{
@@ -154,6 +163,12 @@ func cmdConvert(args []string) {
 		AddEmoji:    triFromString(*addEmoji),
 		RemoveEmoji: triFromString(*removeEmoji),
 	}
+	if req.IncludeRemarks, err = convert.CompileRemarks(*includeRe); err != nil {
+		fatal("%v", err)
+	}
+	if req.ExcludeRemarks, err = convert.CompileRemarks(*excludeRe); err != nil {
+		fatal("%v", err)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -161,8 +176,8 @@ func cmdConvert(args []string) {
 	if err != nil {
 		fatal("convert: %v", err)
 	}
-	fmt.Fprintf(os.Stderr, "ok: %d nodes, %d unparsed lines, %d dup, %d deprecated, %d nodes unsupported by target, %d empty groups, %d rules dropped (unsupported type)\n",
-		diag.NodeCount, len(diag.SkippedLines), diag.Duplicates, diag.Deprecated, len(diag.SkippedNodes), len(diag.EmptyGroups), len(diag.SkippedRules))
+	fmt.Fprintf(os.Stderr, "ok: %d nodes, %d unparsed lines, %d dup, %d deprecated, %d filtered (remarks), %d nodes unsupported by target, %d empty groups, %d rules dropped (unsupported type)\n",
+		diag.NodeCount, len(diag.SkippedLines), diag.Duplicates, diag.Deprecated, diag.Filtered, len(diag.SkippedNodes), len(diag.EmptyGroups), len(diag.SkippedRules))
 	for _, r := range diag.SkippedRules {
 		fmt.Fprintf(os.Stderr, "  dropped rule (unsupported type): %s\n", r)
 	}
@@ -178,6 +193,25 @@ func cmdConvert(args []string) {
 		fatal("write %s: %v", *out, err)
 	}
 	fmt.Fprintf(os.Stderr, "wrote %s\n", *out)
+}
+
+// resolveUserAgent applies the UA precedence: explicit --ua wins over the
+// --source preset; both empty leaves the UA unset so fetch.New fills in its
+// built-in default. An unknown source preset is an error.
+func resolveUserAgent(ua, source string) (string, error) {
+	ua = strings.TrimSpace(ua)
+	source = strings.TrimSpace(source)
+	if ua != "" {
+		return ua, nil
+	}
+	if source != "" {
+		u, ok := fetch.UAPreset(source)
+		if !ok {
+			return "", fmt.Errorf("unsupported source %q (supported: %s)", source, strings.Join(fetch.UAPresetNames(), ", "))
+		}
+		return u, nil
+	}
+	return "", nil
 }
 
 // triFromString parses an optional bool flag into a tribool (nil when empty).

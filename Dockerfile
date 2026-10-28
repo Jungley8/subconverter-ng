@@ -6,6 +6,11 @@ FROM golang:1.25-alpine AS build
 # --build-arg VERSION=$(git describe --tags --always --dirty).
 # Defaults to "dev" so plain `docker build` still works.
 ARG VERSION=dev
+# Module proxy for `go mod download`/`go build`. goproxy.cn is reachable from
+# mainland China networks where proxy.golang.org is blocked; override with
+# --build-arg GOPROXY=https://proxy.golang.org,direct if you prefer the default.
+ARG GOPROXY=https://goproxy.cn,direct
+ENV GOPROXY=${GOPROXY}
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download

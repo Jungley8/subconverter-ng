@@ -25,6 +25,7 @@
 - ✅ **两种形态**：HTTP 服务 + CLI 单次转换，单二进制
 - ✅ **多输出 target**：`clash`（Clash.Meta / mihomo）、`singbox`、`surge`、`shadowrocket`、`quanx`、`loon`、`v2ray`/`mixed`
 - ✅ **insert_url 节点插入**：服务端固定节点合并进每次转换（`&insert=` 可覆盖）
+- ✅ **按请求指定订阅源格式与 UA**：`&source=` 预设 / `&ua=` 自定义覆盖抓取 UA；`target` 支持 `name/版本`（如 `singbox/1.3`，按版本门控剔除老内核不支持的协议节点）
 
 > 内核解析以 Clash.Meta 字段为中介，再渲染到各 target；目标格式不支持的协议 / 规则会被跳过并记入日志。
 
@@ -70,7 +71,7 @@ docker compose up -d
 
 | 参数 | 说明 |
 |---|---|
-| `target` | 输出目标：`clash` / `singbox` / `surge` / `shadowrocket` / `quanx` / `loon` / `v2ray` |
+| `target` | 输出目标：`clash` / `singbox` / `surge` / `shadowrocket` / `quanx` / `loon` / `v2ray`，支持 `name/版本`（如 `singbox/1.3`） |
 | `url` | 订阅链接，多个用 `\|` 分隔（必填）；也可直接粘贴节点链接（`vless://` 等） |
 | `config` | 外部 INI 配置 URL |
 | `insert` | 是否合并服务端 `insert_url` 节点（覆盖配置默认） |
@@ -86,6 +87,8 @@ docker compose up -d
 | `filename` `interval` | 下载文件名 / 客户端更新间隔 |
 | `nocache` `flushcache` | 绕过 / 清空缓存 |
 | `proxy` | 本次请求的上游代理（覆盖全局，扩展参数） |
+| `source` | 指定订阅源格式预设，映射抓取 UA（扩展参数） |
+| `ua` | 按请求覆盖抓取 UA（扩展参数） |
 
 > 参数对各 target 的适用性见 [docs/url-params.md](docs/url-params.md)。`new_name` 为兼容性接收但当前无效果。
 

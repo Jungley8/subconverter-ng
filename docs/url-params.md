@@ -4,7 +4,7 @@
 
 ## target 取值
 
-`target` 选择输出格式。支持的值（含常见别名）：
+`target` 选择输出格式，支持 `name[/version]` 语法附带目标内核版本（见下方「版本门控」）。支持的值（含常见别名）：
 
 | target | 别名 | 输出 | Content-Type |
 |---|---|---|---|
@@ -20,6 +20,39 @@
     各 target 优先输出常见协议（ss/vmess/vless/trojan/hysteria2/tuic）。某 target 无法表达的协议（如
     Surge 没有 VLESS、QuanX/Surge 没有 hysteria2/tuic 时）会被**跳过并在日志中列出**，不会让整份配置失败。
 
+### 版本门控（`target=name[/version]`）
+
+`target` 可带版本后缀，如 `target=singbox/1.3.xx`（`xx` 等非数字尾段被忽略，等价于 `1.3`）或 `target=singbox/1.13.11`（即 `1.13.11`）。版本当前仅 `singbox` 消费：按协议门控，剔除老内核不支持的协议节点并计入 `SkippedNodes` / 日志（原因 `requires sing-box >= 1.x`）。未声明版本时不门控（行为不变）；非法版本（如 `singbox/abc`）报错；其它 target 带版本会被接受并忽略。
+
+sing-box 协议能力表（best-effort，依据 sing-box 官方 release notes）：
+
+| 协议 | 最低 sing-box 版本 |
+|---|---|
+| `ss` / `socks` / `vmess` / `vless` / `trojan` / `wireguard` | 1.0 |
+| `hysteria` | 1.1 |
+| `tuic` | 1.2 |
+| `hysteria2` | 1.5 |
+| `anytls` | 1.12 |
+
+!!! note "已知边界"
+    hysteria1（v1）暂无 sing-box 出站渲染分支——无论声明的版本如何，都会以 unsupported 跳过；anytls 已支持（需 sing-box ≥ 1.12）。
+
+#### schema 切换
+
+除协议门控外，声明的版本还决定 sing-box 配置 schema（依据 sing-box 官方 deprecated 文档）：
+
+| 声明版本 | schema 行为 |
+|---|---|
+| ≥ 1.11 | 启用规则动作：DNS 劫持 / 拒绝类规则改写为 `action: hijack-dns` / `action: reject`，不再输出 `block` / `dns` 特殊出站（1.13 起已移除，老内核会加载失败） |
+| ≥ 1.12 | 启用 `rule_set` 与新 DNS 格式：`GEOSITE` / `GEOIP` 规则迁移为远程 `.srs` 规则集引用（顶层 `rule_set` 数组），`geoip: private` 特例迁移为 `ip_is_private: true`；DNS server 改为 `{type, server}` 新格式（1.14 移除 legacy 格式） |
+| 未声明版本 | 保持 legacy 输出（兼容 ≤ 1.11 老内核），行为与旧版本工具完全一致 |
+
+!!! note
+    `direct` 出站从未弃用，所有版本均保留；`rule_set` 引用不写 `download_detour`（1.14 已弃用）。
+
+!!! note "rule_set 映射细节"
+    `GEOIP` 规则仅支持两字母国家码（SagerNet/sing-geoip 只发布国家码类目）；`GEOIP,PRIVATE/LAN` 映射为内置规则项 `ip_is_private: true`，其余非国家码类目（如 `GEOIP,TWITTER`）会被跳过并在诊断中报告，避免生成 404 的 rule_set 导致内核启动失败。`GEOSITE` 类目与 sing-geosite 仓库一一对应，上游已更名的类目自动映射（`google-cn` → `google@cn`）。GEOIP/IP-CIDR 等规则尾参（`no-resolve`、`src`）会被剥离保留，其它未知尾参（如旧式 `policy` 标记）会被丢弃。
+
 ## 通用参数（对所有 target 有效）
 
 | 参数 | 说明 | 状态 |
@@ -27,6 +60,9 @@
 | `target` | 输出目标（见上表），缺省 `clash` | :material-check: |
 | `url` | 订阅链接，多个用 `\|` 分隔（必填）；也支持直接粘贴节点链接（如 `vless://…`、`ss://…`），单个或多个节点可不用订阅直接转换 | :material-check: |
 | `config` | 外部 INI 配置 URL（分组与规则来源）；省略时用服务端 `default_config_url`（若未配置则无分组无规则） | :material-check: |
+| `include` | **节点名白名单正则**：仅保留名字匹配的节点（别名 `include_remarks`）。设置后**覆盖**外部 INI 的 `include_remarks`；留空不覆盖。正则按**单条**解析，多条件写在同一个正则里（如 `(?i)(港\|HK)`） | :material-check: |
+| `exclude` | **节点名黑名单正则**：剔除名字匹配的节点（别名 `exclude_remarks`）。设置后**覆盖**外部 INI 的 `exclude_remarks`；留空不覆盖。示例：`(?i)(弃用)\|(更新)\|(到期)\|(流量)\|(套餐)\|(官网)` | :material-check: |
+| `template` | 用内置/远程 sing-box 模板渲染**完整配置**：`momo` = 路由器 momo 模板（自带入站、DNS/fake-ip、rule_set 与分流规则），节点与 `NotesName` 分组自动注入；指定后 target 固定为 `singbox`（扩展参数） | :material-check: |
 | `insert` | 是否合并服务端配置的 `insert_url` 节点；覆盖配置默认值（见下方说明） | :material-check: |
 | `sort` | 按节点名排序 | :material-check: |
 | `dedup` | 去除重复节点：连接字段（类型/地址/端口/凭据/传输）完全相同的节点只保留第一个 | :material-check: |
@@ -38,8 +74,29 @@
 | `filename` | 设置下载文件名（`Content-Disposition`） | :material-check: |
 | `interval` | 客户端订阅自动更新间隔（小时，默认 24，`Profile-Update-Interval` 头） | :material-check: |
 | `proxy` | **本次请求**的上游代理，覆盖全局配置（扩展参数） | :material-check: |
+| `source` | 按请求指定订阅源格式预设，映射对应抓取 UA（扩展参数，见下方「source 预设」） | :material-check: |
+| `ua` | 按请求覆盖抓取 UA，对本次请求的全部远程抓取（订阅 / 规则 / 外部配置）生效（扩展参数） | :material-check: |
 | `nocache` | `1` 时绕过本次请求的 TTL 缓存，强制重新抓取 | :material-check: |
 | `flushcache` | `1` 时先清空整个共享缓存再处理本次请求（另有 `GET /flushcache` 端点） | :material-check: |
+
+## source 预设（订阅源格式）
+
+`&source=<预设>`（扩展参数）按请求指定订阅源格式，映射为对应客户端的抓取 UA（无需手记 UA 字符串）。未知预设返回 400 并列出支持值。
+
+| 预设 | 映射 UA |
+|---|---|
+| `clash.meta` / `clash` / `mihomo` | `clash.meta/1.18.0 mihomo/1.18.0` |
+| `v2ray` / `v2rayn` | `v2rayN/6.45` |
+| `singbox` / `sing-box` | `sing-box/1.3.0` |
+| `surge` | `Surge/5.9.0` |
+| `shadowrocket` | `Shadowrocket/2.2.50` |
+| `quanx` | `Quantumult X/1.0.30` |
+| `loon` | `Loon/3.2.4` |
+
+!!! warning "⚠️ 可解析性"
+    只有返回 **Clash YAML 或 base64 分享链接**的预设（`clash.meta`、`v2ray`，以及部分面板对其它 UA
+    也返回兼容载荷）当前可被本工具解析；`singbox` / `surge` / `quanx` / `loon` 等原始格式订阅本工具
+    暂不能解析，此类预设仅供面板返回兼容载荷时使用。
 
 ## 节点处理参数（部分 target 有效）
 
@@ -88,7 +145,7 @@ insert:
 
 !!! note "重命名 / 缓存 / 限流"
     - **rename**：外部配置里写 `rename=<正则>@<替换>`（支持 `\1` / `$1` 反向引用、空替换），批量改节点名。处理顺序：去 emoji → 重命名 → 加 emoji。
-    - **缓存**：订阅与规则列表按 URL 做内存 TTL 缓存（默认 300s），避免每次 `/sub` 都去 GitHub 拉规则列表被限流。`cache_ttl: -1s` 可关闭。
+    - **缓存**：订阅与规则列表按 URL 做内存 TTL 缓存（默认 300s），避免每次 `/sub` 都去 GitHub 拉规则列表被限流。缓存键含 UA，同一 URL 不同 UA 的响应互不串缓存。`cache_ttl: -1s` 可关闭。
     - **限流**：`/sub` 按客户端 IP 限流（默认 30/min、burst 10），超限返回 `429 + Retry-After`；`/version` 与 Web 界面不受限。详见 `config.example.yaml`。
     - **Subscription-Userinfo**：机场返回的流量 / 到期头会透传给客户端。
 

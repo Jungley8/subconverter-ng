@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/Jungley8/subconverter-ng/internal/config"
@@ -13,6 +14,29 @@ func TestSplitPipe(t *testing.T) {
 	}
 	if len(splitPipe("")) != 0 {
 		t.Error("empty -> no urls")
+	}
+}
+
+func TestResolveUserAgent(t *testing.T) {
+	// Explicit --ua wins over --source.
+	if got, err := resolveUserAgent("MyCustomUA/1.0", "clash.meta"); err != nil || got != "MyCustomUA/1.0" {
+		t.Errorf("ua priority: got (%q, %v), want (MyCustomUA/1.0, nil)", got, err)
+	}
+	// --ua is trimmed but otherwise used verbatim.
+	if got, err := resolveUserAgent("  My UA/2.0  ", ""); err != nil || got != "My UA/2.0" {
+		t.Errorf("ua trim: got (%q, %v), want (My UA/2.0, nil)", got, err)
+	}
+	// --source maps to its preset UA (trimmed, case-insensitive per fetch.UAPreset).
+	if got, err := resolveUserAgent("", " clash.meta "); err != nil || got != "clash.meta/1.18.0 mihomo/1.18.0" {
+		t.Errorf("source preset: got (%q, %v), want (clash.meta/1.18.0 mihomo/1.18.0, nil)", got, err)
+	}
+	// Unknown --source errors and names the supported presets.
+	if _, err := resolveUserAgent("", "foo"); err == nil || !strings.Contains(err.Error(), "supported") {
+		t.Errorf("unknown source: err = %v, want error mentioning supported presets", err)
+	}
+	// Both empty leaves the UA unset (fetch.New fills its default).
+	if got, err := resolveUserAgent("   ", ""); err != nil || got != "" {
+		t.Errorf("both empty: got (%q, %v), want (\"\", nil)", got, err)
 	}
 }
 

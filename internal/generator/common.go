@@ -23,13 +23,31 @@ import (
 	"github.com/Jungley8/subconverter-ng/internal/proxy"
 )
 
+// Version is a parsed client version from a "name/version" target spec
+// (e.g. "singbox/1.3.11" -> {1, 13, 11}).
+type Version struct {
+	Major, Minor, Patch int
+}
+
+// AtLeast reports whether v's (Major, Minor) pair is lexicographically >=
+// (major, minor); Patch does not participate. A nil *Version means "no version
+// declared" and callers skip the comparison entirely.
+func (v *Version) AtLeast(major, minor int) bool {
+	if v.Major != major {
+		return v.Major > major
+	}
+	return v.Minor >= minor
+}
+
 // prepareNodes runs the target-agnostic node pipeline and records its
 // diagnostics (dedup/deprecated counts, final NodeCount) into res. The returned
 // slice is the processed node list every generator renders from. Node options
 // (udp/tfo/scv, emoji, rename, append_type) are stamped onto each node's Clash
 // field bag, which all generators read from.
 func prepareNodes(nodes []*proxy.Proxy, cfg *extconfig.Config, opts Options, res *Result) []*proxy.Proxy {
+	before := len(nodes)
 	nodes = filterNodes(nodes, cfg)
+	res.Filtered = before - len(nodes)
 	if opts.FilterDeprecated {
 		var dropped int
 		nodes, dropped = filterDeprecated(nodes)
@@ -165,6 +183,21 @@ func collectRules(ctx context.Context, cfg *extconfig.Config, f Fetcher, opts Op
 	return append(tsRules, rules...), skipped
 }
 
+// ruleParamTypes are rule types whose inline bodies may carry trailing
+// parameters after the value (e.g. []GEOIP,CN,no-resolve). Values of these
+// types never contain commas, so extra tokens are parameters, not value.
+var ruleParamTypes = map[string]bool{
+	"GEOIP": true, "SRC-GEOIP": true,
+	"IP-CIDR": true, "IP-CIDR6": true, "SRC-IP-CIDR": true,
+	"IP-SUFFIX": true, "SRC-IP-SUFFIX": true, "IP-ASN": true, "SRC-IP-ASN": true,
+	"SRC-PORT": true, "DST-PORT": true,
+}
+
+// ruleParams are the trailing parameters Clash/mihomo accepts on IP/geo/port
+// rules. Anything else (legacy "policy" markers, typos) is dropped so configs
+// from hand-edited rulesets still load.
+var ruleParams = map[string]bool{"no-resolve": true, "src": true}
+
 // parseInlineRule turns a []inline body into a neutral Rule. Types are kept
 // verbatim (target-neutral); ok is false only when the body is not rule-shaped
 // (a lone token that is neither FINAL nor MATCH).
@@ -173,8 +206,9 @@ func collectRules(ctx context.Context, cfg *extconfig.Config, f Fetcher, opts Op
 //	GEOIP,CN   -> {Type: GEOIP, Value: CN}
 //	DOMAIN,x   -> {Type: DOMAIN, Value: x}
 //
-// The body after the first comma is kept verbatim as Value (it may itself carry
-// a trailing flag), matching the legacy behaviour of appending the group last.
+// For parameterised rule types the value is the second field and trailing
+// parameters land in Flag; for every other type the body after the first comma
+// is kept verbatim as Value, matching the legacy behaviour.
 func parseInlineRule(body, group string) (Rule, bool) {
 	if strings.EqualFold(body, "FINAL") || strings.EqualFold(body, "MATCH") {
 		return Rule{Type: "MATCH", Group: group}, true
@@ -182,6 +216,19 @@ func parseInlineRule(body, group string) (Rule, bool) {
 	typ, val, found := strings.Cut(body, ",")
 	if !found {
 		return Rule{}, false
+	}
+	if ruleParamTypes[strings.ToUpper(strings.TrimSpace(typ))] {
+		fields := strings.Split(val, ",")
+		val = strings.TrimSpace(fields[0])
+		var params []string
+		for _, f := range fields[1:] {
+			if p := strings.ToLower(strings.TrimSpace(f)); ruleParams[p] {
+				params = append(params, p)
+			}
+		}
+		if len(params) > 0 {
+			return Rule{Type: typ, Value: val, Group: group, Flag: strings.Join(params, ",")}, true
+		}
 	}
 	return Rule{Type: typ, Value: val, Group: group}, true
 }

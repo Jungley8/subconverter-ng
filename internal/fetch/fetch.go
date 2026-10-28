@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -122,18 +123,28 @@ func (c *Client) Get(ctx context.Context, target string) ([]byte, error) {
 // (origin or FlareSolverr-replay) response. Callers use this to capture
 // airport metadata such as the Subscription-Userinfo header.
 //
-// Caching: successful (200, non-empty) responses are cached by URL. Cached
-// entries also retain their headers so repeated reads see Subscription-Userinfo.
+// Caching: successful (200, non-empty) responses are cached under a key that
+// combines the Client's User-Agent and the URL (two UAs must not share entries,
+// as panels serve different content per UA). Cached entries also retain their
+// headers so repeated reads see Subscription-Userinfo.
 // Pass a context value (see NoCache) is not used here; cache bypass is decided
 // by the caller wiring a Client with caching disabled or by clearing the cache.
 func (c *Client) GetWithMeta(ctx context.Context, target string) ([]byte, http.Header, error) {
 	if c.cache != nil {
-		if body, hdr, ok := c.cache.get(target); ok {
+		if body, hdr, ok := c.cache.get(c.cacheKey(target)); ok {
 			return body, hdr, nil
 		}
 	}
 
 	body, hdr, status, err := c.do(ctx, target, nil)
+	// Gateway hiccups (airport panels intermittently answer 502/504) are worth a
+	// retry or two. The retry URL carries a unique _r= param because
+	// subconverter deployments cache by full URL and would otherwise replay the
+	// cached failure.
+	for attempt := 1; attempt <= c.opts.MaxRetries && err == nil && isTransientStatus(status); attempt++ {
+		time.Sleep(retryBackoff)
+		body, hdr, status, err = c.do(ctx, cacheBusted(target, attempt), nil)
+	}
 	if err == nil && !isCloudflareChallenge(status, body) {
 		// Fail closed on non-200: a 404/500 body is an error page, not a
 		// subscription or config. Returning it as success would let callers
@@ -173,7 +184,14 @@ func (c *Client) maybeCache(target string, status int, body []byte, hdr http.Hea
 	if c.cache == nil || status != http.StatusOK || len(body) == 0 {
 		return
 	}
-	c.cache.set(target, body, hdr)
+	c.cache.set(c.cacheKey(target), body, hdr)
+}
+
+// cacheKey derives the cache key for a target URL. The Client's User-Agent is
+// part of the key because many panels return different subscription content
+// depending on the UA; two Clients differing only in UA must not share entries.
+func (c *Client) cacheKey(target string) string {
+	return c.opts.UserAgent + "\x1f" + target
 }
 
 // FlushCache clears all cached entries. Safe to call when caching is disabled.
@@ -221,6 +239,28 @@ func (c *Client) do(ctx context.Context, target string, r *replay) ([]byte, http
 		return body, resp.Header, resp.StatusCode, nil
 	}
 	return nil, nil, 0, lastErr
+}
+
+// isTransientStatus reports upstream gateway failures worth retrying. 4xx
+// statuses are permanent (a 404 body is an error page) and never retried.
+func isTransientStatus(status int) bool {
+	return status == http.StatusBadGateway || status == http.StatusGatewayTimeout
+}
+
+// retryBackoff keeps retries snappy: these gateway hiccups clear within ~1s.
+const retryBackoff = 400 * time.Millisecond
+
+// cacheBusted appends a unique _r=<n> query param so an upstream cache keyed by
+// the full URL misses and the request reaches the origin again.
+func cacheBusted(target string, attempt int) string {
+	u, err := url.Parse(target)
+	if err != nil {
+		return target
+	}
+	q := u.Query()
+	q.Set("_r", strconv.FormatInt(time.Now().UnixNano()+int64(attempt), 10))
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 // isCloudflareChallenge detects the JS interstitial / managed-challenge page.
