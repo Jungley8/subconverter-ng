@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -76,6 +77,29 @@ type Request struct {
 	// InsertPrepend places these nodes before the subscription nodes when true.
 	InsertURLs    []string
 	InsertPrepend bool
+
+	// IncludeRemarks / ExcludeRemarks are per-request node-name filters (the
+	// &include= / &exclude= URL params, or CLI --include / --exclude). When set
+	// they OVERRIDE the external config's include_remarks / exclude_remarks,
+	// matching original subconverter semantics. Use CompileRemarks to build them.
+	IncludeRemarks []*regexp.Regexp
+	ExcludeRemarks []*regexp.Regexp
+}
+
+// CompileRemarks turns one include/exclude spec into a single compiled regex.
+// An empty spec yields nil (no filtering). The spec is matched as ONE regex:
+// alternation belongs inside it, e.g. "(?i)(弃用)|(到期)" — no splitting on "|",
+// which would break regexes whose groups contain alternation.
+func CompileRemarks(spec string) ([]*regexp.Regexp, error) {
+	spec = strings.TrimSpace(spec)
+	if spec == "" {
+		return nil, nil
+	}
+	re, err := regexp.Compile(spec)
+	if err != nil {
+		return nil, fmt.Errorf("invalid remarks regex %q: %w", spec, err)
+	}
+	return []*regexp.Regexp{re}, nil
 }
 
 // Diagnostics captures non-fatal information about a conversion.
@@ -87,6 +111,7 @@ type Diagnostics struct {
 	SkippedNodes []string // nodes the chosen target cannot render
 	Duplicates   int      // nodes removed by dedup (&dedup=true)
 	Deprecated   int      // nodes removed by filter-deprecated (&fdn=true)
+	Filtered     int      // nodes removed by include/exclude remarks filters
 
 	// ContentType is the HTTP Content-Type the rendered output should be served
 	// with (varies by target: YAML for clash, JSON for sing-box, etc.).
@@ -152,6 +177,14 @@ func Run(ctx context.Context, f Fetcher, req Request) ([]byte, *Diagnostics, err
 	gen := req.Gen
 	gen.TargetVersion = ver
 	gen.RenameRules = generator.CompileRenameRules(cfg.RenameRules)
+	// Per-request &include= / &exclude= override the external config's
+	// include_remarks / exclude_remarks (original subconverter semantics).
+	if req.IncludeRemarks != nil {
+		cfg.IncludeRemarks = req.IncludeRemarks
+	}
+	if req.ExcludeRemarks != nil {
+		cfg.ExcludeRemarks = req.ExcludeRemarks
+	}
 	gen.RemoveEmoji, gen.AddEmoji = resolveEmoji(cfg, req)
 	if gen.AddEmoji {
 		if len(cfg.EmojiRules) > 0 {
@@ -191,6 +224,7 @@ func diagnosticsFor(result *generator.Result, skipped []string, userinfo string)
 		SkippedNodes:         result.SkippedNodes,
 		Duplicates:           result.Duplicates,
 		Deprecated:           result.DeprecatedDropped,
+		Filtered:             result.Filtered,
 		ContentType:          result.ContentType,
 		SubscriptionUserinfo: userinfo,
 	}

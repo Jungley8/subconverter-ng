@@ -45,7 +45,9 @@ func (v *Version) AtLeast(major, minor int) bool {
 // (udp/tfo/scv, emoji, rename, append_type) are stamped onto each node's Clash
 // field bag, which all generators read from.
 func prepareNodes(nodes []*proxy.Proxy, cfg *extconfig.Config, opts Options, res *Result) []*proxy.Proxy {
+	before := len(nodes)
 	nodes = filterNodes(nodes, cfg)
+	res.Filtered = before - len(nodes)
 	if opts.FilterDeprecated {
 		var dropped int
 		nodes, dropped = filterDeprecated(nodes)

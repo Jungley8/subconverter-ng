@@ -142,6 +142,7 @@ type Result struct {
 	SkippedNodes      []string // nodes a target cannot render (name + reason)
 	Duplicates        int      // nodes removed by dedup
 	DeprecatedDropped int      // nodes removed by filter-deprecated (fdn)
+	Filtered          int      // nodes removed by include/exclude remarks filters
 }
 
 // Content types per target family.

@@ -60,6 +60,8 @@ sing-box 协议能力表（best-effort，依据 sing-box 官方 release notes）
 | `target` | 输出目标（见上表），缺省 `clash` | :material-check: |
 | `url` | 订阅链接，多个用 `\|` 分隔（必填）；也支持直接粘贴节点链接（如 `vless://…`、`ss://…`），单个或多个节点可不用订阅直接转换 | :material-check: |
 | `config` | 外部 INI 配置 URL（分组与规则来源）；省略时用服务端 `default_config_url`（若未配置则无分组无规则） | :material-check: |
+| `include` | **节点名白名单正则**：仅保留名字匹配的节点（别名 `include_remarks`）。设置后**覆盖**外部 INI 的 `include_remarks`；留空不覆盖。正则按**单条**解析，多条件写在同一个正则里（如 `(?i)(港\|HK)`） | :material-check: |
+| `exclude` | **节点名黑名单正则**：剔除名字匹配的节点（别名 `exclude_remarks`）。设置后**覆盖**外部 INI 的 `exclude_remarks`；留空不覆盖。示例：`(?i)(弃用)\|(更新)\|(到期)\|(流量)\|(套餐)\|(官网)` | :material-check: |
 | `template` | 用内置/远程 sing-box 模板渲染**完整配置**：`momo` = 路由器 momo 模板（自带入站、DNS/fake-ip、rule_set 与分流规则），节点与 `NotesName` 分组自动注入；指定后 target 固定为 `singbox`（扩展参数） | :material-check: |
 | `insert` | 是否合并服务端配置的 `insert_url` 节点；覆盖配置默认值（见下方说明） | :material-check: |
 | `sort` | 按节点名排序 | :material-check: |

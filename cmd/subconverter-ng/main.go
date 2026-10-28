@@ -118,6 +118,8 @@ func cmdConvert(args []string) {
 	tailscale := fs.Bool("tailscale", false, "prepend Tailscale DIRECT rules (100.64.0.0/10, fd7a:115c:a1e0::/48)")
 	insert := fs.String("insert", "", "insert_url: extra node source URL(s), '|'-separated, merged into the output")
 	insertPrepend := fs.Bool("insert-prepend", true, "place inserted nodes before subscription nodes")
+	includeRe := fs.String("include", "", "keep only nodes whose name matches this regex (overrides config include_remarks)")
+	excludeRe := fs.String("exclude", "", "drop nodes whose name matches this regex (overrides config exclude_remarks)")
 	timeout := fs.Duration("timeout", 30*time.Second, "per-fetch timeout")
 	cacheTTL := fs.Duration("cache-ttl", 0, "TTL for the in-memory fetch cache (0=default 300s, negative=disabled)")
 	fs.Parse(args)
@@ -161,6 +163,12 @@ func cmdConvert(args []string) {
 		AddEmoji:    triFromString(*addEmoji),
 		RemoveEmoji: triFromString(*removeEmoji),
 	}
+	if req.IncludeRemarks, err = convert.CompileRemarks(*includeRe); err != nil {
+		fatal("%v", err)
+	}
+	if req.ExcludeRemarks, err = convert.CompileRemarks(*excludeRe); err != nil {
+		fatal("%v", err)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -168,8 +176,8 @@ func cmdConvert(args []string) {
 	if err != nil {
 		fatal("convert: %v", err)
 	}
-	fmt.Fprintf(os.Stderr, "ok: %d nodes, %d unparsed lines, %d dup, %d deprecated, %d nodes unsupported by target, %d empty groups, %d rules dropped (unsupported type)\n",
-		diag.NodeCount, len(diag.SkippedLines), diag.Duplicates, diag.Deprecated, len(diag.SkippedNodes), len(diag.EmptyGroups), len(diag.SkippedRules))
+	fmt.Fprintf(os.Stderr, "ok: %d nodes, %d unparsed lines, %d dup, %d deprecated, %d filtered (remarks), %d nodes unsupported by target, %d empty groups, %d rules dropped (unsupported type)\n",
+		diag.NodeCount, len(diag.SkippedLines), diag.Duplicates, diag.Deprecated, diag.Filtered, len(diag.SkippedNodes), len(diag.EmptyGroups), len(diag.SkippedRules))
 	for _, r := range diag.SkippedRules {
 		fmt.Fprintf(os.Stderr, "  dropped rule (unsupported type): %s\n", r)
 	}

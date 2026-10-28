@@ -202,6 +202,21 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 		insertURLs = s.cfg.Insert.URLs
 	}
 
+	// &include= / &exclude= (aliases include_remarks / exclude_remarks):
+	// per-request node-name regex filters. When present they override the
+	// external config's include_remarks / exclude_remarks. The spec is ONE
+	// regex — alternation stays inside it, e.g. (?i)(弃用)|(到期)|(官网).
+	includeRe, err := convert.CompileRemarks(firstNonEmpty(q.Get("include"), q.Get("include_remarks")))
+	if err != nil {
+		writeUserError(w, err)
+		return
+	}
+	excludeRe, err := convert.CompileRemarks(firstNonEmpty(q.Get("exclude"), q.Get("exclude_remarks")))
+	if err != nil {
+		writeUserError(w, err)
+		return
+	}
+
 	req := convert.Request{
 		Target:        target,
 		SubURLs:       splitURLs(rawURL),
@@ -228,6 +243,10 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 		AddEmoji:    boolTri(q.Get("add_emoji")),
 		RemoveEmoji: boolTri(q.Get("remove_emoji")),
 		NoCache:     noCache,
+
+		// Per-request remarks filters (&include= / &exclude=).
+		IncludeRemarks: includeRe,
+		ExcludeRemarks: excludeRe,
 	}
 
 	// `insert` is handled above (insert_url). `new_name` is accepted for
@@ -249,8 +268,8 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 	if ver != nil {
 		display = fmt.Sprintf("%s/%d.%d", name, ver.Major, ver.Minor)
 	}
-	log.Printf("converted (%s): %d nodes, %d unparsed lines, %d dup, %d deprecated, %d nodes unsupported by target, empty groups: %v, %d rules dropped (unsupported type)",
-		display, diag.NodeCount, len(diag.SkippedLines), diag.Duplicates, diag.Deprecated, len(diag.SkippedNodes), diag.EmptyGroups, len(diag.SkippedRules))
+	log.Printf("converted (%s): %d nodes, %d unparsed lines, %d dup, %d deprecated, %d filtered (remarks), %d nodes unsupported by target, empty groups: %v, %d rules dropped (unsupported type)",
+		display, diag.NodeCount, len(diag.SkippedLines), diag.Duplicates, diag.Deprecated, diag.Filtered, len(diag.SkippedNodes), diag.EmptyGroups, len(diag.SkippedRules))
 	if len(diag.SkippedRules) > 0 {
 		log.Printf("dropped rules (unsupported type): %v", diag.SkippedRules)
 	}

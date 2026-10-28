@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -303,6 +304,66 @@ func TestRun_NoConfigDefaultsRuleGen(t *testing.T) {
 	// No config => no exclude_remarks, so the "套餐到期" node is kept too (7).
 	if diag.NodeCount != 7 || len(data) == 0 {
 		t.Errorf("bare conversion wrong: nodes=%d bytes=%d", diag.NodeCount, len(data))
+	}
+}
+
+func TestRun_RemarksFilters(t *testing.T) {
+	// &include= / &exclude= URL-level node-name filters, with override
+	// semantics against the external config's include/exclude_remarks.
+	f := fakeFetcher{
+		"client/subscribe": sampleSubscription(),
+		"config.init":      []byte(sampleINI),
+		"PROXY.list":       []byte(samplePROXYList),
+	}
+	run := func(t *testing.T, req Request) *Diagnostics {
+		t.Helper()
+		req.Target = "clash"
+		req.SubURLs = []string{"https://airport.example.com/api/v1/client/subscribe?token=x"}
+		req.ConfigURL = "https://github.com/x/config.init"
+		_, diag, err := Run(context.Background(), f, req)
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		return diag
+	}
+	must := func(t *testing.T, spec string) []*regexp.Regexp {
+		t.Helper()
+		re, err := CompileRemarks(spec)
+		if err != nil {
+			t.Fatalf("CompileRemarks(%q): %v", spec, err)
+		}
+		return re
+	}
+
+	// exclude overrides the INI's exclude_remarks: the US node is dropped, and
+	// the 套餐到期 node (which the INI's exclude_remarks would drop) is kept —
+	// 6 kept / 1 filtered proves the override, not a union.
+	diag := run(t, Request{ExcludeRemarks: must(t, "(US)")})
+	if diag.NodeCount != 6 || diag.Filtered != 1 {
+		t.Errorf("exclude override: nodes=%d filtered=%d, want 6/1", diag.NodeCount, diag.Filtered)
+	}
+
+	// include whitelist: only the two HK nodes survive.
+	diag = run(t, Request{IncludeRemarks: must(t, "(HK)")})
+	if diag.NodeCount != 2 || diag.Filtered != 5 {
+		t.Errorf("include whitelist: nodes=%d filtered=%d, want 2/5", diag.NodeCount, diag.Filtered)
+	}
+
+	// include + exclude combined: HK minus HK2.
+	diag = run(t, Request{IncludeRemarks: must(t, "(HK)"), ExcludeRemarks: must(t, "(HK2)")})
+	if diag.NodeCount != 1 || diag.Filtered != 6 {
+		t.Errorf("include+exclude: nodes=%d filtered=%d, want 1/6", diag.NodeCount, diag.Filtered)
+	}
+
+	// An empty spec means "no filter from the URL" — the INI keeps applying.
+	diag = run(t, Request{ExcludeRemarks: must(t, "  ")})
+	if diag.NodeCount != 6 || diag.Filtered != 1 {
+		t.Errorf("empty spec keeps INI filter: nodes=%d filtered=%d, want 6/1", diag.NodeCount, diag.Filtered)
+	}
+
+	// Invalid regex is a user error, not a silent no-op.
+	if _, err := CompileRemarks("([invalid"); err == nil {
+		t.Error("expected error for invalid regex")
 	}
 }
 
