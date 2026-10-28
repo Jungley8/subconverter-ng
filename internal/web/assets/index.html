@@ -634,6 +634,16 @@
         </div>
 
         <div class="field">
+          <label for="include">节点白名单 include <span class="opt">可选 · 正则匹配节点名，仅保留命中的；覆盖外部配置的 include_remarks</span></label>
+          <input type="text" id="include" placeholder="(?i)(港|HK)">
+        </div>
+
+        <div class="field">
+          <label for="exclude">节点黑名单 exclude <span class="opt">可选 · 正则匹配节点名，剔除命中的；覆盖外部配置的 exclude_remarks</span></label>
+          <input type="text" id="exclude" placeholder="(?i)(弃用)|(更新)|(到期)|(流量)|(套餐)|(官网)">
+        </div>
+
+        <div class="field">
           <label>选项</label>
           <div class="toggles">
             <label class="toggle"><input type="checkbox" id="sort"><span>节点排序</span></label>
@@ -882,7 +892,7 @@
   // 1. Form Caching & Converter Logic (Tab 1)
   // ==========================================
   var STORE_KEY_FORM = 'subng.form.v1';
-  var TEXT_FIELDS = ['urls', 'config', 'target', 'source', 'ua', 'targetVersion', 'proxy'];
+  var TEXT_FIELDS = ['urls', 'config', 'target', 'source', 'ua', 'targetVersion', 'include', 'exclude', 'proxy'];
   var FLAG_FIELDS = ['sort', 'dedup', 'udp', 'tfo', 'scv', 'fdn', 'append_type', 'tailscale', 'emoji'];
 
   function saveFormState() {
@@ -929,6 +939,11 @@
     }
     var config = $('config').value.trim();
     if (config) { params.push('config=' + encodeURIComponent(config)); }
+
+    var includeRe = $('include').value.trim();
+    if (includeRe) { params.push('include=' + encodeURIComponent(includeRe)); }
+    var excludeRe = $('exclude').value.trim();
+    if (excludeRe) { params.push('exclude=' + encodeURIComponent(excludeRe)); }
 
     ['sort', 'dedup', 'udp', 'tfo', 'scv', 'fdn', 'append_type', 'tailscale'].forEach(function (k) {
       if ($(k).checked) { params.push(k + '=true'); }
