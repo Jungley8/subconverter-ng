@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -100,5 +101,42 @@ func TestSummaryDefaultConfigUnset(t *testing.T) {
 	}
 	if !strings.Contains(out, "&config=") {
 		t.Errorf("unset default config should hint at per-request &config=:\n%s", out)
+	}
+}
+
+func TestRedactStringAndError(t *testing.T) {
+	rawErr := "fetch https://air.com/sub?token=s3cret: unexpected status 502"
+	redacted := RedactString(rawErr)
+	if strings.Contains(redacted, "s3cret") {
+		t.Fatalf("RedactString leaked secret: %s", redacted)
+	}
+	if !strings.Contains(redacted, "https://air.com/sub?token=***: unexpected status 502") {
+		t.Errorf("unexpected RedactString result: %s", redacted)
+	}
+
+	err := RedactError(errors.New("dial https://user:pass@air.com/api?key=123 failed"))
+	if strings.Contains(err.Error(), "pass") || strings.Contains(err.Error(), "123") {
+		t.Fatalf("RedactError leaked credentials: %v", err)
+	}
+}
+
+func TestSummaryNewFields(t *testing.T) {
+	cfg := Default()
+	cfg.APIAccessToken = "my-secret-token"
+	cfg.Fetch.AllowPrivateIPs = true
+	cfg.RateLimit.TrustedProxies = []string{"10.0.0.0/8", "127.0.0.1"}
+
+	out := cfg.Summary()
+	if strings.Contains(out, "my-secret-token") {
+		t.Errorf("Summary leaked APIAccessToken: %s", out)
+	}
+	if !strings.Contains(out, "api token:      configured") {
+		t.Errorf("Summary missing api token mention: %s", out)
+	}
+	if !strings.Contains(out, "private ips:    allowed") {
+		t.Errorf("Summary missing private ips mention: %s", out)
+	}
+	if !strings.Contains(out, "trusted proxies: 10.0.0.0/8, 127.0.0.1") {
+		t.Errorf("Summary missing trusted proxies: %s", out)
 	}
 }

@@ -19,8 +19,13 @@ func countingHandler(hits *int32, body string, header http.Header) http.Handler 
 				w.Header().Add(k, v)
 			}
 		}
-		w.Write([]byte(body))
+		_, _ = w.Write([]byte(body))
 	})
+}
+
+func testOptions(o Options) Options {
+	o.AllowPrivateIPs = true
+	return o
 }
 
 func TestCache_HitAvoidsSecondFetch(t *testing.T) {
@@ -28,7 +33,7 @@ func TestCache_HitAvoidsSecondFetch(t *testing.T) {
 	srv := httptest.NewServer(countingHandler(&hits, "cached-body", nil))
 	defer srv.Close()
 
-	c, _ := New(Options{}) // default caching on
+	c, _ := New(testOptions(Options{})) // default caching on
 	for i := 0; i < 3; i++ {
 		body, err := c.Get(context.Background(), srv.URL)
 		if err != nil {
@@ -48,7 +53,7 @@ func TestCache_Disabled(t *testing.T) {
 	srv := httptest.NewServer(countingHandler(&hits, "x", nil))
 	defer srv.Close()
 
-	c, _ := New(Options{CacheTTL: -1}) // disabled
+	c, _ := New(testOptions(Options{CacheTTL: -1})) // disabled
 	if c.cache != nil {
 		t.Fatal("cache should be nil when CacheTTL < 0")
 	}
@@ -67,7 +72,7 @@ func TestCache_Expiry(t *testing.T) {
 	srv := httptest.NewServer(countingHandler(&hits, "y", nil))
 	defer srv.Close()
 
-	c, _ := New(Options{CacheTTL: time.Hour})
+	c, _ := New(testOptions(Options{CacheTTL: time.Hour}))
 	// Drive a fake clock so expiry is deterministic.
 	var nowVal atomic.Int64
 	nowVal.Store(time.Now().UnixNano())
@@ -98,7 +103,7 @@ func TestCache_Flush(t *testing.T) {
 	srv := httptest.NewServer(countingHandler(&hits, "z", nil))
 	defer srv.Close()
 
-	c, _ := New(Options{})
+	c, _ := New(testOptions(Options{}))
 	if _, err := c.Get(context.Background(), srv.URL); err != nil {
 		t.Fatal(err)
 	}
@@ -123,8 +128,8 @@ func TestCache_SharedAcrossClients(t *testing.T) {
 	defer srv.Close()
 
 	shared := NewCache(time.Hour)
-	c1, _ := New(Options{Cache: shared})
-	c2, _ := New(Options{Cache: shared})
+	c1, _ := New(testOptions(Options{Cache: shared}))
+	c2, _ := New(testOptions(Options{Cache: shared}))
 
 	if _, err := c1.Get(context.Background(), srv.URL); err != nil {
 		t.Fatal(err)
@@ -143,7 +148,7 @@ func TestGetWithMeta_ReturnsHeaderAndCaches(t *testing.T) {
 	srv := httptest.NewServer(countingHandler(&hits, "body", hdr))
 	defer srv.Close()
 
-	c, _ := New(Options{})
+	c, _ := New(testOptions(Options{}))
 	body, gotHdr, err := c.GetWithMeta(context.Background(), srv.URL)
 	if err != nil {
 		t.Fatal(err)
@@ -170,11 +175,11 @@ func TestCache_DoesNotCacheNon200(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&hits, 1)
 		w.WriteHeader(http.StatusNotFound)
-		w.Write([]byte("missing"))
+		_, _ = w.Write([]byte("missing"))
 	}))
 	defer srv.Close()
 
-	c, _ := New(Options{})
+	c, _ := New(testOptions(Options{}))
 	for i := 0; i < 2; i++ {
 		// Non-200 is an error (fail closed) and must not cache.
 		if _, _, err := c.GetWithMeta(context.Background(), srv.URL); err == nil {

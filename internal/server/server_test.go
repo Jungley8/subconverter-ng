@@ -26,16 +26,22 @@ func fakeAirport() *httptest.Server {
 		"custom_proxy_group=🚀 Select`select`.*`\n" +
 		"enable_rule_generator=true\n"
 	mux := http.NewServeMux()
-	mux.HandleFunc("/sub.txt", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(sub)) })
-	mux.HandleFunc("/config.init", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(ini)) })
+	mux.HandleFunc("/sub.txt", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(sub)) })
+	mux.HandleFunc("/config.init", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(ini)) })
 	return httptest.NewServer(mux)
+}
+
+func testConfig() *config.Config {
+	c := config.Default()
+	c.Fetch.AllowPrivateIPs = true
+	return c
 }
 
 func TestHandleSub_EndToEnd(t *testing.T) {
 	air := fakeAirport()
 	defer air.Close()
 
-	h := New(config.Default()).Handler()
+	h := New(testConfig()).Handler()
 	target := "/sub?target=clash&url=" + url.QueryEscape(air.URL+"/sub.txt") +
 		"&config=" + url.QueryEscape(air.URL+"/config.init") + "&sort=true"
 
@@ -65,7 +71,7 @@ func TestHandleSub_DefaultConfigURL(t *testing.T) {
 	air := fakeAirport()
 	defer air.Close()
 
-	cfg := config.Default()
+	cfg := testConfig()
 	cfg.DefaultConfigURL = air.URL + "/config.init"
 	h := New(cfg).Handler()
 
@@ -89,11 +95,11 @@ func TestHandleSub_ExplicitConfigWinsOverDefault(t *testing.T) {
 	air := fakeAirport()
 	defer air.Close()
 	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("[custom]\nruleset=🐟 Final,[]FINAL\ncustom_proxy_group=Other`select`.*`\n"))
+		_, _ = w.Write([]byte("[custom]\nruleset=🐟 Final,[]FINAL\ncustom_proxy_group=Other`select`.*`\n"))
 	}))
 	defer other.Close()
 
-	cfg := config.Default()
+	cfg := testConfig()
 	cfg.DefaultConfigURL = other.URL + "/other.init"
 	h := New(cfg).Handler()
 
@@ -114,15 +120,15 @@ func TestHandleSub_BrokenDefaultConfigFailsClosed(t *testing.T) {
 	air := fakeAirport()
 	defer air.Close()
 
-	cfg := config.Default()
+	cfg := testConfig()
 	cfg.DefaultConfigURL = air.URL + "/missing.init"
 	h := New(cfg).Handler()
 
 	target := "/sub?target=clash&url=" + url.QueryEscape(air.URL+"/sub.txt")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200-with-hint (never 5xx)", rec.Code)
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502 Bad Gateway", rec.Code)
 	}
 	body := rec.Body.String()
 	if !strings.Contains(body, "fetch external config") {
@@ -140,19 +146,19 @@ func TestHandleSub_BrokenDefaultConfig500FailsClosed(t *testing.T) {
 	defer air.Close()
 	broken := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("boom"))
+		_, _ = w.Write([]byte("boom"))
 	}))
 	defer broken.Close()
 
-	cfg := config.Default()
+	cfg := testConfig()
 	cfg.DefaultConfigURL = broken.URL + "/config.init"
 	h := New(cfg).Handler()
 
 	target := "/sub?target=clash&url=" + url.QueryEscape(air.URL+"/sub.txt")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200-with-hint (never 5xx)", rec.Code)
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502 Bad Gateway", rec.Code)
 	}
 	body := rec.Body.String()
 	if !strings.Contains(body, "fetch external config") {
@@ -164,20 +170,18 @@ func TestHandleSub_BrokenDefaultConfig500FailsClosed(t *testing.T) {
 }
 
 func TestHandleSub_NoUsableNodesReturnsHint(t *testing.T) {
-	// An airport that serves an unparseable body must never yield a 5xx —
-	// Cloudflare would swallow it. Expect 200 with a readable plain-text hint.
 	air := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("garbage://nothing\nalso-bad"))
+		_, _ = w.Write([]byte("garbage://nothing\nalso-bad"))
 	}))
 	defer air.Close()
 
-	h := New(config.Default()).Handler()
+	h := New(testConfig()).Handler()
 	target := "/sub?target=clash&url=" + url.QueryEscape(air.URL+"/x")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (never 5xx)", rec.Code)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422 Unprocessable Entity", rec.Code)
 	}
 	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "text/plain") {
 		t.Errorf("content-type = %q, want text/plain", ct)
@@ -328,7 +332,9 @@ func TestRateLimit_VersionAndRootNeverThrottled(t *testing.T) {
 }
 
 func TestRateLimit_XForwardedForSeparatesBuckets(t *testing.T) {
-	h := New(rlConfig(1, 1)).Handler()
+	cfg := rlConfig(1, 1)
+	cfg.RateLimit.TrustedProxies = []string{"10.0.0.0/8"}
+	h := New(cfg).Handler()
 
 	doReq := func(xff string) int {
 		rec := httptest.NewRecorder()
@@ -356,6 +362,29 @@ func TestRateLimit_XForwardedForSeparatesBuckets(t *testing.T) {
 	}
 }
 
+func TestRateLimit_UntrustedProxyIgnoresXForwardedFor(t *testing.T) {
+	cfg := rlConfig(1, 1) // no trusted proxies configured
+	h := New(cfg).Handler()
+
+	doReq := func(xff string) int {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/sub?target=clash", nil)
+		req.RemoteAddr = "203.0.113.5:12345" // untrusted client trying to spoof XFF
+		req.Header.Set("X-Forwarded-For", xff)
+		h.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	// First request from 203.0.113.5 succeeds
+	if c := doReq("198.51.100.1"); c == http.StatusTooManyRequests {
+		t.Fatalf("first request should pass, got %d", c)
+	}
+	// Second request from 203.0.113.5 with different spoofed XFF should still be throttled because XFF is ignored!
+	if c := doReq("198.51.100.2"); c != http.StatusTooManyRequests {
+		t.Fatalf("second request should be throttled (spoofed XFF ignored), got %d", c)
+	}
+}
+
 func TestRateLimit_DisabledIsPassThrough(t *testing.T) {
 	c := config.Default()
 	c.RateLimit.Enabled = false
@@ -372,6 +401,11 @@ func TestRateLimit_DisabledIsPassThrough(t *testing.T) {
 }
 
 func TestClientIP(t *testing.T) {
+	s := New(&config.Config{
+		RateLimit: config.RateLimit{
+			TrustedProxies: []string{"10.0.0.1"},
+		},
+	})
 	cases := []struct {
 		name       string
 		remoteAddr string
@@ -380,10 +414,11 @@ func TestClientIP(t *testing.T) {
 		want       string
 	}{
 		{"remoteaddr", "192.0.2.5:4444", "", "", "192.0.2.5"},
-		{"xff first hop", "10.0.0.1:1", "203.0.113.9, 70.0.0.1", "", "203.0.113.9"},
-		{"x-real-ip", "10.0.0.1:1", "", "198.51.100.50", "198.51.100.50"},
-		{"xff beats xrip", "10.0.0.1:1", "203.0.113.10", "198.51.100.50", "203.0.113.10"},
+		{"xff first hop (trusted)", "10.0.0.1:1", "203.0.113.9, 70.0.0.1", "", "203.0.113.9"},
+		{"x-real-ip (trusted)", "10.0.0.1:1", "", "198.51.100.50", "198.51.100.50"},
+		{"xff beats xrip (trusted)", "10.0.0.1:1", "203.0.113.10", "198.51.100.50", "203.0.113.10"},
 		{"remoteaddr no port", "192.0.2.6", "", "", "192.0.2.6"},
+		{"untrusted xff ignored", "203.0.113.5:1234", "198.51.100.1", "", "203.0.113.5"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -395,7 +430,7 @@ func TestClientIP(t *testing.T) {
 			if tc.xrip != "" {
 				req.Header.Set("X-Real-IP", tc.xrip)
 			}
-			if got := clientIP(req); got != tc.want {
+			if got := s.clientIP(req); got != tc.want {
 				t.Errorf("clientIP = %q, want %q", got, tc.want)
 			}
 		})
@@ -406,7 +441,7 @@ func TestHandleSub_Tailscale(t *testing.T) {
 	air := fakeAirport()
 	defer air.Close()
 
-	h := New(config.Default()).Handler()
+	h := New(testConfig()).Handler()
 	target := "/sub?target=clash&url=" + url.QueryEscape(air.URL+"/sub.txt") +
 		"&config=" + url.QueryEscape(air.URL+"/config.init") + "&tailscale=true"
 
@@ -427,5 +462,126 @@ func TestHandleSub_Tailscale(t *testing.T) {
 	}
 	if doc.Rules[0] != "IP-CIDR,100.64.0.0/10,DIRECT,no-resolve" || doc.Rules[1] != "IP-CIDR,fd7a:115c:a1e0::/48,DIRECT,no-resolve" {
 		t.Errorf("rules[0..1] mismatch: %v", doc.Rules[:2])
+	}
+}
+
+func TestHandleSub_TokenAuth(t *testing.T) {
+	air := fakeAirport()
+	defer air.Close()
+
+	cfg := testConfig()
+	cfg.APIAccessToken = "secret123"
+	h := New(cfg).Handler()
+
+	baseURL := "/sub?target=clash&url=" + url.QueryEscape(air.URL+"/sub.txt") +
+		"&config=" + url.QueryEscape(air.URL+"/config.init")
+
+	// 1. Missing token -> 401
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, baseURL, nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("missing token code = %d, want 401", rec.Code)
+	}
+
+	// 2. Invalid token -> 401
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, baseURL+"&token=wrong", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("invalid token code = %d, want 401", rec.Code)
+	}
+
+	// 3. Valid token via query param -> 200
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, baseURL+"&token=secret123", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("query token code = %d, want 200", rec.Code)
+	}
+
+	// 4. Valid token via Authorization: Bearer -> 200
+	rec = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, baseURL, nil)
+	req.Header.Set("Authorization", "Bearer secret123")
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("bearer token code = %d, want 200", rec.Code)
+	}
+
+	// 5. Valid token via X-API-Token -> 200
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, baseURL, nil)
+	req.Header.Set("X-API-Token", "secret123")
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("X-API-Token code = %d, want 200", rec.Code)
+	}
+}
+
+func TestHandleFlushCache_TokenAuth(t *testing.T) {
+	cfg := config.Default()
+	cfg.APIAccessToken = "flush-key"
+	h := New(cfg).Handler()
+
+	// Missing token -> 401
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/flushcache", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("code = %d, want 401", rec.Code)
+	}
+
+	// Valid token -> 200
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/flushcache?token=flush-key", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200", rec.Code)
+	}
+}
+
+func TestHealthzAndReadyz(t *testing.T) {
+	h := New(config.Default()).Handler()
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if rec.Code != http.StatusOK || rec.Body.String() != "ok\n" {
+		t.Fatalf("healthz: code=%d body=%q", rec.Code, rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if rec.Code != http.StatusOK || rec.Body.String() != "ready\n" {
+		t.Fatalf("readyz: code=%d body=%q", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleSub_SSRFProtected(t *testing.T) {
+	// Default config has AllowPrivateIPs: false
+	h := New(config.Default()).Handler()
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sub?target=clash&url=http://127.0.0.1:9999/sub.txt", nil))
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502 Bad Gateway for SSRF block", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "SSRF") {
+		t.Errorf("expected SSRF error message in body, got: %s", rec.Body.String())
+	}
+}
+
+func TestHandleSub_RedactsTokenInErrorResponse(t *testing.T) {
+	cfg := testConfig()
+	h := New(cfg).Handler()
+
+	secretSubURL := "http://127.0.0.1:54321/sub?token=SuperSecretTokenValue"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sub?target=clash&url="+url.QueryEscape(secretSubURL), nil))
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", rec.Code)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "SuperSecretTokenValue") {
+		t.Fatalf("error response body leaked secret token:\n%s", body)
+	}
+	if !strings.Contains(body, "token=***") {
+		t.Errorf("expected token=*** in redacted body, got:\n%s", body)
 	}
 }
