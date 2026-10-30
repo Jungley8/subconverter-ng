@@ -4,11 +4,13 @@
 package server
 
 import (
+	"crypto/subtle"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
@@ -23,9 +25,11 @@ import (
 
 // Server wires the HTTP handlers to the application config.
 type Server struct {
-	cfg     *config.Config
-	version string       // build version, surfaced by GET /version; "dev" when unset
-	cache   *fetch.Cache // shared across requests so the TTL cache survives; nil when caching disabled
+	cfg          *config.Config
+	version      string       // build version, surfaced by GET /version; "dev" when unset
+	cache        *fetch.Cache // shared across requests so the TTL cache survives; nil when caching disabled
+	trustedCIDRs []netip.Prefix
+	trustedIPs   []netip.Addr
 }
 
 func New(cfg *config.Config) *Server {
@@ -35,6 +39,17 @@ func New(cfg *config.Config) *Server {
 	if cfg.Fetch.CacheTTL >= 0 {
 		ttl := cfg.Fetch.CacheTTL // 0 => NewCache applies the default
 		s.cache = fetch.NewCache(ttl)
+	}
+	for _, raw := range cfg.RateLimit.TrustedProxies {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		if prefix, err := netip.ParsePrefix(raw); err == nil {
+			s.trustedCIDRs = append(s.trustedCIDRs, prefix)
+		} else if addr, err := netip.ParseAddr(raw); err == nil {
+			s.trustedIPs = append(s.trustedIPs, addr)
+		}
 	}
 	return s
 }
@@ -48,16 +63,47 @@ func (s *Server) WithVersion(v string) *Server {
 	return s
 }
 
-// Handler returns the root mux. Rate limiting is applied only to /sub, the
-// expensive endpoint that triggers upstream fetches; /version and the web UI
-// are left unthrottled.
+// Handler returns the root mux.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.Handle("/sub", s.rateLimit(http.HandlerFunc(s.handleSub)))
-	mux.HandleFunc("/flushcache", s.handleFlushCache)
+	mux.Handle("/sub", s.authenticate(s.rateLimit(http.HandlerFunc(s.handleSub))))
+	mux.Handle("/flushcache", s.authenticate(http.HandlerFunc(s.handleFlushCache)))
 	mux.HandleFunc("/version", s.handleVersion)
+	mux.HandleFunc("/healthz", s.handleHealthz)
+	mux.HandleFunc("/readyz", s.handleReadyz)
 	mux.Handle("/", web.Handler())
-	return logging(mux)
+	return s.logging(mux)
+}
+
+// authenticate checks optional API token authorization.
+func (s *Server) authenticate(next http.Handler) http.Handler {
+	if s.cfg.APIAccessToken == "" {
+		return next
+	}
+	expected := []byte(s.cfg.APIAccessToken)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token := r.URL.Query().Get("token")
+		if token == "" {
+			if auth := r.Header.Get("Authorization"); auth != "" {
+				if strings.HasPrefix(strings.ToLower(auth), "bearer ") {
+					token = strings.TrimSpace(auth[7:])
+				} else {
+					token = strings.TrimSpace(auth)
+				}
+			}
+		}
+		if token == "" {
+			token = r.Header.Get("X-API-Token")
+		}
+
+		if token == "" || subtle.ConstantTimeCompare([]byte(token), expected) != 1 {
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte("unauthorized: invalid or missing API token\n"))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // rateLimit wraps next with per-client-IP token-bucket rate limiting. When the
@@ -76,7 +122,7 @@ func (s *Server) rateLimit(next http.Handler) http.Handler {
 		}
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !limiter.Allow(clientIP(r)) {
+		if !limiter.Allow(s.clientIP(r)) {
 			w.Header().Set("Retry-After", retryAfter)
 			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
 			return
@@ -85,23 +131,50 @@ func (s *Server) rateLimit(next http.Handler) http.Handler {
 	})
 }
 
-// clientIP derives the originating client IP, honouring reverse-proxy headers
-// (the service runs behind Cloudflare / nginx). X-Forwarded-For's first hop
-// wins, then X-Real-IP, falling back to the connection's RemoteAddr host.
-func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		first := strings.TrimSpace(strings.SplitN(xff, ",", 2)[0])
-		if first != "" {
-			return first
+// isTrustedProxy reports whether host is within configured trusted reverse proxy IPs/subnets.
+func (s *Server) isTrustedProxy(host string) bool {
+	if len(s.trustedCIDRs) == 0 && len(s.trustedIPs) == 0 {
+		return false
+	}
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
+		return false
+	}
+	addr = addr.Unmap()
+	for _, ip := range s.trustedIPs {
+		if ip.Unmap() == addr {
+			return true
 		}
 	}
-	if xrip := strings.TrimSpace(r.Header.Get("X-Real-IP")); xrip != "" {
-		return xrip
+	for _, cidr := range s.trustedCIDRs {
+		if cidr.Contains(addr) {
+			return true
+		}
 	}
-	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
-		return host
+	return false
+}
+
+// clientIP derives the originating client IP. Reverse-proxy headers (X-Forwarded-For,
+// X-Real-IP) are honoured ONLY when the connection comes from a configured trusted proxy;
+// otherwise the connection's direct remote host is used to prevent header spoofing.
+func (s *Server) clientIP(r *http.Request) string {
+	remoteHost, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		remoteHost = r.RemoteAddr
 	}
-	return r.RemoteAddr
+
+	if s.isTrustedProxy(remoteHost) {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			first := strings.TrimSpace(strings.SplitN(xff, ",", 2)[0])
+			if first != "" {
+				return first
+			}
+		}
+		if xrip := strings.TrimSpace(r.Header.Get("X-Real-IP")); xrip != "" {
+			return xrip
+		}
+	}
+	return remoteHost
 }
 
 // handleFlushCache clears the shared fetch cache.
@@ -110,12 +183,22 @@ func (s *Server) handleFlushCache(w http.ResponseWriter, r *http.Request) {
 		s.cache.Flush()
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Write([]byte("cache flushed\n"))
+	_, _ = w.Write([]byte("cache flushed\n"))
 }
 
 func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Write([]byte("subconverter-ng " + s.version + "\n"))
+	_, _ = w.Write([]byte("subconverter-ng " + s.version + "\n"))
+}
+
+func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	_, _ = w.Write([]byte("ok\n"))
+}
+
+func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	_, _ = w.Write([]byte("ready\n"))
 }
 
 func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
@@ -142,14 +225,13 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 	noCache := boolParam(q.Get("nocache"), false)
 
 	// Build a fetch client, allowing a per-request &proxy= override of the
-	// configured upstream proxy. The shared cache is injected so cached
-	// ruleset/subscription fetches persist across requests (keyed by URL only;
-	// per-request proxy differences are intentionally ignored).
+	// configured upstream proxy.
 	opts := fetch.Options{
 		UserAgent:       s.cfg.Fetch.UserAgent,
 		Proxy:           firstNonEmpty(q.Get("proxy"), s.cfg.Fetch.Proxy),
 		FlareSolverrURL: s.cfg.Fetch.FlareSolverrURL,
 		Timeout:         s.cfg.Fetch.Timeout,
+		AllowPrivateIPs: s.cfg.Fetch.AllowPrivateIPs,
 	}
 	if noCache || s.cache == nil {
 		opts.CacheTTL = -1 // disable caching for this request
@@ -159,7 +241,7 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 	}
 	client, err := fetch.New(opts)
 	if err != nil {
-		http.Error(w, "fetch client: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "fetch client: "+config.RedactString(err.Error()), http.StatusInternalServerError)
 		return
 	}
 
@@ -198,27 +280,22 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 		NoCache:     noCache,
 	}
 
-	// `insert` is handled above (insert_url). `new_name` is accepted for
-	// compatibility but has no effect: our node naming is already the "new" style.
-
 	out, diag, err := convert.Run(r.Context(), client, req)
 	if err != nil {
-		log.Printf("convert error: %v", err)
-		// Never respond with a 5xx here: Cloudflare (and similar proxies)
-		// replace origin 502/504 with their own error page, so the real cause
-		// never reaches the user. Return 200 with a readable plain-text hint
-		// instead — the subscription client surfaces the message verbatim.
+		slog.Error("convert failed", "error", config.RedactString(err.Error()))
 		writeUserError(w, err)
 		return
 	}
-	log.Printf("converted (%s): %d nodes, %d unparsed lines, %d dup, %d deprecated, %d nodes unsupported by target, empty groups: %v, %d rules dropped (unsupported type)",
-		convert.NormalizeTarget(target), diag.NodeCount, len(diag.SkippedLines), diag.Duplicates, diag.Deprecated, len(diag.SkippedNodes), diag.EmptyGroups, len(diag.SkippedRules))
-	if len(diag.SkippedRules) > 0 {
-		log.Printf("dropped rules (unsupported type): %v", diag.SkippedRules)
-	}
-	if len(diag.SkippedNodes) > 0 {
-		log.Printf("nodes unsupported by target %q: %v", target, diag.SkippedNodes)
-	}
+	slog.Info("converted subscription",
+		"target", convert.NormalizeTarget(target),
+		"nodes", diag.NodeCount,
+		"unparsed_lines", len(diag.SkippedLines),
+		"duplicates", diag.Duplicates,
+		"deprecated", diag.Deprecated,
+		"unsupported_nodes", len(diag.SkippedNodes),
+		"empty_groups", len(diag.EmptyGroups),
+		"dropped_rules", len(diag.SkippedRules),
+	)
 
 	// Content-Type varies by target (YAML for clash, JSON for sing-box, plain
 	// text for surge/quanx/loon/v2ray). The generator reports the right one.
@@ -247,21 +324,22 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 	if diag.SubscriptionUserinfo != "" {
 		w.Header().Set("Subscription-Userinfo", diag.SubscriptionUserinfo)
 	}
-	w.Write(out)
+	_, _ = w.Write(out)
 }
 
-// writeUserError renders a conversion failure as a 200 plain-text hint rather
-// than a 5xx status. A 502/504 would be swallowed by Cloudflare's own error
-// page, hiding the real cause from the user; a 200 body reaches the client
-// intact. The message is prefixed with "#" so a client that still tries to
-// parse it as a config sees only comment lines.
+// writeUserError renders a conversion failure with an appropriate HTTP error status
+// (422 for unprocessable content such as no usable nodes, 502 for upstream fetch failure)
+// along with plain-text comments detailing the cause with secrets redacted.
 func writeUserError(w http.ResponseWriter, err error) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	redactedMsg := config.RedactString(err.Error())
 	if errors.Is(err, convert.ErrNoNodes) {
-		fmt.Fprintf(w, "# subconverter-ng: %s\n# 订阅无可用节点，请检查订阅链接或订阅内容是否有效。\n", err.Error())
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = fmt.Fprintf(w, "# subconverter-ng: %s\n# 订阅无可用节点，请检查订阅链接或订阅内容是否有效。\n", redactedMsg)
 		return
 	}
-	fmt.Fprintf(w, "# subconverter-ng: 转换失败 / conversion failed\n# %s\n", err.Error())
+	w.WriteHeader(http.StatusBadGateway)
+	_, _ = fmt.Fprintf(w, "# subconverter-ng: 转换失败 / conversion failed\n# %s\n", redactedMsg)
 }
 
 // splitURLs splits the &url= value on the "|" multi-subscription separator.
@@ -320,10 +398,27 @@ func firstNonEmpty(vals ...string) string {
 	return ""
 }
 
-func logging(next http.Handler) http.Handler {
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *statusRecorder) WriteHeader(code int) {
+	r.status = code
+	r.ResponseWriter.WriteHeader(code)
+}
+
+func (s *Server) logging(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		next.ServeHTTP(w, r)
-		log.Printf("%s %s %s", r.Method, r.URL.Path, time.Since(start).Round(time.Millisecond))
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rec, r)
+		slog.Info("http request",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", rec.status,
+			"duration_ms", time.Since(start).Milliseconds(),
+			"client_ip", s.clientIP(r),
+		)
 	})
 }

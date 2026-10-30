@@ -5,7 +5,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestNew_Defaults(t *testing.T) {
@@ -51,11 +54,11 @@ func TestGet_OKAndUserAgent(t *testing.T) {
 		if r.Header.Get("User-Agent") != defaultUA {
 			t.Errorf("UA = %q, want %q", r.Header.Get("User-Agent"), defaultUA)
 		}
-		w.Write([]byte("hello-body"))
+		_, _ = w.Write([]byte("hello-body"))
 	}))
 	defer srv.Close()
 
-	c, _ := New(Options{})
+	c, _ := New(Options{AllowPrivateIPs: true})
 	body, err := c.Get(context.Background(), srv.URL)
 	if err != nil {
 		t.Fatal(err)
@@ -70,11 +73,11 @@ func TestGet_Non200FailsClosed(t *testing.T) {
 	// as an error rather than a successful fetch of garbage.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		w.Write([]byte("404 page not found"))
+		_, _ = w.Write([]byte("404 page not found"))
 	}))
 	defer srv.Close()
 
-	c, _ := New(Options{})
+	c, _ := New(Options{AllowPrivateIPs: true})
 	if _, err := c.Get(context.Background(), srv.URL); err == nil {
 		t.Fatal("expected error for 404")
 	} else if !strings.Contains(err.Error(), "unexpected status 404") {
@@ -87,11 +90,11 @@ func TestGet_Non200ServerErrorFailsClosed(t *testing.T) {
 	// parsed as a subscription or config.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("internal error"))
+		_, _ = w.Write([]byte("internal error"))
 	}))
 	defer srv.Close()
 
-	c, _ := New(Options{})
+	c, _ := New(Options{AllowPrivateIPs: true})
 	if _, err := c.Get(context.Background(), srv.URL); err == nil {
 		t.Fatal("expected error for 500")
 	} else if !strings.Contains(err.Error(), "unexpected status 500") {
@@ -118,22 +121,22 @@ func TestGet_CloudflareSolvedViaFlareSolverr(t *testing.T) {
 	// Origin returns the CF interstitial until a cf_clearance cookie is present.
 	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.Header.Get("Cookie"), "cf_clearance=token123") {
-			w.Write([]byte("REAL-SUBSCRIPTION"))
+			_, _ = w.Write([]byte("REAL-SUBSCRIPTION"))
 			return
 		}
 		w.WriteHeader(http.StatusServiceUnavailable)
-		w.Write([]byte("<title>Just a moment...</title>"))
+		_, _ = w.Write([]byte("<title>Just a moment...</title>"))
 	}))
 	defer origin.Close()
 
 	// FlareSolverr stub returns the clearance cookie + a UA.
 	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"status":"ok","solution":{"userAgent":"fs-ua","cookies":[{"name":"cf_clearance","value":"token123"}]}}`))
+		_, _ = w.Write([]byte(`{"status":"ok","solution":{"userAgent":"fs-ua","cookies":[{"name":"cf_clearance","value":"token123"}]}}`))
 	}))
 	defer fs.Close()
 
-	c, _ := New(Options{FlareSolverrURL: fs.URL})
+	c, _ := New(Options{FlareSolverrURL: fs.URL, AllowPrivateIPs: true})
 	body, err := c.Get(context.Background(), origin.URL)
 	if err != nil {
 		t.Fatal(err)
@@ -146,11 +149,11 @@ func TestGet_CloudflareSolvedViaFlareSolverr(t *testing.T) {
 func TestGet_CloudflareNoSolverrErrors(t *testing.T) {
 	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
-		w.Write([]byte("Attention Required! | Cloudflare"))
+		_, _ = w.Write([]byte("Attention Required! | Cloudflare"))
 	}))
 	defer origin.Close()
 
-	c, _ := New(Options{})
+	c, _ := New(Options{AllowPrivateIPs: true})
 	_, err := c.Get(context.Background(), origin.URL)
 	if err == nil || !strings.Contains(err.Error(), "Cloudflare") {
 		t.Errorf("expected Cloudflare error, got %v", err)
@@ -160,16 +163,99 @@ func TestGet_CloudflareNoSolverrErrors(t *testing.T) {
 func TestGet_FlareSolverrFailure(t *testing.T) {
 	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		w.Write([]byte("Just a moment..."))
+		_, _ = w.Write([]byte("Just a moment..."))
 	}))
 	defer origin.Close()
 	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"status":"error","message":"boom"}`))
+		_, _ = w.Write([]byte(`{"status":"error","message":"boom"}`))
 	}))
 	defer fs.Close()
 
-	c, _ := New(Options{FlareSolverrURL: fs.URL})
+	c, _ := New(Options{FlareSolverrURL: fs.URL, AllowPrivateIPs: true})
 	if _, err := c.Get(context.Background(), origin.URL); err == nil {
 		t.Error("expected solve failure error")
+	}
+}
+
+func TestSSRF_DefenseBlocksPrivateAndLoopback(t *testing.T) {
+	c, err := New(Options{}) // AllowPrivateIPs: false by default
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+
+	targets := []string{
+		"http://127.0.0.1:8080/sub",
+		"http://localhost:8080/sub",
+		"http://10.0.0.1:8080/sub",
+		"http://192.168.1.1:8080/sub",
+		"http://172.16.0.1:8080/sub",
+		"http://169.254.169.254/latest/meta-data",
+		"http://[::1]:8080/sub",
+		"ftp://example.com/test",
+	}
+
+	for _, target := range targets {
+		_, err := c.Get(ctx, target)
+		if err == nil {
+			t.Errorf("expected SSRF block for %s, but got nil error", target)
+		}
+	}
+}
+
+func TestSSRF_RedirectBlocked(t *testing.T) {
+	// A public mock server that tries to redirect to loopback
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://127.0.0.1:80/secret", http.StatusFound)
+	}))
+	defer srv.Close()
+
+	// Configure client with AllowPrivateIPs: false
+	c, err := New(Options{AllowPrivateIPs: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = c.Get(context.Background(), srv.URL)
+	if err == nil {
+		t.Fatal("expected SSRF redirect error, got nil")
+	}
+	if !strings.Contains(err.Error(), "SSRF") {
+		t.Errorf("error = %q, expected SSRF mention", err)
+	}
+}
+
+func TestSingleFlight_CollapsesConcurrentRequests(t *testing.T) {
+	var requestCount atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount.Add(1)
+		time.Sleep(50 * time.Millisecond) // simulate work
+		_, _ = w.Write([]byte("singleflight-result"))
+	}))
+	defer srv.Close()
+
+	c, _ := New(Options{AllowPrivateIPs: true, CacheTTL: -1}) // disable cache to isolate singleflight
+
+	concurrency := 8
+	var wg sync.WaitGroup
+	wg.Add(concurrency)
+
+	for i := 0; i < concurrency; i++ {
+		go func() {
+			defer wg.Done()
+			body, err := c.Get(context.Background(), srv.URL)
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+				return
+			}
+			if string(body) != "singleflight-result" {
+				t.Errorf("unexpected body: %q", string(body))
+			}
+		}()
+	}
+	wg.Wait()
+
+	if got := requestCount.Load(); got != 1 {
+		t.Errorf("singleflight requestCount = %d, want 1", got)
 	}
 }

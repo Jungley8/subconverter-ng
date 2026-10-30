@@ -15,11 +15,15 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/Jungley8/subconverter-ng/internal/config"
+	"golang.org/x/sync/singleflight"
 )
 
 // Options configures a single Client. Zero values fall back to sensible
@@ -41,6 +45,11 @@ type Options struct {
 	// HTTP server reuses one cache across per-request Clients). When nil, New
 	// creates a per-Client cache (unless caching is disabled).
 	Cache *Cache
+
+	// AllowPrivateIPs controls SSRF protection. By default (false), requests to
+	// private, loopback, multicast, or link-local IPs are blocked, and redirects
+	// to them are rejected.
+	AllowPrivateIPs bool
 }
 
 // Client fetches URLs applying the configured access strategy.
@@ -48,6 +57,7 @@ type Client struct {
 	opts  Options
 	http  *http.Client
 	cache *Cache // nil when caching is disabled
+	group singleflight.Group
 }
 
 const defaultUA = "clash.meta/1.18.0 mihomo/1.18.0"
@@ -73,6 +83,13 @@ func New(opts Options) (*Client, error) {
 		IdleConnTimeout:     90 * time.Second,
 		TLSHandshakeTimeout: 15 * time.Second,
 	}
+
+	dialer := &net.Dialer{
+		Timeout:   15 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}
+
+	var proxyHost string
 	if opts.Proxy != "" {
 		// An explicit proxy (config / SUBNG_PROXY / --proxy / &proxy=) wins and
 		// also gets forwarded to FlareSolverr so the egress stays consistent.
@@ -85,15 +102,24 @@ func New(opts Options) (*Client, error) {
 			pu.Scheme = "socks5"
 		}
 		tr.Proxy = http.ProxyURL(pu)
+		proxyHost = pu.Hostname()
 	} else {
 		// Otherwise honour the standard HTTP_PROXY / HTTPS_PROXY / NO_PROXY
 		// (and lowercase) environment variables, like every other Go HTTP tool.
 		tr.Proxy = http.ProxyFromEnvironment
 	}
+
+	tr.DialContext = safeDialContext(dialer, opts.AllowPrivateIPs, proxyHost)
+
 	jar, _ := cookiejar.New(nil)
 	c := &Client{
 		opts: opts,
-		http: &http.Client{Transport: tr, Timeout: opts.Timeout, Jar: jar},
+		http: &http.Client{
+			Transport:     tr,
+			Timeout:       opts.Timeout,
+			Jar:           jar,
+			CheckRedirect: safeCheckRedirect(opts.AllowPrivateIPs),
+		},
 	}
 	// Wire up caching unless explicitly disabled (CacheTTL < 0).
 	if opts.CacheTTL >= 0 {
@@ -118,51 +144,88 @@ func (c *Client) Get(ctx context.Context, target string) ([]byte, error) {
 	return body, err
 }
 
+type metaResult struct {
+	body []byte
+	hdr  http.Header
+}
+
 // GetWithMeta is like Get but also returns the response headers of the final
 // (origin or FlareSolverr-replay) response. Callers use this to capture
 // airport metadata such as the Subscription-Userinfo header.
 //
 // Caching: successful (200, non-empty) responses are cached by URL. Cached
 // entries also retain their headers so repeated reads see Subscription-Userinfo.
-// Pass a context value (see NoCache) is not used here; cache bypass is decided
-// by the caller wiring a Client with caching disabled or by clearing the cache.
+// Singleflight deduplicates concurrent in-flight requests for identical targets.
 func (c *Client) GetWithMeta(ctx context.Context, target string) ([]byte, http.Header, error) {
+	if err := validateTargetURL(target, c.opts.AllowPrivateIPs); err != nil {
+		return nil, nil, err
+	}
+
 	if c.cache != nil {
 		if body, hdr, ok := c.cache.get(target); ok {
 			return body, hdr, nil
 		}
 	}
 
+	ch := c.group.DoChan(target, func() (any, error) {
+		if c.cache != nil {
+			if body, hdr, ok := c.cache.get(target); ok {
+				return metaResult{body: body, hdr: hdr}, nil
+			}
+		}
+		flightCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), c.opts.Timeout)
+		defer cancel()
+		body, hdr, err := c.fetchDirect(flightCtx, target)
+		if err != nil {
+			return nil, err
+		}
+		return metaResult{body: body, hdr: hdr}, nil
+	})
+
+	select {
+	case <-ctx.Done():
+		return nil, nil, ctx.Err()
+	case res := <-ch:
+		if res.Err != nil {
+			return nil, nil, res.Err
+		}
+		r := res.Val.(metaResult)
+		return r.body, r.hdr, nil
+	}
+}
+
+func (c *Client) fetchDirect(ctx context.Context, target string) ([]byte, http.Header, error) {
+	redactedTarget := config.RedactURL(target)
 	body, hdr, status, err := c.do(ctx, target, nil)
 	if err == nil && !isCloudflareChallenge(status, body) {
 		// Fail closed on non-200: a 404/500 body is an error page, not a
 		// subscription or config. Returning it as success would let callers
 		// silently render garbage (e.g. an empty ruleset from a 404 page).
 		if status != http.StatusOK {
-			return nil, nil, fmt.Errorf("fetch %s: unexpected status %d", target, status)
+			return nil, nil, fmt.Errorf("fetch %s: unexpected status %d", redactedTarget, status)
 		}
 		c.maybeCache(target, status, body, hdr)
 		return body, hdr, nil
 	}
 	if err != nil && c.opts.FlareSolverrURL == "" {
-		return nil, nil, err
+		return nil, nil, config.RedactError(err)
 	}
 	if c.opts.FlareSolverrURL == "" {
-		return nil, nil, fmt.Errorf("fetch %s: blocked by Cloudflare and no FlareSolverr configured (set fetch.flaresolverr_url; see docs/cloudflare.md)", target)
+		return nil, nil, fmt.Errorf("fetch %s: blocked by Cloudflare and no FlareSolverr configured (set fetch.flaresolverr_url; see docs/cloudflare.md)", redactedTarget)
 	}
 
 	// Solve the challenge: obtain cf_clearance cookies + the UA FlareSolverr
 	// used, then replay the request ourselves through the same egress.
 	cookies, ua, ferr := c.solveCloudflare(ctx, target)
 	if ferr != nil {
-		return nil, nil, fmt.Errorf("fetch %s: cloudflare solve failed: %w", target, ferr)
+		return nil, nil, fmt.Errorf("fetch %s: cloudflare solve failed: %w", redactedTarget, config.RedactError(ferr))
 	}
 	body, hdr, status, err = c.do(ctx, target, &replay{cookies: cookies, userAgent: ua})
 	if err != nil {
-		return nil, nil, fmt.Errorf("fetch %s: replay after solve failed: %w", target, err)
+		return nil, nil, fmt.Errorf("fetch %s: replay after solve failed: %w", redactedTarget, config.RedactError(err))
 	}
 	if status != http.StatusOK {
-		return nil, nil, fmt.Errorf("fetch %s: unexpected status %d", target, status)
+		return nil, nil, fmt.Errorf("fetch %s: unexpected status %d", redactedTarget, status)
 	}
 	c.maybeCache(target, status, body, hdr)
 	return body, hdr, nil
@@ -213,14 +276,14 @@ func (c *Client) do(ctx context.Context, target string, r *replay) ([]byte, http
 			continue
 		}
 		body, rerr := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if rerr != nil {
 			lastErr = rerr
 			continue
 		}
 		return body, resp.Header, resp.StatusCode, nil
 	}
-	return nil, nil, 0, lastErr
+	return nil, nil, 0, config.RedactError(lastErr)
 }
 
 // isCloudflareChallenge detects the JS interstitial / managed-challenge page.

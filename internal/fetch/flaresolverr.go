@@ -66,7 +66,7 @@ func (c *Client) solveCloudflare(ctx context.Context, target string) (cookieHead
 	if err != nil {
 		return "", "", fmt.Errorf("call flaresolverr: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var fr fsResponse
 	if err := json.NewDecoder(resp.Body).Decode(&fr); err != nil {

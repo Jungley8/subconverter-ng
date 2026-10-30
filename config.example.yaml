@@ -1,12 +1,17 @@
 # subconverter-ng application config (all fields optional).
 # Per-request behaviour is driven by URL parameters; this file only sets the
 # server defaults. Environment variables override these:
-#   SUBNG_LISTEN, SUBNG_PROXY, SUBNG_FLARESOLVERR_URL, SUBNG_USER_AGENT,
-#   SUBNG_CACHE_TTL, SUBNG_RATELIMIT_ENABLED, SUBNG_RATELIMIT_RPM, SUBNG_RATELIMIT_BURST,
-#   SUBNG_INSERT_URLS (comma-separated), SUBNG_INSERT_PREPEND, SUBNG_INSERT_ENABLED,
-#   SUBNG_DEFAULT_CONFIG_URL
+#   SUBNG_LISTEN, SUBNG_API_ACCESS_TOKEN, SUBNG_PROXY, SUBNG_FLARESOLVERR_URL,
+#   SUBNG_USER_AGENT, SUBNG_CACHE_TTL, SUBNG_ALLOW_PRIVATE_IPS,
+#   SUBNG_RATELIMIT_ENABLED, SUBNG_RATELIMIT_RPM, SUBNG_RATELIMIT_BURST,
+#   SUBNG_TRUSTED_PROXIES (comma-separated), SUBNG_INSERT_URLS (comma-separated),
+#   SUBNG_INSERT_PREPEND, SUBNG_INSERT_ENABLED, SUBNG_DEFAULT_CONFIG_URL
 
 listen: ":25500"
+
+# Optional API access token protecting /sub and /flushcache. When set, clients
+# must provide this token via ?token=, Authorization: Bearer <token>, or X-API-Token.
+api_access_token: ""
 
 # Default external INI config (the &config= groups/rules source, remote URL only)
 # used when a /sub request omits &config=. An explicit &config= param always
@@ -38,11 +43,14 @@ fetch:
   # clears it entirely.
   cache_ttl: 300s
 
+  # SSRF protection: block private/loopback/link-local/multicast IP addresses
+  # and prevent DNS rebinding or internal redirects. Set to true only in private
+  # lab environments where upstream airports run on private networks.
+  allow_private_ips: false
+
 # Per-client-IP rate limiting for the /sub endpoint. Each /sub request fans out
 # into many upstream fetches, so this protects the instance from abuse. Only
-# /sub is throttled; /version and the web UI are never limited. The client IP is
-# taken from X-Forwarded-For (first hop) or X-Real-IP when present (for setups
-# behind Cloudflare / nginx), otherwise the connection's remote address.
+# /sub is throttled; /version and the web UI are never limited.
 ratelimit:
   # When false, the limiter is disabled entirely (no-op pass-through).
   enabled: true
@@ -55,6 +63,17 @@ ratelimit:
   # before the per-minute rate applies. Generous enough for normal client
   # refreshes from a personal instance.
   burst: 10
+
+  # Trusted reverse proxy IP addresses or CIDR blocks. Reverse proxy headers
+  # (X-Forwarded-For and X-Real-IP) are trusted ONLY when the request connection
+  # originates from one of these addresses. If empty, reverse proxy headers are
+  # ignored to prevent client IP spoofing.
+  trusted_proxies: []
+  #  - "127.0.0.1/32"
+  #  - "10.0.0.0/8"
+  #  - "172.16.0.0/12"
+  #  - "192.168.0.0/16"
+  #  - "::1/128"
 
 # insert_url: extra node sources merged into every conversion (subconverter's
 # insert_url). Useful for pinning your own relay/landing nodes ahead of the

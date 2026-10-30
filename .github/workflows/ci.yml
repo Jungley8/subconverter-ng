@@ -19,11 +19,22 @@ jobs:
           go-version: "1.27.x"
           cache: true
 
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+
       - name: go vet
         run: go vet ./...
 
-      - name: Test with coverage
-        run: go test -count=1 -coverpkg=./... -coverprofile=coverage.out ./...
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Run govulncheck
+        run: govulncheck ./...
+
+      - name: Test with race detector and coverage
+        run: go test -race -count=1 -coverpkg=./... -coverprofile=coverage.out ./...
 
       - name: Enforce coverage threshold (>= 80%)
         run: |

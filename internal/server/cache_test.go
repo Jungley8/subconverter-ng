@@ -26,9 +26,9 @@ func countingAirport(subHits *int32) *httptest.Server {
 	mux.HandleFunc("/sub.txt", func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(subHits, 1)
 		w.Header().Set("Subscription-Userinfo", "upload=1; download=2; total=3; expire=4")
-		w.Write([]byte(sub))
+		_, _ = w.Write([]byte(sub))
 	})
-	mux.HandleFunc("/config.init", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(ini)) })
+	mux.HandleFunc("/config.init", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(ini)) })
 	return httptest.NewServer(mux)
 }
 
@@ -42,7 +42,7 @@ func TestHandleSub_PassesSubscriptionUserinfo(t *testing.T) {
 	air := countingAirport(&hits)
 	defer air.Close()
 
-	h := New(config.Default()).Handler()
+	h := New(testConfig()).Handler()
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, subURL("/sub", air.URL, ""), nil))
 
@@ -60,7 +60,7 @@ func TestHandleSub_CacheReusesSubscription(t *testing.T) {
 	air := countingAirport(&hits)
 	defer air.Close()
 
-	h := New(config.Default()).Handler() // caching on by default
+	h := New(testConfig()).Handler() // caching on by default
 	for i := 0; i < 2; i++ {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, subURL("/sub", air.URL, ""), nil))
@@ -78,7 +78,7 @@ func TestHandleSub_NoCacheBypasses(t *testing.T) {
 	air := countingAirport(&hits)
 	defer air.Close()
 
-	h := New(config.Default()).Handler()
+	h := New(testConfig()).Handler()
 	// Warm the cache.
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, subURL("/sub", air.URL, ""), nil))
@@ -95,7 +95,7 @@ func TestHandleSub_FlushCacheParam(t *testing.T) {
 	air := countingAirport(&hits)
 	defer air.Close()
 
-	h := New(config.Default()).Handler()
+	h := New(testConfig()).Handler()
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, subURL("/sub", air.URL, ""), nil))
 	// flushcache=1 clears before serving -> origin hit again.
@@ -111,7 +111,7 @@ func TestHandleFlushCacheEndpoint(t *testing.T) {
 	air := countingAirport(&hits)
 	defer air.Close()
 
-	srv := New(config.Default())
+	srv := New(testConfig())
 	h := srv.Handler()
 	// Warm the cache.
 	rec := httptest.NewRecorder()

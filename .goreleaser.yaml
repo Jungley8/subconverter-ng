@@ -7,7 +7,8 @@ before:
     - go mod tidy
 
 builds:
-  - main: ./cmd/subconverter-ng
+  - id: default
+    main: ./cmd/subconverter-ng
     binary: subconverter-ng
     env:
       - CGO_ENABLED=0
@@ -23,9 +24,29 @@ builds:
       - amd64
       - arm64
 
+  - id: routers
+    main: ./cmd/subconverter-ng
+    binary: subconverter-ng
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+    goos:
+      - linux
+    goarch:
+      - arm
+      - mips
+      - mipsle
+    goarm:
+      - "7"
+    gomips:
+      - softfloat
+
 archives:
   - formats: [tar.gz]
-    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ with .Arm }}v{{ . }}{{ end }}{{ with .Mips }}_{{ . }}{{ end }}"
     format_overrides:
       - goos: windows
         formats: [zip]

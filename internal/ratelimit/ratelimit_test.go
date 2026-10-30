@@ -44,8 +44,11 @@ func TestRefillsOverTime(t *testing.T) {
 	l := New(60, 2) // 1 token/sec, burst 2
 	l.now = clk.now
 
-	if !l.Allow("a") || !l.Allow("a") {
-		t.Fatal("first two requests should be allowed")
+	if !l.Allow("a") {
+		t.Fatal("first request should be allowed")
+	}
+	if !l.Allow("a") {
+		t.Fatal("second request should be allowed")
 	}
 	if l.Allow("a") {
 		t.Fatal("third request should be denied (bucket empty)")
@@ -122,8 +125,11 @@ func TestZeroRateNoRefill(t *testing.T) {
 	l := New(0, 2) // no refill, burst 2
 	l.now = clk.now
 
-	if !l.Allow("a") || !l.Allow("a") {
-		t.Fatal("first two should pass")
+	if !l.Allow("a") {
+		t.Fatal("first request should pass")
+	}
+	if !l.Allow("a") {
+		t.Fatal("second request should pass")
 	}
 	clk.advance(time.Hour)
 	if l.Allow("a") {

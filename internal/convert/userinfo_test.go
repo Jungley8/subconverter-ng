@@ -17,7 +17,7 @@ type metaFetcher struct {
 }
 
 func (m metaFetcher) GetWithMeta(ctx context.Context, url string) ([]byte, http.Header, error) {
-	body, err := m.fakeFetcher.Get(ctx, url)
+	body, err := m.Get(ctx, url)
 	if err != nil {
 		return nil, nil, err
 	}

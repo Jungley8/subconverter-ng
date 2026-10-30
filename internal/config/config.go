@@ -22,14 +22,20 @@ type Fetch struct {
 	// (subscriptions + rulesets), keyed by URL. Default 300s when zero. Set to a
 	// negative value to disable caching.
 	CacheTTL time.Duration `yaml:"cache_ttl"`
+
+	// AllowPrivateIPs controls SSRF protection. By default (false), requests to
+	// private, loopback, multicast, or link-local IPs are blocked, and redirects
+	// to them are rejected.
+	AllowPrivateIPs bool `yaml:"allow_private_ips"`
 }
 
 // RateLimit configures per-client-IP rate limiting on the expensive /sub
 // endpoint. When Enabled is false the limiter is a no-op pass-through.
 type RateLimit struct {
-	Enabled           bool `yaml:"enabled"`
-	RequestsPerMinute int  `yaml:"requests_per_minute"`
-	Burst             int  `yaml:"burst"`
+	Enabled           bool     `yaml:"enabled"`
+	RequestsPerMinute int      `yaml:"requests_per_minute"`
+	Burst             int      `yaml:"burst"`
+	TrustedProxies    []string `yaml:"trusted_proxies"` // CIDRs or IPs of reverse proxies whose XFF/X-Real-IP are trusted
 }
 
 // Insert configures the insert_url feature: a fixed set of node URLs the server
@@ -43,10 +49,11 @@ type Insert struct {
 }
 
 type Config struct {
-	Listen    string    `yaml:"listen"`
-	Fetch     Fetch     `yaml:"fetch"`
-	RateLimit RateLimit `yaml:"ratelimit"`
-	Insert    Insert    `yaml:"insert"`
+	Listen         string    `yaml:"listen"`
+	APIAccessToken string    `yaml:"api_access_token"` // optional token protecting /sub and /flushcache
+	Fetch          Fetch     `yaml:"fetch"`
+	RateLimit      RateLimit `yaml:"ratelimit"`
+	Insert         Insert    `yaml:"insert"`
 
 	// DefaultConfigURL is the remote external INI config (the &config=
 	// groups/rules source) used when a /sub request omits &config=. URL only.
@@ -153,6 +160,23 @@ func applyEnv(cfg *Config) {
 		if b, err := parseBool(v); err == nil {
 			cfg.Insert.Enabled = b
 		}
+	}
+	if v := os.Getenv("SUBNG_API_ACCESS_TOKEN"); v != "" {
+		cfg.APIAccessToken = v
+	}
+	if v := os.Getenv("SUBNG_ALLOW_PRIVATE_IPS"); v != "" {
+		if b, err := parseBool(v); err == nil {
+			cfg.Fetch.AllowPrivateIPs = b
+		}
+	}
+	if v := os.Getenv("SUBNG_TRUSTED_PROXIES"); v != "" {
+		var proxies []string
+		for _, p := range strings.Split(v, ",") {
+			if p = strings.TrimSpace(p); p != "" {
+				proxies = append(proxies, p)
+			}
+		}
+		cfg.RateLimit.TrustedProxies = proxies
 	}
 	if v := strings.TrimSpace(os.Getenv("SUBNG_DEFAULT_CONFIG_URL")); v != "" {
 		cfg.DefaultConfigURL = v

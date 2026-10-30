@@ -1,9 +1,38 @@
 package config
 
 import (
+	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 )
+
+var urlRegex = regexp.MustCompile(`https?://[^\s"'<>]+`)
+
+// RedactString finds any HTTP/HTTPS URLs embedded within s and redacts their secrets.
+func RedactString(s string) string {
+	return urlRegex.ReplaceAllStringFunc(s, func(raw string) string {
+		suffix := ""
+		for len(raw) > 0 {
+			last := raw[len(raw)-1]
+			if last == ':' || last == ',' || last == '.' || last == ';' || last == ')' || last == ']' {
+				suffix = string(last) + suffix
+				raw = raw[:len(raw)-1]
+			} else {
+				break
+			}
+		}
+		return RedactURL(raw) + suffix
+	})
+}
+
+// RedactError returns an error whose message has secrets and tokens in URLs redacted.
+func RedactError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return errors.New(RedactString(err.Error()))
+}
 
 // RedactURL returns a display-safe form of a URL for logging. It masks the
 // password in any user:pass@ credential and replaces every query-parameter
@@ -146,8 +175,19 @@ func (c *Config) Summary() string {
 		fmt.Fprintf(&b, "  fetch cache:    %s\n", c.Fetch.CacheTTL)
 	}
 
+	if c.APIAccessToken != "" {
+		b.WriteString("  api token:      configured\n")
+	}
+
+	if c.Fetch.AllowPrivateIPs {
+		b.WriteString("  private ips:    allowed (SSRF protection off)\n")
+	}
+
 	if c.RateLimit.Enabled {
 		fmt.Fprintf(&b, "  rate limit:     %d/min, burst %d\n", c.RateLimit.RequestsPerMinute, c.RateLimit.Burst)
+		if len(c.RateLimit.TrustedProxies) > 0 {
+			fmt.Fprintf(&b, "  trusted proxies: %s\n", strings.Join(c.RateLimit.TrustedProxies, ", "))
+		}
 	} else {
 		b.WriteString("  rate limit:     disabled\n")
 	}
