@@ -4,6 +4,10 @@
 package config
 
 import (
+	"errors"
+	"fmt"
+	"net/netip"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -106,7 +110,60 @@ func Load(path string) (*Config, error) {
 	if cfg.RateLimit.Burst == 0 {
 		cfg.RateLimit.Burst = 10
 	}
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
 	return cfg, nil
+}
+
+// Validate checks for configuration errors and enforces fail-closed guarantees.
+func (c *Config) Validate() error {
+	if strings.TrimSpace(c.Listen) == "" {
+		return errors.New("config: listen address cannot be empty")
+	}
+	if c.Fetch.Timeout < 0 {
+		return errors.New("config: fetch.timeout cannot be negative")
+	}
+	if c.RateLimit.RequestsPerMinute < 0 {
+		return errors.New("config: ratelimit.requests_per_minute cannot be negative")
+	}
+	if c.RateLimit.Burst < 0 {
+		return errors.New("config: ratelimit.burst cannot be negative")
+	}
+	for _, raw := range c.RateLimit.TrustedProxies {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" {
+			continue
+		}
+		if _, err := netip.ParsePrefix(trimmed); err != nil {
+			if _, err := netip.ParseAddr(trimmed); err != nil {
+				return fmt.Errorf("config: invalid trusted_proxies entry %q: must be valid IP or CIDR", raw)
+			}
+		}
+	}
+	if c.Fetch.Proxy != "" {
+		u, err := url.Parse(c.Fetch.Proxy)
+		if err != nil {
+			return fmt.Errorf("config: invalid fetch.proxy: %w", err)
+		}
+		scheme := strings.ToLower(u.Scheme)
+		if scheme != "http" && scheme != "https" && scheme != "socks5" && scheme != "socks5h" {
+			return fmt.Errorf("config: unsupported scheme %q for fetch.proxy (must be http, https, socks5, or socks5h)", scheme)
+		}
+	}
+	if c.Fetch.FlareSolverrURL != "" {
+		u, err := url.Parse(c.Fetch.FlareSolverrURL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+			return fmt.Errorf("config: invalid fetch.flaresolverr_url %q", c.Fetch.FlareSolverrURL)
+		}
+	}
+	if c.DefaultConfigURL != "" {
+		u, err := url.Parse(c.DefaultConfigURL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+			return fmt.Errorf("config: invalid default_config_url %q", c.DefaultConfigURL)
+		}
+	}
+	return nil
 }
 
 func applyEnv(cfg *Config) {

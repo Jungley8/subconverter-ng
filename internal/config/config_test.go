@@ -202,3 +202,65 @@ func TestCacheTTLFromFileAndEnv(t *testing.T) {
 		t.Errorf("cache_ttl from env = %v, want 45s", c.Fetch.CacheTTL)
 	}
 }
+
+func TestConfig_Validate(t *testing.T) {
+	// 1. Default config is valid
+	cfg := Default()
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("default config should be valid: %v", err)
+	}
+
+	// 2. Empty listen address
+	cfg.Listen = ""
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for empty listen address")
+	}
+	cfg.Listen = ":25500"
+
+	// 3. Negative timeout
+	cfg.Fetch.Timeout = -1
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for negative timeout")
+	}
+	cfg.Fetch.Timeout = 30 * time.Second
+
+	// 4. Negative rate limit
+	cfg.RateLimit.RequestsPerMinute = -1
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for negative RPM")
+	}
+	cfg.RateLimit.RequestsPerMinute = 30
+
+	// 5. Invalid trusted proxy
+	cfg.RateLimit.TrustedProxies = []string{"10.0.0.0/8", "not-an-ip-or-cidr"}
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for invalid trusted proxy")
+	}
+	cfg.RateLimit.TrustedProxies = []string{"10.0.0.0/8", "192.168.1.1"}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("valid trusted proxies failed: %v", err)
+	}
+
+	// 6. Invalid proxy scheme
+	cfg.Fetch.Proxy = "ftp://proxy.com"
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for ftp proxy scheme")
+	}
+	cfg.Fetch.Proxy = "socks5://proxy.com:1080"
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("socks5 proxy scheme should be valid: %v", err)
+	}
+
+	// 7. Invalid flaresolverr URL
+	cfg.Fetch.FlareSolverrURL = "ftp://flaresolverr:8191"
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for non-http flaresolverr url")
+	}
+	cfg.Fetch.FlareSolverrURL = "http://flaresolverr:8191/v1"
+
+	// 8. Invalid default config URL
+	cfg.DefaultConfigURL = "://bad"
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for bad default config url")
+	}
+}

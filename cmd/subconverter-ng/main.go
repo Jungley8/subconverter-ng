@@ -89,6 +89,9 @@ func cmdServe(args []string) {
 	if *listen != "" {
 		cfg.Listen = *listen
 	}
+	if err := cfg.Validate(); err != nil {
+		fatal("invalid config: %v", err)
+	}
 
 	srv := newHTTPServer(cfg)
 	fmt.Printf("subconverter-ng %s\n", version)
@@ -162,16 +165,14 @@ func (f *cliFetcher) GetWithMeta(ctx context.Context, target string) ([]byte, ht
 		return data, nil, nil
 	}
 
-	// Check if target is not a URL but an existing local file or relative path
+	// If target is not a URL, treat it as a local file path
 	isURL := strings.HasPrefix(strings.ToLower(target), "http://") || strings.HasPrefix(strings.ToLower(target), "https://")
 	if !isURL {
 		data, err := os.ReadFile(target)
-		if err == nil {
-			return data, nil, nil
-		}
-		if strings.HasPrefix(target, "./") || strings.HasPrefix(target, "../") || strings.HasPrefix(target, "/") {
+		if err != nil {
 			return nil, nil, fmt.Errorf("read file %s: %w", target, err)
 		}
+		return data, nil, nil
 	}
 
 	if mf, ok := f.remote.(convert.MetaFetcher); ok {
@@ -223,7 +224,7 @@ func cmdConvert(args []string) {
 		CacheTTL:        *cacheTTL,
 	})
 	if err != nil {
-		fatal("fetch client: %v", err)
+		fatal("fetch client: %v", config.RedactError(err))
 	}
 
 	client := newCLIFetcher(remoteClient)
@@ -252,7 +253,7 @@ func cmdConvert(args []string) {
 	defer cancel()
 	data, diag, err := convert.Run(ctx, client, req)
 	if err != nil {
-		fatal("convert: %v", err)
+		fatal("convert: %v", config.RedactError(err))
 	}
 	fmt.Fprintf(os.Stderr, "ok: %d nodes, %d unparsed lines, %d dup, %d deprecated, %d nodes unsupported by target, %d empty groups, %d rules dropped (unsupported type)\n",
 		diag.NodeCount, len(diag.SkippedLines), diag.Duplicates, diag.Deprecated, len(diag.SkippedNodes), len(diag.EmptyGroups), len(diag.SkippedRules))

@@ -7,7 +7,10 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Jungley8/subconverter-ng/internal/config"
 	"gopkg.in/yaml.v3"
@@ -584,4 +587,84 @@ func TestHandleSub_RedactsTokenInErrorResponse(t *testing.T) {
 	if !strings.Contains(body, "token=***") {
 		t.Errorf("expected token=*** in redacted body, got:\n%s", body)
 	}
+}
+
+func TestHandleSub_ProxyParamSSRFBlocked(t *testing.T) {
+	air := fakeAirport()
+	defer air.Close()
+
+	// Default config has AllowPrivateIPs: false
+	h := New(config.Default()).Handler()
+
+	blockedProxies := []string{
+		"http://127.0.0.1:8080",
+		"http://localhost:8080",
+		"http://sub.localhost:8080",
+		"http://169.254.169.254:80",
+		"http://10.0.0.1:8080",
+		"http://0.0.0.1:8080",
+		"socks5://192.168.1.1:1080",
+	}
+
+	for _, proxy := range blockedProxies {
+		target := "/sub?target=clash&url=" + url.QueryEscape(air.URL+"/sub.txt") +
+			"&proxy=" + url.QueryEscape(proxy)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("proxy=%q: code = %d, want 400 Bad Request", proxy, rec.Code)
+		}
+		if !strings.Contains(rec.Body.String(), "invalid proxy parameter") {
+			t.Errorf("proxy=%q: body = %q, want invalid proxy parameter mention", proxy, rec.Body.String())
+		}
+	}
+}
+
+func TestHandleSub_SingleFlightAcrossRequests(t *testing.T) {
+	var requestCount atomic.Int32
+	subContent := b64("ss://" + b64("aes-256-gcm:pw") + "@1.1.1.1:8388#Node1\n")
+	air := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount.Add(1)
+		time.Sleep(50 * time.Millisecond) // simulate work
+		_, _ = w.Write([]byte(subContent))
+	}))
+	defer air.Close()
+
+	cfg := testConfig()
+	cfg.Fetch.CacheTTL = -1 // disable cache to isolate singleflight deduplication
+	h := New(cfg).Handler()
+
+	concurrency := 6
+	var wg sync.WaitGroup
+	wg.Add(concurrency)
+
+	target := "/sub?target=clash&url=" + url.QueryEscape(air.URL+"/sub.txt")
+
+	for i := 0; i < concurrency; i++ {
+		go func() {
+			defer wg.Done()
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
+			if rec.Code != http.StatusOK {
+				t.Errorf("request status = %d, body = %s", rec.Code, rec.Body.String())
+			}
+		}()
+	}
+	wg.Wait()
+
+	if got := requestCount.Load(); got != 1 {
+		t.Errorf("singleflight across server requests: upstream requestCount = %d, want 1", got)
+	}
+}
+
+func TestServer_InvalidTrustedProxiesPanics(t *testing.T) {
+	cfg := config.Default()
+	cfg.RateLimit.TrustedProxies = []string{"10.0.0.1/bad-cidr"}
+
+	defer func() {
+		if r := recover(); r == nil {
+			t.Errorf("expected server.New to panic on invalid trusted proxy, but did not")
+		}
+	}()
+	_ = New(cfg)
 }

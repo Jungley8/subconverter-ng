@@ -2,6 +2,7 @@ package fetch
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -34,7 +35,10 @@ func TestNew_FallsBackToEnvProxy(t *testing.T) {
 	}
 
 	// And an explicit proxy overrides it with a fixed URL.
-	c2, _ := New(Options{Proxy: "http://127.0.0.1:7890"})
+	c2, err := New(Options{Proxy: "http://127.0.0.1:7890", TrustedProxy: "http://127.0.0.1:7890"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	tr2 := c2.http.Transport.(*http.Transport)
 	req, _ := http.NewRequest(http.MethodGet, "http://example.com", nil)
 	u, err := tr2.Proxy(req)
@@ -187,6 +191,10 @@ func TestSSRF_DefenseBlocksPrivateAndLoopback(t *testing.T) {
 	targets := []string{
 		"http://127.0.0.1:8080/sub",
 		"http://localhost:8080/sub",
+		"http://sub.localhost:8080/sub",
+		"http://internal.local:8080/sub",
+		"http://0.0.0.1:8080/sub",
+		"http://255.255.255.255:8080/sub",
 		"http://10.0.0.1:8080/sub",
 		"http://192.168.1.1:8080/sub",
 		"http://172.16.0.1:8080/sub",
@@ -204,24 +212,75 @@ func TestSSRF_DefenseBlocksPrivateAndLoopback(t *testing.T) {
 }
 
 func TestSSRF_RedirectBlocked(t *testing.T) {
-	// A public mock server that tries to redirect to loopback
+	// 1. Direct unit test of safeCheckRedirect func
+	check := safeCheckRedirect(false)
+	via := []*http.Request{{}}
+
+	blockedRedirects := []string{
+		"http://127.0.0.1:80/secret",
+		"http://localhost:80/secret",
+		"http://sub.localhost:80/secret",
+		"http://10.0.0.1:80/secret",
+		"http://192.168.1.1:80/secret",
+		"http://169.254.169.254/latest",
+		"http://[::1]:80/secret",
+		"ftp://example.com/file",
+	}
+
+	for _, target := range blockedRedirects {
+		req, err := http.NewRequest(http.MethodGet, target, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := check(req, via); err == nil {
+			t.Errorf("expected redirect to %s to be blocked, got nil", target)
+		} else if !errors.Is(err, ErrBlockedRedirect) {
+			t.Errorf("redirect to %s error = %v, want %v", target, err, ErrBlockedRedirect)
+		}
+	}
+
+	// 2. Integration test via http.Client with custom transport allowing initial hop
+	var redirectHandlerCalled atomic.Bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "http://127.0.0.1:80/secret", http.StatusFound)
+		redirectHandlerCalled.Store(true)
+		http.Redirect(w, r, "http://127.0.0.1:9999/secret", http.StatusFound)
 	}))
 	defer srv.Close()
 
-	// Configure client with AllowPrivateIPs: false
-	c, err := New(Options{AllowPrivateIPs: false})
-	if err != nil {
-		t.Fatal(err)
+	httpClient := &http.Client{
+		CheckRedirect: safeCheckRedirect(false),
 	}
-
-	_, err = c.Get(context.Background(), srv.URL)
+	req, _ := http.NewRequest(http.MethodGet, srv.URL, nil)
+	_, err := httpClient.Do(req)
 	if err == nil {
 		t.Fatal("expected SSRF redirect error, got nil")
 	}
-	if !strings.Contains(err.Error(), "SSRF") {
-		t.Errorf("error = %q, expected SSRF mention", err)
+	if !redirectHandlerCalled.Load() {
+		t.Fatal("expected mock server to be invoked before redirect")
+	}
+	if !strings.Contains(err.Error(), "redirect to private/loopback address blocked") {
+		t.Errorf("error = %q, expected redirect blocked mention", err)
+	}
+}
+
+func TestSSRF_UntrustedProxyBlocked(t *testing.T) {
+	// Attempt to configure untrusted private proxy when AllowPrivateIPs is false
+	_, err := New(Options{
+		Proxy:           "http://127.0.0.1:8080",
+		AllowPrivateIPs: false,
+	})
+	if err == nil {
+		t.Fatal("expected error for untrusted loopback proxy")
+	}
+
+	// Operator's explicitly trusted proxy is allowed
+	_, err = New(Options{
+		Proxy:           "http://127.0.0.1:8080",
+		TrustedProxy:    "http://127.0.0.1:8080",
+		AllowPrivateIPs: false,
+	})
+	if err != nil {
+		t.Fatalf("trusted proxy should be allowed: %v", err)
 	}
 }
 

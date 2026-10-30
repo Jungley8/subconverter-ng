@@ -21,19 +21,25 @@ import (
 	"github.com/Jungley8/subconverter-ng/internal/generator"
 	"github.com/Jungley8/subconverter-ng/internal/ratelimit"
 	"github.com/Jungley8/subconverter-ng/internal/web"
+	"golang.org/x/sync/singleflight"
 )
 
 // Server wires the HTTP handlers to the application config.
 type Server struct {
 	cfg          *config.Config
-	version      string       // build version, surfaced by GET /version; "dev" when unset
-	cache        *fetch.Cache // shared across requests so the TTL cache survives; nil when caching disabled
+	version      string              // build version, surfaced by GET /version; "dev" when unset
+	cache        *fetch.Cache        // shared across requests so the TTL cache survives; nil when caching disabled
+	group        *singleflight.Group // shared singleflight request deduplicator across requests
 	trustedCIDRs []netip.Prefix
 	trustedIPs   []netip.Addr
 }
 
 func New(cfg *config.Config) *Server {
-	s := &Server{cfg: cfg, version: "dev"}
+	s := &Server{
+		cfg:     cfg,
+		version: "dev",
+		group:   new(singleflight.Group),
+	}
 	// A shared cache lives on the Server so repeated /sub requests reuse cached
 	// ruleset/subscription fetches. CacheTTL < 0 disables caching entirely.
 	if cfg.Fetch.CacheTTL >= 0 {
@@ -49,6 +55,9 @@ func New(cfg *config.Config) *Server {
 			s.trustedCIDRs = append(s.trustedCIDRs, prefix)
 		} else if addr, err := netip.ParseAddr(raw); err == nil {
 			s.trustedIPs = append(s.trustedIPs, addr)
+		} else {
+			// Fail-closed on invalid configuration per Pre-v1.0 architecture rules
+			panic(fmt.Sprintf("server: invalid trusted_proxies entry %q", raw))
 		}
 	}
 	return s
@@ -226,12 +235,22 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 
 	// Build a fetch client, allowing a per-request &proxy= override of the
 	// configured upstream proxy.
+	userProxy := q.Get("proxy")
+	if userProxy != "" && !s.cfg.Fetch.AllowPrivateIPs {
+		if err := fetch.ValidateProxyURL(userProxy, false); err != nil {
+			http.Error(w, "invalid proxy parameter: "+config.RedactString(err.Error()), http.StatusBadRequest)
+			return
+		}
+	}
+
 	opts := fetch.Options{
 		UserAgent:       s.cfg.Fetch.UserAgent,
-		Proxy:           firstNonEmpty(q.Get("proxy"), s.cfg.Fetch.Proxy),
+		Proxy:           firstNonEmpty(userProxy, s.cfg.Fetch.Proxy),
+		TrustedProxy:    s.cfg.Fetch.Proxy,
 		FlareSolverrURL: s.cfg.Fetch.FlareSolverrURL,
 		Timeout:         s.cfg.Fetch.Timeout,
 		AllowPrivateIPs: s.cfg.Fetch.AllowPrivateIPs,
+		Group:           s.group,
 	}
 	if noCache || s.cache == nil {
 		opts.CacheTTL = -1 // disable caching for this request
@@ -241,7 +260,7 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 	}
 	client, err := fetch.New(opts)
 	if err != nil {
-		http.Error(w, "fetch client: "+config.RedactString(err.Error()), http.StatusInternalServerError)
+		http.Error(w, "fetch client: "+config.RedactString(err.Error()), http.StatusBadRequest)
 		return
 	}
 

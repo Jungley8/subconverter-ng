@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Jungley8/subconverter-ng/internal/config"
@@ -87,5 +88,14 @@ func TestCLIFetcher_LocalFileAndStdin(t *testing.T) {
 	}
 	if string(gotStdin) != "stdin-content" {
 		t.Errorf("got %q, want %q", gotStdin, "stdin-content")
+	}
+
+	// Non-existent file error
+	_, err = cf.Get(ctx, "non_existent_file.txt")
+	if err == nil {
+		t.Fatal("expected error for non-existent file, got nil")
+	}
+	if !strings.Contains(err.Error(), "read file non_existent_file.txt:") {
+		t.Errorf("error = %q, expected read file prefix", err)
 	}
 }

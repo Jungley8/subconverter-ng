@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-var urlRegex = regexp.MustCompile(`https?://[^\s"'<>]+`)
+var urlRegex = regexp.MustCompile(`(?:https?|socks5h?|file)://[^\s"'<>]+`)
 
 // RedactString finds any HTTP/HTTPS URLs embedded within s and redacts their secrets.
 func RedactString(s string) string {
