@@ -118,6 +118,14 @@ func TestRedactStringAndError(t *testing.T) {
 	if strings.Contains(err.Error(), "pass") || strings.Contains(err.Error(), "123") {
 		t.Fatalf("RedactError leaked credentials: %v", err)
 	}
+
+	socksErr := RedactError(errors.New("dial socks5://myuser:mypassword@proxy.host:1080: connect refused"))
+	if strings.Contains(socksErr.Error(), "mypassword") {
+		t.Fatalf("RedactError leaked socks5 password: %v", socksErr)
+	}
+	if !strings.Contains(socksErr.Error(), "socks5://myuser:***@proxy.host:1080") {
+		t.Errorf("socks5 creds not redacted properly: %v", socksErr)
+	}
 }
 
 func TestSummaryNewFields(t *testing.T) {

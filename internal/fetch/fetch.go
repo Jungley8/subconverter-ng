@@ -50,6 +50,16 @@ type Options struct {
 	// private, loopback, multicast, or link-local IPs are blocked, and redirects
 	// to them are rejected.
 	AllowPrivateIPs bool
+
+	// Group, when non-nil, is a shared singleflight.Group injected by the caller
+	// (e.g. the HTTP server reuses one group across per-request Clients). When
+	// nil, New creates a per-Client singleflight.Group.
+	Group *singleflight.Group
+
+	// TrustedProxy, when non-empty, is the operator's explicitly configured
+	// upstream proxy from server config. When opts.Proxy matches TrustedProxy,
+	// dialing the proxy is permitted even when AllowPrivateIPs is false.
+	TrustedProxy string
 }
 
 // Client fetches URLs applying the configured access strategy.
@@ -57,7 +67,7 @@ type Client struct {
 	opts  Options
 	http  *http.Client
 	cache *Cache // nil when caching is disabled
-	group singleflight.Group
+	group *singleflight.Group
 }
 
 const defaultUA = "clash.meta/1.18.0 mihomo/1.18.0"
@@ -89,7 +99,7 @@ func New(opts Options) (*Client, error) {
 		KeepAlive: 30 * time.Second,
 	}
 
-	var proxyHost string
+	var trustedProxyHost string
 	if opts.Proxy != "" {
 		// An explicit proxy (config / SUBNG_PROXY / --proxy / &proxy=) wins and
 		// also gets forwarded to FlareSolverr so the egress stays consistent.
@@ -101,15 +111,29 @@ func New(opts Options) (*Client, error) {
 		if strings.EqualFold(pu.Scheme, "socks5h") {
 			pu.Scheme = "socks5"
 		}
+		// If SSRF protection is active and this proxy was NOT the operator's explicitly
+		// trusted proxy, validate that the proxy itself does not target private IPs.
+		if !opts.AllowPrivateIPs && (opts.TrustedProxy == "" || opts.Proxy != opts.TrustedProxy) {
+			if err := ValidateProxyURL(opts.Proxy, false); err != nil {
+				return nil, fmt.Errorf("proxy URL blocked by SSRF defense: %w", err)
+			}
+		}
 		tr.Proxy = http.ProxyURL(pu)
-		proxyHost = pu.Hostname()
+		if opts.TrustedProxy != "" && opts.Proxy == opts.TrustedProxy {
+			trustedProxyHost = pu.Hostname()
+		}
 	} else {
 		// Otherwise honour the standard HTTP_PROXY / HTTPS_PROXY / NO_PROXY
 		// (and lowercase) environment variables, like every other Go HTTP tool.
 		tr.Proxy = http.ProxyFromEnvironment
 	}
 
-	tr.DialContext = safeDialContext(dialer, opts.AllowPrivateIPs, proxyHost)
+	tr.DialContext = safeDialContext(dialer, opts.AllowPrivateIPs, trustedProxyHost)
+
+	group := opts.Group
+	if group == nil {
+		group = new(singleflight.Group)
+	}
 
 	jar, _ := cookiejar.New(nil)
 	c := &Client{
@@ -120,6 +144,7 @@ func New(opts Options) (*Client, error) {
 			Jar:           jar,
 			CheckRedirect: safeCheckRedirect(opts.AllowPrivateIPs),
 		},
+		group: group,
 	}
 	// Wire up caching unless explicitly disabled (CacheTTL < 0).
 	if opts.CacheTTL >= 0 {
