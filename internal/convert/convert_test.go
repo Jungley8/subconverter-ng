@@ -485,3 +485,45 @@ func TestRun_TailscaleOption(t *testing.T) {
 		t.Errorf("rules[0..1] mismatch with tailscale option: %v", doc.Rules[:2])
 	}
 }
+
+func TestNormalizeTarget(t *testing.T) {
+	cases := map[string]string{
+		"clash":        TargetClash,
+		"CLASH":        TargetClash,
+		"clashmeta":    TargetClash,
+		"clash.meta":   TargetClash,
+		"clash-meta":   TargetClash,
+		"clash_meta":   TargetClash,
+		"mihomo":       TargetClash,
+		"singbox":      TargetSingbox,
+		"sing-box":     TargetSingbox,
+		"sing_box":     TargetSingbox,
+		"sb":           TargetSingbox,
+		"surge":        TargetSurge,
+		"surge2":       TargetSurge,
+		"surge3":       TargetSurge,
+		"surge4":       TargetSurge,
+		"surge5":       TargetSurge,
+		"shadowrocket": TargetShadowrocket,
+		"sr":           TargetShadowrocket,
+		"quanx":        TargetQuanX,
+		"quantumultx":  TargetQuanX,
+		"qx":           TargetQuanX,
+		"quantumult":   TargetQuanX,
+		"surfboard":    TargetSurge,
+		"loon":         TargetLoon,
+		"v2ray":        TargetV2Ray,
+		"v2rayn":       TargetV2Ray,
+		"v2rayng":      TargetV2Ray,
+		"mixed":        TargetV2Ray,
+		"ssr":          TargetV2Ray,
+		"trojan":       TargetV2Ray,
+	}
+
+	for input, want := range cases {
+		got := NormalizeTarget(input)
+		if got != want {
+			t.Errorf("NormalizeTarget(%q) = %q, want %q", input, got, want)
+		}
+	}
+}

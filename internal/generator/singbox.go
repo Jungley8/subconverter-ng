@@ -33,6 +33,16 @@ func GenerateSingbox(ctx context.Context, nodes []*proxy.Proxy, cfg *extconfig.C
 		allNames = append(allNames, n.Name)
 	}
 
+	// list=true: emit only the outbounds list
+	if opts.ListOnly {
+		b, err := json.MarshalIndent(map[string]any{"outbounds": outbounds}, "", "  ")
+		if err != nil {
+			return nil, err
+		}
+		res.Output = b
+		return res, nil
+	}
+
 	// Group outbounds (selector / urltest). Names of all groups so member refs to
 	// other groups survive the emitted-filter.
 	groupNames := map[string]bool{}
@@ -155,14 +165,16 @@ func singboxGroupOutbound(g groupOut, emitted, groupNames map[string]bool) map[s
 var singboxRuleField = map[string]string{
 	"DOMAIN": "domain", "DOMAIN-SUFFIX": "domain_suffix", "DOMAIN-KEYWORD": "domain_keyword",
 	"DOMAIN-REGEX": "domain_regex", "GEOSITE": "geosite", "GEOIP": "geoip",
-	"IP-CIDR": "ip_cidr", "IP-CIDR6": "ip_cidr", "DST-PORT": "port", "SRC-PORT": "source_port",
+	"IP-CIDR": "ip_cidr", "IP-CIDR6": "ip_cidr", "SRC-IP-CIDR": "source_ip_cidr",
+	"DST-PORT": "port", "SRC-PORT": "source_port", "IP-ASN": "ip_asn",
 	"PROCESS-NAME": "process_name",
 }
 
 // singboxRouteRule builds a single route rule object. ok is false for rule types
 // sing-box has no field for.
 func singboxRouteRule(r Rule, emitted, groupNames map[string]bool) (map[string]any, bool) {
-	field, ok := singboxRuleField[strings.ToUpper(r.Type)]
+	canon := normalizeRuleType(r.Type)
+	field, ok := singboxRuleField[canon]
 	if !ok {
 		return nil, false
 	}
@@ -171,6 +183,12 @@ func singboxRouteRule(r Rule, emitted, groupNames map[string]bool) (map[string]a
 	case "port", "source_port":
 		if p, err := strconv.Atoi(r.Value); err == nil {
 			rule[field] = []int{p}
+		} else {
+			return nil, false
+		}
+	case "ip_asn":
+		if asn, err := strconv.Atoi(r.Value); err == nil {
+			rule[field] = []int{asn}
 		} else {
 			return nil, false
 		}
@@ -190,11 +208,41 @@ func nodeSingboxOutbound(n *proxy.Proxy) (map[string]any, bool) {
 		"server":      cs(c, "server"),
 		"server_port": ci(c, "port"),
 	}
+	if cb(c, "tfo") {
+		switch n.Type {
+		case "ss", "vmess", "vless", "trojan", "socks5", "socks":
+			base["tcp_fast_open"] = true
+		}
+	}
+
 	switch n.Type {
 	case "ss":
 		base["type"] = "shadowsocks"
 		base["method"] = cs(c, "cipher")
 		base["password"] = cs(c, "password")
+		if cs(c, "plugin") == "obfs" {
+			o := cmap(c, "plugin-opts")
+			parts := []string{"obfs=" + cs(o, "mode")}
+			if h := cs(o, "host"); h != "" {
+				parts = append(parts, "obfs-host="+h)
+			}
+			base["plugin"] = "obfs-local"
+			base["plugin_opts"] = strings.Join(parts, ";")
+		} else if cs(c, "plugin") == "v2ray-plugin" {
+			o := cmap(c, "plugin-opts")
+			parts := []string{"mode=" + firstNonEmptyStr(cs(o, "mode"), "websocket")}
+			if cb(o, "tls") {
+				parts = append(parts, "tls")
+			}
+			if h := cs(o, "host"); h != "" {
+				parts = append(parts, "host="+h)
+			}
+			if p := cs(o, "path"); p != "" {
+				parts = append(parts, "path="+p)
+			}
+			base["plugin"] = "v2ray-plugin"
+			base["plugin_opts"] = strings.Join(parts, ";")
+		}
 		return base, true
 
 	case "vmess":
@@ -205,7 +253,7 @@ func nodeSingboxOutbound(n *proxy.Proxy) (map[string]any, bool) {
 		if t := singboxTransport(c); t != nil {
 			base["transport"] = t
 		}
-		if tls := singboxTLS(c, cs(c, "servername"), false); tls != nil {
+		if tls := singboxTLS(c, getSNI(c), false); tls != nil {
 			base["tls"] = tls
 		}
 		return base, true
@@ -219,7 +267,7 @@ func nodeSingboxOutbound(n *proxy.Proxy) (map[string]any, bool) {
 		if t := singboxTransport(c); t != nil {
 			base["transport"] = t
 		}
-		if tls := singboxTLS(c, cs(c, "servername"), false); tls != nil {
+		if tls := singboxTLS(c, getSNI(c), false); tls != nil {
 			base["tls"] = tls
 		}
 		return base, true
@@ -230,7 +278,7 @@ func nodeSingboxOutbound(n *proxy.Proxy) (map[string]any, bool) {
 		if t := singboxTransport(c); t != nil {
 			base["transport"] = t
 		}
-		base["tls"] = singboxTLS(c, cs(c, "sni"), true)
+		base["tls"] = singboxTLS(c, getSNI(c), true)
 		return base, true
 
 	case "hysteria2":
@@ -239,7 +287,7 @@ func nodeSingboxOutbound(n *proxy.Proxy) (map[string]any, bool) {
 		if obfs := cs(c, "obfs"); obfs != "" {
 			base["obfs"] = map[string]any{"type": obfs, "password": cs(c, "obfs-password")}
 		}
-		base["tls"] = singboxTLS(c, cs(c, "sni"), true)
+		base["tls"] = singboxTLS(c, getSNI(c), true)
 		return base, true
 
 	case "tuic":
@@ -249,7 +297,7 @@ func nodeSingboxOutbound(n *proxy.Proxy) (map[string]any, bool) {
 		if cc := cs(c, "congestion-controller"); cc != "" {
 			base["congestion_control"] = cc
 		}
-		base["tls"] = singboxTLS(c, cs(c, "sni"), true)
+		base["tls"] = singboxTLS(c, getSNI(c), true)
 		return base, true
 
 	case "socks5", "socks":
@@ -261,6 +309,69 @@ func nodeSingboxOutbound(n *proxy.Proxy) (map[string]any, bool) {
 		if pw := cs(c, "password"); pw != "" {
 			base["password"] = pw
 		}
+		return base, true
+
+	case "http":
+		base["type"] = "http"
+		if u := cs(c, "username"); u != "" {
+			base["username"] = u
+		}
+		if pw := cs(c, "password"); pw != "" {
+			base["password"] = pw
+		}
+		if tls := singboxTLS(c, getSNI(c), false); tls != nil {
+			base["tls"] = tls
+		}
+		return base, true
+
+	case "wireguard":
+		base["type"] = "wireguard"
+		base["private_key"] = cs(c, "private-key")
+		base["peer_public_key"] = cs(c, "public-key")
+		if psk := cs(c, "pre-shared-key"); psk != "" {
+			base["pre_shared_key"] = psk
+		}
+		var localAddr []string
+		if ip := cs(c, "ip"); ip != "" {
+			if !strings.Contains(ip, "/") {
+				localAddr = append(localAddr, ip+"/32")
+			} else {
+				localAddr = append(localAddr, ip)
+			}
+		}
+		if ipv6 := cs(c, "ipv6"); ipv6 != "" {
+			if !strings.Contains(ipv6, "/") {
+				localAddr = append(localAddr, ipv6+"/128")
+			} else {
+				localAddr = append(localAddr, ipv6)
+			}
+		}
+		if len(localAddr) > 0 {
+			base["local_address"] = localAddr
+		}
+		if mtu := ci(c, "mtu"); mtu > 0 {
+			base["mtu"] = mtu
+		}
+		if rsv := parseReserved(c["reserved"]); len(rsv) > 0 {
+			base["reserved"] = rsv
+		}
+		return base, true
+
+	case "hysteria":
+		base["type"] = "hysteria"
+		if auth := cs(c, "auth-str"); auth != "" {
+			base["auth_str"] = auth
+		}
+		if up := ci(c, "up"); up > 0 {
+			base["up_mbps"] = up
+		}
+		if down := ci(c, "down"); down > 0 {
+			base["down_mbps"] = down
+		}
+		if obfs := cs(c, "obfs"); obfs != "" {
+			base["obfs"] = obfs
+		}
+		base["tls"] = singboxTLS(c, getSNI(c), true)
 		return base, true
 	}
 	return nil, false
@@ -302,7 +413,7 @@ func singboxTransport(c map[string]any) map[string]any {
 // inherently TLS (trojan/hysteria2/tuic); for vmess/vless it returns nil unless
 // the node enables TLS.
 func singboxTLS(c map[string]any, serverName string, always bool) map[string]any {
-	if !always && !cb(c, "tls") {
+	if !always && !cb(c, "tls") && len(cmap(c, "reality-opts")) == 0 {
 		return nil
 	}
 	tls := map[string]any{"enabled": true}

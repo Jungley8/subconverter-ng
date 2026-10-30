@@ -90,6 +90,26 @@ func (r Rule) IsMatch() bool {
 	return strings.EqualFold(r.Type, "MATCH") || strings.EqualFold(r.Type, "FINAL")
 }
 
+// normalizeRuleType maps common rule type aliases to their canonical forms.
+func normalizeRuleType(typ string) string {
+	switch strings.ToUpper(strings.TrimSpace(typ)) {
+	case "HOST":
+		return "DOMAIN"
+	case "HOST-SUFFIX":
+		return "DOMAIN-SUFFIX"
+	case "HOST-KEYWORD":
+		return "DOMAIN-KEYWORD"
+	case "HOST-WILDCARD":
+		return "DOMAIN-SUFFIX"
+	case "DEST-PORT":
+		return "DST-PORT"
+	case "IP6-CIDR":
+		return "IP-CIDR6"
+	default:
+		return strings.ToUpper(strings.TrimSpace(typ))
+	}
+}
+
 // formatClashRule renders r as a Clash.Meta rule line. ok is false for a rule
 // type Clash.Meta does not accept — this is the Clash-specific gate (mihomo
 // rejects the WHOLE config on an unknown type). The neutral parsers keep every
@@ -99,10 +119,11 @@ func formatClashRule(r Rule) (string, bool) {
 	if r.IsMatch() {
 		return "MATCH," + r.Group, true
 	}
-	if !isValidRuleType(r.Type) {
+	canon := normalizeRuleType(r.Type)
+	if !isValidRuleType(canon) {
 		return "", false
 	}
-	s := r.Type + "," + r.Value + "," + r.Group
+	s := canon + "," + r.Value + "," + r.Group
 	if r.Flag != "" {
 		s += "," + r.Flag
 	}
@@ -221,4 +242,99 @@ func parseRemoteRuleset(data []byte, group string) (out []Rule, skipped []string
 		}
 	}
 	return out, skipped
+}
+
+// --- shared typed accessors over the Clash field bag (map[string]any) ---
+
+// cs extracts a string value from a map, converting numeric types if needed.
+func cs(m map[string]any, k string) string {
+	switch v := m[k].(type) {
+	case string:
+		return v
+	case int:
+		return strconv.Itoa(v)
+	case int64:
+		return strconv.FormatInt(v, 10)
+	case float64:
+		return strconv.Itoa(int(v))
+	}
+	return ""
+}
+
+// cb extracts a boolean value from a map, tolerating string/int representations.
+func cb(m map[string]any, k string) bool {
+	switch v := m[k].(type) {
+	case bool:
+		return v
+	case string:
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "1", "true", "yes", "on":
+			return true
+		}
+	case int:
+		return v != 0
+	}
+	return false
+}
+
+// cmap extracts a nested map[string]any.
+func cmap(m map[string]any, k string) map[string]any {
+	mm, _ := m[k].(map[string]any)
+	return mm
+}
+
+// ci reads an int field, tolerating int/int64/float64 and numeric string representations.
+func ci(m map[string]any, k string) int {
+	switch v := m[k].(type) {
+	case int:
+		return v
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	case string:
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+			return n
+		}
+	}
+	return 0
+}
+
+// parseReserved parses reserved bytes for WireGuard, tolerating []int, []any, and comma-separated string.
+func parseReserved(v any) []int {
+	switch val := v.(type) {
+	case []int:
+		return val
+	case []any:
+		var res []int
+		for _, x := range val {
+			switch n := x.(type) {
+			case int:
+				res = append(res, n)
+			case int64:
+				res = append(res, int(n))
+			case float64:
+				res = append(res, int(n))
+			case string:
+				if i, err := strconv.Atoi(strings.TrimSpace(n)); err == nil {
+					res = append(res, i)
+				}
+			}
+		}
+		return res
+	case string:
+		var res []int
+		for _, part := range strings.Split(val, ",") {
+			if i, err := strconv.Atoi(strings.TrimSpace(part)); err == nil {
+				res = append(res, i)
+			}
+		}
+		return res
+	}
+	return nil
+}
+
+// getSNI returns the server name or SNI, checking both "servername" and "sni".
+func getSNI(c map[string]any) string {
+	return firstNonEmptyStr(cs(c, "servername"), cs(c, "sni"))
 }

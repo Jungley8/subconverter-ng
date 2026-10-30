@@ -25,6 +25,9 @@ func TestGenerateV2ray_RoundTrip(t *testing.T) {
 		"hysteria2://authpass@hk2.example.com:443?sni=hk2.example.com&insecure=1&obfs=salamander&obfs-password=xyz#HK2",
 		"tuic://uuid-3:tpass@tw.example.com:443?congestion_control=bbr&alpn=h3&sni=tw.example.com#TW",
 		"socks5://user:pass@s.example.com:1080#SK",
+		"wireguard://privkey@wg.example.com:51820?publickey=pubkey&address=10.0.0.2#WG",
+		"hysteria://hy.example.com:443?auth=authpass&peer=hy.example.com&insecure=1&upmbps=100&downmbps=100#HY",
+		"ssr://" + b64("ssr.example.com:1234:auth_aes128_md5:aes-256-cfb:tls1.2_ticket_auth:"+b64("ssrpass")+"/?obfsparam="+b64("breakwa11.moe")+"&protoparam="+b64("64")+"&remarks="+b64("SSR")),
 	}
 	sub := []byte(base64.StdEncoding.EncodeToString([]byte(strings.Join(links, "\n"))))
 
@@ -32,8 +35,8 @@ func TestGenerateV2ray_RoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse input: %v", err)
 	}
-	if len(nodes) != 7 {
-		t.Fatalf("parsed %d input nodes, want 7", len(nodes))
+	if len(nodes) != 10 {
+		t.Fatalf("parsed %d input nodes, want 10", len(nodes))
 	}
 
 	res, err := GenerateV2ray(context.Background(), nodes, &extconfig.Config{}, fakeFetcher{}, Options{})
