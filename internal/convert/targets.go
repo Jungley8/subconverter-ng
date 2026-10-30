@@ -23,13 +23,13 @@ const (
 
 // targetAliases maps accepted spellings to a canonical target name.
 var targetAliases = map[string]string{
-	"clash": TargetClash, "clashmeta": TargetClash, "clash.meta": TargetClash, "clashr": TargetClash,
-	"singbox": TargetSingbox, "sing-box": TargetSingbox, "sing_box": TargetSingbox,
-	"surge":        TargetSurge,
-	"shadowrocket": TargetShadowrocket, "shadow-rocket": TargetShadowrocket,
-	"quanx": TargetQuanX, "quantumultx": TargetQuanX, "quantumult-x": TargetQuanX, "quantumult_x": TargetQuanX,
+	"clash": TargetClash, "clashmeta": TargetClash, "clash.meta": TargetClash, "clash-meta": TargetClash, "clash_meta": TargetClash, "clashr": TargetClash, "mihomo": TargetClash,
+	"singbox": TargetSingbox, "sing-box": TargetSingbox, "sing_box": TargetSingbox, "sb": TargetSingbox,
+	"surge": TargetSurge, "surge2": TargetSurge, "surge3": TargetSurge, "surge4": TargetSurge, "surge5": TargetSurge, "surfboard": TargetSurge,
+	"shadowrocket": TargetShadowrocket, "shadow-rocket": TargetShadowrocket, "sr": TargetShadowrocket,
+	"quanx": TargetQuanX, "quantumultx": TargetQuanX, "quantumult-x": TargetQuanX, "quantumult_x": TargetQuanX, "qx": TargetQuanX, "quantumult": TargetQuanX,
 	"loon":  TargetLoon,
-	"v2ray": TargetV2Ray, "mixed": TargetV2Ray, "v2rayn": TargetV2Ray, "ss": TargetV2Ray,
+	"v2ray": TargetV2Ray, "mixed": TargetV2Ray, "v2rayn": TargetV2Ray, "v2rayng": TargetV2Ray, "ss": TargetV2Ray, "ssr": TargetV2Ray, "trojan": TargetV2Ray,
 }
 
 // NormalizeTarget lower-cases, trims, and maps the target through targetAliases.

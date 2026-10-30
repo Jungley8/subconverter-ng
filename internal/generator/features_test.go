@@ -3,6 +3,7 @@ package generator
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -246,18 +247,443 @@ func TestGenerateTailscaleRules(t *testing.T) {
 		t.Errorf("surge rule section does not start with tailscale rules:\n%s", ruleSection)
 	}
 
-	// QuanX
-	quanx, err := GenerateQuanX(context.Background(), nodes, cfg, f, Options{Tailscale: true})
+	// Singbox
+	singbox, err := GenerateSingbox(context.Background(), nodes, cfg, f, Options{Tailscale: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	qs := string(quanx.Output)
-	filterIdx := strings.Index(qs, "[filter_local]\n")
-	if filterIdx == -1 {
-		t.Fatal("quanx missing [filter_local]")
+	var sbDoc struct {
+		Route struct {
+			Rules []map[string]any `json:"rules"`
+		} `json:"route"`
 	}
-	filterSection := qs[filterIdx+len("[filter_local]\n"):]
-	if !strings.HasPrefix(filterSection, "ip-cidr, 100.64.0.0/10, DIRECT, no-resolve\nip-cidr, fd7a:115c:a1e0::/48, DIRECT, no-resolve\n") {
-		t.Errorf("quanx filter section does not start with tailscale rules:\n%s", filterSection)
+	if err := json.Unmarshal(singbox.Output, &sbDoc); err != nil {
+		t.Fatal(err)
+	}
+	if len(sbDoc.Route.Rules) < 3 {
+		t.Fatalf("singbox rules len=%d, want >= 3", len(sbDoc.Route.Rules))
+	}
+	// rule 0 is dns, rule 1 is tailscale v4, rule 2 is tailscale v6
+	r1, r2 := sbDoc.Route.Rules[1], sbDoc.Route.Rules[2]
+	if r1["outbound"] != "direct" || r2["outbound"] != "direct" {
+		t.Errorf("singbox tailscale outbound mismatch: %v %v", r1, r2)
+	}
+
+	// Loon
+	loon, err := GenerateLoon(context.Background(), nodes, cfg, f, Options{Tailscale: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ls := string(loon.Output)
+	if !strings.Contains(ls, "IP-CIDR,100.64.0.0/10,DIRECT,no-resolve") || !strings.Contains(ls, "IP-CIDR,fd7a:115c:a1e0::/48,DIRECT,no-resolve") {
+		t.Errorf("loon missing tailscale rules: %s", ls)
+	}
+}
+
+func TestGenerateListOnlyAllTargets(t *testing.T) {
+	nodes := mkNodes()
+	cfg := &extconfig.Config{
+		EnableRuleGenerator: true,
+		ProxyGroups:         []extconfig.ProxyGroup{{Name: "Proxy", Type: "select", Selectors: []string{".*"}}},
+		Rulesets:            []extconfig.Ruleset{{Group: "Proxy", Inline: "FINAL"}},
+	}
+	f := fakeFetcher{}
+
+	// 1. Clash
+	clash, err := GenerateClash(context.Background(), nodes, cfg, f, Options{ListOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(clash.Output), "proxy-groups:") || strings.Contains(string(clash.Output), "rules:") {
+		t.Errorf("clash list should not contain groups/rules: %s", clash.Output)
+	}
+
+	// 2. Singbox
+	singbox, err := GenerateSingbox(context.Background(), nodes, cfg, f, Options{ListOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(singbox.Output), `"route":`) || strings.Contains(string(singbox.Output), `"dns":`) {
+		t.Errorf("singbox list should not contain route/dns: %s", singbox.Output)
+	}
+
+	// 3. Surge
+	surge, err := GenerateSurge(context.Background(), nodes, cfg, f, Options{ListOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(surge.Output), "[Proxy Group]") || strings.Contains(string(surge.Output), "[Rule]") {
+		t.Errorf("surge list should not contain groups/rules: %s", surge.Output)
+	}
+
+	// 4. Shadowrocket
+	sr, err := GenerateShadowrocket(context.Background(), nodes, cfg, f, Options{ListOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(sr.Output), "[Proxy Group]") || strings.Contains(string(sr.Output), "[Rule]") {
+		t.Errorf("shadowrocket list should not contain groups/rules: %s", sr.Output)
+	}
+
+	// 5. Loon
+	loon, err := GenerateLoon(context.Background(), nodes, cfg, f, Options{ListOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(loon.Output), "[Proxy Group]") || strings.Contains(string(loon.Output), "[Rule]") {
+		t.Errorf("loon list should not contain groups/rules: %s", loon.Output)
+	}
+
+	// 6. QuanX
+	quanx, err := GenerateQuanX(context.Background(), nodes, cfg, f, Options{ListOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(quanx.Output), "[policy]") || strings.Contains(string(quanx.Output), "[filter_local]") {
+		t.Errorf("quanx list should not contain policy/filter: %s", quanx.Output)
+	}
+}
+
+func TestWireguardAllTargets(t *testing.T) {
+	node := proxy.New("wireguard", "WG-Node", "1.2.3.4", 51820)
+	node.Set("private-key", "privkey")
+	node.Set("public-key", "pubkey")
+	node.Set("pre-shared-key", "psk")
+	node.Set("ip", "10.0.0.2")
+	node.Set("ipv6", "fd00::2")
+	node.Set("mtu", 1420)
+	node.Set("reserved", []int{1, 2, 3})
+	node.SetRaw("udp", true)
+
+	cfg := &extconfig.Config{
+		EnableRuleGenerator: true,
+		ProxyGroups:         []extconfig.ProxyGroup{{Name: "Proxy", Type: "select", Selectors: []string{".*"}}},
+		Rulesets:            []extconfig.Ruleset{{Group: "Proxy", Inline: "FINAL"}},
+	}
+	f := fakeFetcher{}
+
+	// Clash
+	clash, err := GenerateClash(context.Background(), []*proxy.Proxy{node}, cfg, f, Options{})
+	if err != nil || !strings.Contains(string(clash.Output), "type: wireguard") {
+		t.Fatalf("clash wireguard failed: %v\n%s", err, clash.Output)
+	}
+
+	// Singbox
+	singbox, err := GenerateSingbox(context.Background(), []*proxy.Proxy{node}, cfg, f, Options{})
+	if err != nil || !strings.Contains(string(singbox.Output), `"type": "wireguard"`) {
+		t.Fatalf("singbox wireguard failed: %v\n%s", err, singbox.Output)
+	}
+
+	// Loon
+	loon, err := GenerateLoon(context.Background(), []*proxy.Proxy{node}, cfg, f, Options{})
+	if err != nil || !strings.Contains(string(loon.Output), `WireGuard,1.2.3.4,51820,private-key="privkey",public-key="pubkey"`) {
+		t.Fatalf("loon wireguard failed: %v\n%s", err, loon.Output)
+	}
+	if !strings.Contains(string(loon.Output), `reserved=1,2,3`) {
+		t.Errorf("loon wireguard missing reserved: %s", loon.Output)
+	}
+
+	// Shadowrocket supports native wireguard
+	sr, err := GenerateShadowrocket(context.Background(), []*proxy.Proxy{node}, cfg, f, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(sr.Output), `wireguard, 1.2.3.4, 51820, private-key=privkey, public-key=pubkey, ip=10.0.0.2, ipv6=fd00::2, preshared-key=psk, mtu=1420, reserved=1,2,3`) {
+		t.Fatalf("shadowrocket wireguard line wrong: %s", sr.Output)
+	}
+
+	// V2Ray share link
+	v2ray, err := GenerateV2ray(context.Background(), []*proxy.Proxy{node}, cfg, f, Options{})
+	if err != nil {
+		t.Fatalf("v2ray wireguard failed: %v", err)
+	}
+	v2decoded, _ := base64.StdEncoding.DecodeString(string(v2ray.Output))
+	if !strings.Contains(string(v2decoded), "wireguard://privkey@1.2.3.4:51820") || !strings.Contains(string(v2decoded), "reserved=1%2C2%2C3") {
+		t.Fatalf("v2ray wireguard share link mismatch: %s", v2decoded)
+	}
+
+	// Surge skips wireguard (not supported inline)
+	surge, err := GenerateSurge(context.Background(), []*proxy.Proxy{node}, cfg, f, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(surge.SkippedNodes) != 1 {
+		t.Errorf("surge should skip unsupported wireguard: %v", surge.SkippedNodes)
+	}
+}
+
+func TestWireguard_ReservedFromClashYAML(t *testing.T) {
+	// In YAML, [1, 2, 3] unmarshals as []any
+	node := proxy.New("wireguard", "WG-YAML", "1.2.3.4", 51820)
+	node.Set("private-key", "privkey")
+	node.Set("public-key", "pubkey")
+	node.Set("ip", "10.0.0.2")
+	node.Set("reserved", []any{1, 2, 3}) // []any from yaml.Unmarshal
+
+	cfg := &extconfig.Config{EnableRuleGenerator: true}
+	f := fakeFetcher{}
+
+	// Singbox
+	sb, err := GenerateSingbox(context.Background(), []*proxy.Proxy{node}, cfg, f, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(sb.Output), `"reserved": [`) {
+		t.Errorf("singbox did not handle []any reserved from YAML: %s", sb.Output)
+	}
+
+	// V2Ray
+	v2, err := GenerateV2ray(context.Background(), []*proxy.Proxy{node}, cfg, f, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dec, _ := base64.StdEncoding.DecodeString(string(v2.Output))
+	if !strings.Contains(string(dec), "reserved=1%2C2%2C3") {
+		t.Errorf("v2ray did not handle []any reserved from YAML: %s", dec)
+	}
+}
+
+func TestHysteria1_AllTargets(t *testing.T) {
+	node := proxy.New("hysteria", "HY1", "hy.example.com", 8443)
+	node.Set("auth-str", "secretpass")
+	node.Set("up", 100)   // integer, as parsed from Clash YAML
+	node.Set("down", 200) // integer
+	node.Set("sni", "hy.example.com")
+	node.SetRaw("skip-cert-verify", true)
+
+	cfg := &extconfig.Config{EnableRuleGenerator: true}
+	f := fakeFetcher{}
+
+	// 1. Singbox
+	sb, err := GenerateSingbox(context.Background(), []*proxy.Proxy{node}, cfg, f, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(sb.Output), `"type": "hysteria"`) ||
+		!strings.Contains(string(sb.Output), `"up_mbps": 100`) ||
+		!strings.Contains(string(sb.Output), `"down_mbps": 200`) {
+		t.Errorf("singbox hysteria1 output mismatch:\n%s", sb.Output)
+	}
+
+	// 2. Shadowrocket
+	sr, err := GenerateShadowrocket(context.Background(), []*proxy.Proxy{node}, cfg, f, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(sr.Output), `hysteria, hy.example.com, 8443, auth=secretpass, upmbps=100, downmbps=200, peer=hy.example.com, skip-cert-verify=true`) {
+		t.Errorf("shadowrocket hysteria1 output mismatch:\n%s", sr.Output)
+	}
+
+	// 3. Loon
+	ln, err := GenerateLoon(context.Background(), []*proxy.Proxy{node}, cfg, f, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(ln.Output), `Hysteria,hy.example.com,8443,auth="secretpass",peer="hy.example.com",upmbps=100,downmbps=200,skip-cert-verify=true`) {
+		t.Errorf("loon hysteria1 output mismatch:\n%s", ln.Output)
+	}
+
+	// 4. V2Ray share link
+	v2, err := GenerateV2ray(context.Background(), []*proxy.Proxy{node}, cfg, f, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dec, _ := base64.StdEncoding.DecodeString(string(v2.Output))
+	if !strings.Contains(string(dec), "hysteria://hy.example.com:8443?") ||
+		!strings.Contains(string(dec), "auth=secretpass") ||
+		!strings.Contains(string(dec), "upmbps=100") ||
+		!strings.Contains(string(dec), "downmbps=200") {
+		t.Errorf("v2ray hysteria1 link mismatch: %s", dec)
+	}
+
+	// 5. Surge skips Hysteria 1
+	surge, err := GenerateSurge(context.Background(), []*proxy.Proxy{node}, cfg, f, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(surge.SkippedNodes) != 1 {
+		t.Errorf("surge should skip hysteria 1: %v", surge.SkippedNodes)
+	}
+}
+
+func TestHTTPProxyAllTargets(t *testing.T) {
+	node := proxy.New("http", "HTTP-Proxy", "proxy.example.com", 8080)
+	node.Set("username", "user1")
+	node.Set("password", "pass1")
+	node.SetRaw("tls", true)
+	node.Set("sni", "proxy.example.com")
+	node.SetRaw("skip-cert-verify", true)
+
+	cfg := &extconfig.Config{EnableRuleGenerator: true}
+	f := fakeFetcher{}
+
+	// Clash
+	clash, err := GenerateClash(context.Background(), []*proxy.Proxy{node}, cfg, f, Options{})
+	if err != nil || !strings.Contains(string(clash.Output), "type: http") {
+		t.Errorf("clash http proxy failed: %v", err)
+	}
+
+	// Singbox
+	sb, err := GenerateSingbox(context.Background(), []*proxy.Proxy{node}, cfg, f, Options{})
+	if err != nil || !strings.Contains(string(sb.Output), `"type": "http"`) {
+		t.Errorf("singbox http proxy failed: %v", err)
+	}
+
+	// Surge
+	surge, err := GenerateSurge(context.Background(), []*proxy.Proxy{node}, cfg, f, Options{})
+	if err != nil || !strings.Contains(string(surge.Output), "https, proxy.example.com, 8080, username=user1, password=pass1") {
+		t.Errorf("surge http proxy failed: %v\n%s", err, surge.Output)
+	}
+
+	// Shadowrocket
+	sr, err := GenerateShadowrocket(context.Background(), []*proxy.Proxy{node}, cfg, f, Options{})
+	if err != nil || !strings.Contains(string(sr.Output), "https, proxy.example.com, 8080, username=user1, password=pass1") {
+		t.Errorf("shadowrocket http proxy failed: %v\n%s", err, sr.Output)
+	}
+
+	// Loon
+	ln, err := GenerateLoon(context.Background(), []*proxy.Proxy{node}, cfg, f, Options{})
+	if err != nil || !strings.Contains(string(ln.Output), `http,proxy.example.com,8080,"user1","pass1",over-tls=true`) {
+		t.Errorf("loon http proxy failed: %v\n%s", err, ln.Output)
+	}
+
+	// QuanX
+	qx, err := GenerateQuanX(context.Background(), []*proxy.Proxy{node}, cfg, f, Options{})
+	if err != nil || !strings.Contains(string(qx.Output), "http=proxy.example.com:8080, username=user1, password=pass1, over-tls=true") {
+		t.Errorf("quanx http proxy failed: %v\n%s", err, qx.Output)
+	}
+
+	// V2Ray
+	v2, err := GenerateV2ray(context.Background(), []*proxy.Proxy{node}, cfg, f, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dec, _ := base64.StdEncoding.DecodeString(string(v2.Output))
+	if !strings.Contains(string(dec), "https://user1:pass1@proxy.example.com:8080") {
+		t.Errorf("v2ray http proxy link mismatch: %s", dec)
+	}
+}
+
+func TestRuleTypeNormalization_AllTargets(t *testing.T) {
+	cfg := &extconfig.Config{
+		EnableRuleGenerator: true,
+		ProxyGroups:         []extconfig.ProxyGroup{{Name: "Proxy", Type: "select", Selectors: []string{".*"}}},
+		Rulesets: []extconfig.Ruleset{
+			{Group: "Proxy", Inline: "DEST-PORT,443"},
+			{Group: "Proxy", Inline: "HOST,domain.com"},
+			{Group: "Proxy", Inline: "HOST-SUFFIX,google.com"},
+			{Group: "Proxy", Inline: "HOST-KEYWORD,keyword"},
+			{Group: "Proxy", Inline: "IP6-CIDR,2001:db8::/32"},
+			{Group: "DIRECT", Inline: "SRC-IP-CIDR,192.168.1.0/24"},
+			{Group: "DIRECT", Inline: "FINAL"},
+		},
+	}
+	nodes := mkNodes()
+	f := fakeFetcher{}
+
+	// Clash: DEST-PORT -> DST-PORT, HOST* -> DOMAIN*, IP6-CIDR -> IP-CIDR6
+	clash, err := GenerateClash(context.Background(), nodes, cfg, f, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cs := string(clash.Output)
+	for _, want := range []string{
+		"DST-PORT,443,Proxy",
+		"DOMAIN,domain.com,Proxy",
+		"DOMAIN-SUFFIX,google.com,Proxy",
+		"DOMAIN-KEYWORD,keyword,Proxy",
+		"IP-CIDR6,2001:db8::/32,Proxy",
+		"SRC-IP-CIDR,192.168.1.0/24,DIRECT",
+		"MATCH,DIRECT",
+	} {
+		if !strings.Contains(cs, want) {
+			t.Errorf("clash missing normalized rule %q:\n%s", want, cs)
+		}
+	}
+
+	// Singbox: port, domain, domain_suffix, domain_keyword, ip_cidr, source_ip_cidr
+	sb, err := GenerateSingbox(context.Background(), nodes, cfg, f, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sbs := string(sb.Output)
+	for _, want := range []string{
+		`"port": [`,
+		`"domain": [`,
+		`"domain_suffix": [`,
+		`"domain_keyword": [`,
+		`"source_ip_cidr": [`,
+	} {
+		if !strings.Contains(sbs, want) {
+			t.Errorf("singbox missing route rule field %q:\n%s", want, sbs)
+		}
+	}
+
+	// Surge: DEST-PORT, DOMAIN, DOMAIN-SUFFIX, DOMAIN-KEYWORD, IP-CIDR6, SRC-IP-CIDR
+	surge, err := GenerateSurge(context.Background(), nodes, cfg, f, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sgs := string(surge.Output)
+	for _, want := range []string{
+		"DEST-PORT,443,Proxy",
+		"DOMAIN,domain.com,Proxy",
+		"DOMAIN-SUFFIX,google.com,Proxy",
+		"DOMAIN-KEYWORD,keyword,Proxy",
+		"IP-CIDR6,2001:db8::/32,Proxy",
+		"SRC-IP-CIDR,192.168.1.0/24,DIRECT",
+		"FINAL,DIRECT",
+	} {
+		if !strings.Contains(sgs, want) {
+			t.Errorf("surge missing normalized rule %q:\n%s", want, sgs)
+		}
+	}
+
+	// QuanX: dest-port, host, host-suffix, host-keyword, ip6-cidr, final, direct
+	qx, err := GenerateQuanX(context.Background(), nodes, cfg, f, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	qxs := string(qx.Output)
+	for _, want := range []string{
+		"dest-port, 443, Proxy",
+		"host, domain.com, Proxy",
+		"host-suffix, google.com, Proxy",
+		"host-keyword, keyword, Proxy",
+		"ip6-cidr, 2001:db8::/32, Proxy",
+		"final, direct",
+	} {
+		if !strings.Contains(qxs, want) {
+			t.Errorf("quanx missing normalized rule %q:\n%s", want, qxs)
+		}
+	}
+}
+
+func TestQuanX_DirectAndRejectLowercase(t *testing.T) {
+	cfg := &extconfig.Config{
+		EnableRuleGenerator: true,
+		Rulesets: []extconfig.Ruleset{
+			{Group: "DIRECT", Inline: "DOMAIN-SUFFIX,cn"},
+			{Group: "REJECT", Inline: "DOMAIN-SUFFIX,ad.com"},
+			{Group: "REJECT-DROP", Inline: "DOMAIN-SUFFIX,drop.com"},
+			{Group: "DIRECT", Inline: "FINAL"},
+		},
+	}
+	res, err := GenerateQuanX(context.Background(), mkNodes(), cfg, fakeFetcher{}, Options{Tailscale: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := string(res.Output)
+	for _, want := range []string{
+		"host-suffix, cn, direct",
+		"host-suffix, ad.com, reject",
+		"host-suffix, drop.com, reject",
+		"final, direct",
+		"ip-cidr, 100.64.0.0/10, direct, no-resolve",
+		"ip6-cidr, fd7a:115c:a1e0::/48, direct, no-resolve",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("quanx missing lowercase rule %q:\n%s", want, out)
+		}
 	}
 }

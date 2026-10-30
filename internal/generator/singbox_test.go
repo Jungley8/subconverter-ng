@@ -112,3 +112,121 @@ func TestGenerateSingbox(t *testing.T) {
 		t.Errorf("route rules missing dns/domain_suffix/geosite: %+v", doc.Route.Rules)
 	}
 }
+
+func TestGenerateSingbox_Enhancements(t *testing.T) {
+	links := []string{
+		"wireguard://privkey@wg.example.com:51820?publickey=pubkey&address=10.0.0.2&presharedkey=psk&mtu=1420&reserved=1,2,3#WG",
+		"hysteria://hy.example.com:443?auth=authpass&peer=hy.example.com&insecure=1&upmbps=100&downmbps=50&obfs=hyobfs#HY",
+		"ss://" + b64("aes-256-gcm:pass") + "@1.2.3.4:8388?plugin=obfs-local%3Bobfs%3Dhttp%3Bobfs-host%3Dexample.com#SS-OBFS",
+	}
+	sub := []byte(base64.StdEncoding.EncodeToString([]byte(strings.Join(links, "\n"))))
+	nodes, _, err := parser.Parse(sub)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &extconfig.Config{
+		EnableRuleGenerator: true,
+		ProxyGroups: []extconfig.ProxyGroup{
+			{Name: "Proxy", Type: "select", Selectors: []string{".*"}},
+		},
+		Rulesets: []extconfig.Ruleset{
+			{Group: "Proxy", Inline: "IP-ASN,13335"},
+			{Group: "Proxy", Inline: "SRC-IP-CIDR,192.168.1.0/24"},
+			{Group: "Proxy", Inline: "FINAL"},
+		},
+	}
+
+	res, err := GenerateSingbox(context.Background(), nodes, cfg, fakeFetcher{}, Options{TFO: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var doc struct {
+		Outbounds []map[string]any `json:"outbounds"`
+		Route     struct {
+			Rules []map[string]any `json:"rules"`
+		} `json:"route"`
+	}
+	if err := json.Unmarshal(res.Output, &doc); err != nil {
+		t.Fatalf("unmarshal singbox JSON: %v", err)
+	}
+
+	tags := map[string]map[string]any{}
+	for _, ob := range doc.Outbounds {
+		tags[ob["tag"].(string)] = ob
+	}
+
+	// WireGuard outbound check
+	wg, ok := tags["WG"]
+	if !ok || wg["type"] != "wireguard" {
+		t.Fatalf("missing or wrong WG outbound: %v", wg)
+	}
+	if wg["private_key"] != "privkey" || wg["peer_public_key"] != "pubkey" || wg["pre_shared_key"] != "psk" {
+		t.Errorf("WG keys mismatch: %v", wg)
+	}
+	if addrs, ok := wg["local_address"].([]any); !ok || len(addrs) != 1 || addrs[0] != "10.0.0.2/32" {
+		t.Errorf("WG local_address mismatch: %v", wg["local_address"])
+	}
+
+	// Hysteria v1 check
+	hy, ok := tags["HY"]
+	if !ok || hy["type"] != "hysteria" {
+		t.Fatalf("missing or wrong HY outbound: %v", hy)
+	}
+	if hy["auth_str"] != "authpass" || hy["up_mbps"] != float64(100) || hy["down_mbps"] != float64(50) {
+		t.Errorf("HY speed/auth mismatch: %v", hy)
+	}
+
+	// SS with obfs-local and TFO
+	ss, ok := tags["SS-OBFS"]
+	if !ok || ss["type"] != "shadowsocks" {
+		t.Fatalf("missing or wrong SS outbound: %v", ss)
+	}
+	if ss["plugin"] != "obfs-local" {
+		t.Errorf("SS plugin mismatch: %v", ss["plugin"])
+	}
+	if ss["tcp_fast_open"] != true {
+		t.Errorf("SS tcp_fast_open should be true: %v", ss["tcp_fast_open"])
+	}
+
+	// Rules check: ip_asn and source_ip_cidr
+	var sawASN, sawSrcCIDR bool
+	for _, r := range doc.Route.Rules {
+		if asn, ok := r["ip_asn"].([]any); ok && len(asn) > 0 && asn[0] == float64(13335) {
+			sawASN = true
+		}
+		if src, ok := r["source_ip_cidr"].([]any); ok && len(src) > 0 && src[0] == "192.168.1.0/24" {
+			sawSrcCIDR = true
+		}
+	}
+	if !sawASN || !sawSrcCIDR {
+		t.Errorf("missing ip_asn or source_ip_cidr in rules: %+v", doc.Route.Rules)
+	}
+}
+
+func TestGenerateSingbox_ListOnly(t *testing.T) {
+	links := []string{
+		"ss://" + b64("aes-256-gcm:pass") + "@1.2.3.4:8388#HK",
+	}
+	sub := []byte(base64.StdEncoding.EncodeToString([]byte(strings.Join(links, "\n"))))
+	nodes, _, err := parser.Parse(sub)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := GenerateSingbox(context.Background(), nodes, &extconfig.Config{}, fakeFetcher{}, Options{ListOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(res.Output, &doc); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if doc["outbounds"] == nil {
+		t.Error("singbox list output missing outbounds")
+	}
+	if doc["route"] != nil || doc["dns"] != nil || doc["inbounds"] != nil {
+		t.Errorf("singbox list output must omit route/dns/inbounds: %v", doc)
+	}
+}
