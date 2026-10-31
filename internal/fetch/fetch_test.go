@@ -318,3 +318,25 @@ func TestSingleFlight_CollapsesConcurrentRequests(t *testing.T) {
 		t.Errorf("singleflight requestCount = %d, want 1", got)
 	}
 }
+
+func TestFetchDirect_BodySizeLimit(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		chunk := make([]byte, 1<<20) // 1MB chunk
+		for i := 0; i < 12; i++ {    // write 12MB total
+			_, _ = w.Write(chunk)
+		}
+	}))
+	defer srv.Close()
+
+	c, err := New(Options{AllowPrivateIPs: true, CacheTTL: -1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := c.Get(context.Background(), srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(body) != 10<<20 {
+		t.Fatalf("expected body capped at 10MB (%d bytes), got %d", 10<<20, len(body))
+	}
+}

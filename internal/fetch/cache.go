@@ -12,12 +12,14 @@ import (
 //
 // The cache is keyed by URL only; it deliberately ignores per-request proxy
 // differences. Callers that need a fresh fetch must bypass (use a Client with
-// caching disabled) or Flush the cache.
+const defaultMaxEntries = 1000
+
 type Cache struct {
-	mu      sync.Mutex
-	ttl     time.Duration
-	entries map[string]cacheEntry
-	now     func() time.Time // injectable clock for tests
+	mu         sync.Mutex
+	ttl        time.Duration
+	maxEntries int
+	entries    map[string]cacheEntry
+	now        func() time.Time // injectable clock for tests
 }
 
 type cacheEntry struct {
@@ -32,9 +34,10 @@ func NewCache(ttl time.Duration) *Cache {
 		ttl = defaultCacheTTL
 	}
 	return &Cache{
-		ttl:     ttl,
-		entries: make(map[string]cacheEntry),
-		now:     time.Now,
+		ttl:        ttl,
+		maxEntries: defaultMaxEntries,
+		entries:    make(map[string]cacheEntry),
+		now:        time.Now,
 	}
 }
 
@@ -53,10 +56,51 @@ func (c *Cache) get(url string) ([]byte, http.Header, bool) {
 	return e.body, e.header, true
 }
 
-// set stores body+headers for url with the cache's TTL.
+// set stores body+headers for url with the cache's TTL, enforcing max capacity.
 func (c *Cache) set(url string, body []byte, header http.Header) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	// Update in place if already present.
+	if _, ok := c.entries[url]; ok {
+		c.entries[url] = cacheEntry{
+			body:    body,
+			header:  header.Clone(),
+			expires: c.now().Add(c.ttl),
+		}
+		return
+	}
+
+	maxCap := c.maxEntries
+	if maxCap <= 0 {
+		maxCap = defaultMaxEntries
+	}
+
+	// If capacity is reached, purge expired entries.
+	if len(c.entries) >= maxCap {
+		now := c.now()
+		for k, e := range c.entries {
+			if !now.Before(e.expires) {
+				delete(c.entries, k)
+			}
+		}
+	}
+
+	// If still at capacity, evict the entry that expires earliest.
+	if len(c.entries) >= maxCap {
+		var victimKey string
+		var victimExpires time.Time
+		for k, e := range c.entries {
+			if victimKey == "" || e.expires.Before(victimExpires) {
+				victimKey = k
+				victimExpires = e.expires
+			}
+		}
+		if victimKey != "" {
+			delete(c.entries, victimKey)
+		}
+	}
+
 	c.entries[url] = cacheEntry{
 		body:    body,
 		header:  header.Clone(),

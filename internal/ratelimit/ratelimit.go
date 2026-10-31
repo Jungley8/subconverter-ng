@@ -28,6 +28,10 @@ type Limiter struct {
 	// ttl bounds how long an idle bucket is retained before eviction.
 	ttl time.Duration
 
+	// evictInterval bounds how often we scan for stale buckets.
+	evictInterval time.Duration
+	lastEvict     time.Time
+
 	// now is the time source, injectable for testing. Defaults to time.Now.
 	now func() time.Time
 }
@@ -44,11 +48,12 @@ func New(ratePerMin, burst int) *Limiter {
 		refill = float64(ratePerMin) / 60.0
 	}
 	return &Limiter{
-		buckets:      make(map[string]*bucket),
-		refillPerSec: refill,
-		burst:        float64(burst),
-		ttl:          10 * time.Minute,
-		now:          time.Now,
+		buckets:       make(map[string]*bucket),
+		refillPerSec:  refill,
+		burst:         float64(burst),
+		ttl:           10 * time.Minute,
+		evictInterval: time.Minute,
+		now:           time.Now,
 	}
 }
 
@@ -64,7 +69,15 @@ func (l *Limiter) Allow(key string) bool {
 	if !ok {
 		// New key starts with a full bucket, then spends one token.
 		l.buckets[key] = &bucket{tokens: l.burst - 1, lastSeen: now}
-		l.maybeEvict(now)
+
+		// Decoupled eviction: scan for stale buckets at most once per evictInterval
+		// instead of scanning the full map on every single new IP.
+		if l.lastEvict.IsZero() {
+			l.lastEvict = now
+		} else if now.Sub(l.lastEvict) >= l.evictInterval {
+			l.lastEvict = now
+			l.evictStale(now)
+		}
 		return true
 	}
 
@@ -85,9 +98,16 @@ func (l *Limiter) Allow(key string) bool {
 	return false
 }
 
-// maybeEvict removes buckets that have been idle longer than the TTL. It runs
-// opportunistically on bucket creation and assumes l.mu is held.
-func (l *Limiter) maybeEvict(now time.Time) {
+// EvictStale removes buckets that have been idle longer than the TTL.
+// It is safe for concurrent use.
+func (l *Limiter) EvictStale() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.evictStale(l.now())
+}
+
+// evictStale removes buckets that have been idle longer than the TTL. Assumes l.mu is held.
+func (l *Limiter) evictStale(now time.Time) {
 	for k, b := range l.buckets {
 		if now.Sub(b.lastSeen) > l.ttl {
 			delete(l.buckets, k)

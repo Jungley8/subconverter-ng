@@ -263,4 +263,31 @@ func TestConfig_Validate(t *testing.T) {
 	if err := cfg.Validate(); err == nil {
 		t.Error("expected error for bad default config url")
 	}
+	cfg.DefaultConfigURL = ""
+
+	// 9. Insert.URLs validation
+	cfg.Insert.URLs = []string{"https://example.com/sub", "http://example.org/sub"}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("valid insert URLs should pass: %v", err)
+	}
+
+	cfg.Insert.URLs = []string{""}
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for empty insert URL entry")
+	}
+
+	cfg.Insert.URLs = []string{"ftp://example.com/sub"}
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for non-http/https insert URL")
+	}
+
+	cfg.Insert.URLs = []string{"http:///no-host"}
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for insert URL without host")
+	}
+
+	cfg.Insert.URLs = []string{"://bad-url"}
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for unparseable insert URL")
+	}
 }

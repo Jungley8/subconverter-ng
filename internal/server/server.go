@@ -30,6 +30,7 @@ type Server struct {
 	version      string              // build version, surfaced by GET /version; "dev" when unset
 	cache        *fetch.Cache        // shared across requests so the TTL cache survives; nil when caching disabled
 	group        *singleflight.Group // shared singleflight request deduplicator across requests
+	limiter      *ratelimit.Limiter  // shared per-IP rate limiter across endpoints; nil when disabled
 	trustedCIDRs []netip.Prefix
 	trustedIPs   []netip.Addr
 }
@@ -39,6 +40,9 @@ func New(cfg *config.Config) *Server {
 		cfg:     cfg,
 		version: "dev",
 		group:   new(singleflight.Group),
+	}
+	if cfg.RateLimit.Enabled {
+		s.limiter = ratelimit.New(cfg.RateLimit.RequestsPerMinute, cfg.RateLimit.Burst)
 	}
 	// A shared cache lives on the Server so repeated /sub requests reuse cached
 	// ruleset/subscription fetches. CacheTTL < 0 disables caching entirely.
@@ -76,7 +80,7 @@ func (s *Server) WithVersion(v string) *Server {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/sub", s.authenticate(s.rateLimit(http.HandlerFunc(s.handleSub))))
-	mux.Handle("/flushcache", s.authenticate(http.HandlerFunc(s.handleFlushCache)))
+	mux.Handle("/flushcache", s.authenticate(s.rateLimit(http.HandlerFunc(s.handleFlushCache))))
 	mux.HandleFunc("/version", s.handleVersion)
 	mux.HandleFunc("/healthz", s.handleHealthz)
 	mux.HandleFunc("/readyz", s.handleReadyz)
@@ -118,11 +122,10 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 // rateLimit wraps next with per-client-IP token-bucket rate limiting. When the
 // limiter is disabled in config it returns next unchanged (no-op pass-through).
 func (s *Server) rateLimit(next http.Handler) http.Handler {
-	rl := s.cfg.RateLimit
-	if !rl.Enabled {
+	if s.limiter == nil {
 		return next
 	}
-	limiter := ratelimit.New(rl.RequestsPerMinute, rl.Burst)
+	rl := s.cfg.RateLimit
 	// Retry-After advertises the worst-case wait for one token to refill.
 	retryAfter := "1"
 	if rl.RequestsPerMinute > 0 {
@@ -131,7 +134,7 @@ func (s *Server) rateLimit(next http.Handler) http.Handler {
 		}
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !limiter.Allow(s.clientIP(r)) {
+		if !s.limiter.Allow(s.clientIP(r)) {
 			w.Header().Set("Retry-After", retryAfter)
 			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
 			return

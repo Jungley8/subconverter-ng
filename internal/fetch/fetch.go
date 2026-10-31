@@ -276,6 +276,8 @@ type replay struct {
 	userAgent string
 }
 
+const maxResponseBodySize = 10 << 20 // 10MB limit
+
 func (c *Client) do(ctx context.Context, target string, r *replay) ([]byte, http.Header, int, error) {
 	var lastErr error
 	for attempt := 0; attempt <= c.opts.MaxRetries; attempt++ {
@@ -300,7 +302,7 @@ func (c *Client) do(ctx context.Context, target string, r *replay) ([]byte, http
 			lastErr = err
 			continue
 		}
-		body, rerr := io.ReadAll(resp.Body)
+		body, rerr := io.ReadAll(io.LimitReader(resp.Body, maxResponseBodySize))
 		_ = resp.Body.Close()
 		if rerr != nil {
 			lastErr = rerr

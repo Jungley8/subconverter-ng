@@ -23,12 +23,23 @@ import (
 	"github.com/Jungley8/subconverter-ng/internal/proxy"
 )
 
+func sanitizeNodeName(name string) string {
+	name = strings.ReplaceAll(name, "\r", "")
+	name = strings.ReplaceAll(name, "\n", " ")
+	return name
+}
+
 // prepareNodes runs the target-agnostic node pipeline and records its
 // diagnostics (dedup/deprecated counts, final NodeCount) into res. The returned
 // slice is the processed node list every generator renders from. Node options
 // (udp/tfo/scv, emoji, rename, append_type) are stamped onto each node's Clash
 // field bag, which all generators read from.
 func prepareNodes(nodes []*proxy.Proxy, cfg *extconfig.Config, opts Options, res *Result) []*proxy.Proxy {
+	for _, n := range nodes {
+		if strings.ContainsAny(n.Name, "\r\n") {
+			n.Rename(sanitizeNodeName(n.Name))
+		}
+	}
 	nodes = filterNodes(nodes, cfg)
 	if opts.FilterDeprecated {
 		var dropped int
@@ -44,6 +55,11 @@ func prepareNodes(nodes []*proxy.Proxy, cfg *extconfig.Config, opts Options, res
 		sort.SliceStable(nodes, func(i, j int) bool { return nodes[i].Name < nodes[j].Name })
 	}
 	applyNodeOptions(nodes, opts)
+	for _, n := range nodes {
+		if strings.ContainsAny(n.Name, "\r\n") {
+			n.Rename(sanitizeNodeName(n.Name))
+		}
+	}
 	uniquifyNames(nodes)
 	res.NodeCount = len(nodes)
 	return nodes
@@ -154,6 +170,8 @@ func collectRules(ctx context.Context, cfg *extconfig.Config, f Fetcher, opts Op
 		skipped []string
 	}
 	results := make([]fetched, len(cfg.Rulesets))
+	const maxConcurrentRulesetFetches = 16
+	sem := make(chan struct{}, maxConcurrentRulesetFetches)
 	var wg sync.WaitGroup
 	for i, rs := range cfg.Rulesets {
 		if rs.URL == "" {
@@ -162,6 +180,12 @@ func collectRules(ctx context.Context, cfg *extconfig.Config, f Fetcher, opts Op
 		wg.Add(1)
 		go func(i int, url, group string) {
 			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				return
+			}
 			data, err := f.Get(ctx, url)
 			if err != nil {
 				return

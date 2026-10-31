@@ -190,3 +190,28 @@ func TestCache_DoesNotCacheNon200(t *testing.T) {
 		t.Errorf("hits = %d, want 2 (non-200 not cached)", hits)
 	}
 }
+
+func TestCache_MaxCapacity(t *testing.T) {
+	c := NewCache(time.Hour)
+	c.maxEntries = 3
+
+	c.set("http://1", []byte("a"), nil)
+	c.set("http://2", []byte("b"), nil)
+	c.set("http://3", []byte("c"), nil)
+
+	if c.Len() != 3 {
+		t.Fatalf("expected len 3, got %d", c.Len())
+	}
+
+	// Adding 4th entry should evict one to stay at maxEntries = 3
+	c.set("http://4", []byte("d"), nil)
+	if c.Len() != 3 {
+		t.Fatalf("expected len to stay at 3, got %d", c.Len())
+	}
+
+	// Updating existing entry should not evict or change len
+	c.set("http://4", []byte("updated"), nil)
+	if c.Len() != 3 {
+		t.Fatalf("expected len to remain 3 after update, got %d", c.Len())
+	}
+}
