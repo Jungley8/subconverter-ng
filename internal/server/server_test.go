@@ -314,6 +314,24 @@ func TestRateLimit_SubEventually429(t *testing.T) {
 	}
 }
 
+func TestRateLimit_FlushCacheThrottled(t *testing.T) {
+	h := New(rlConfig(1, 2)).Handler()
+	var lastCode int
+	for i := 0; i < 3; i++ {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/flushcache", nil)
+		req.RemoteAddr = "203.0.113.9:54321"
+		h.ServeHTTP(rec, req)
+		lastCode = rec.Code
+		if i < 2 && rec.Code == http.StatusTooManyRequests {
+			t.Fatalf("flushcache request %d unexpectedly throttled within burst", i+1)
+		}
+	}
+	if lastCode != http.StatusTooManyRequests {
+		t.Fatalf("final flushcache code = %d, want 429", lastCode)
+	}
+}
+
 func TestRateLimit_VersionAndRootNeverThrottled(t *testing.T) {
 	h := New(rlConfig(1, 1)).Handler()
 	// Exhaust /sub first to prove the limiter is active.

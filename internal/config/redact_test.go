@@ -13,11 +13,18 @@ func TestRedactURL(t *testing.T) {
 	}{
 		{"empty", "", ""},
 		{"no secrets", "http://127.0.0.1:7890", "http://127.0.0.1:7890"},
-		{"proxy password", "socks5://user:s3cret@127.0.0.1:1080", "socks5://user:***@127.0.0.1:1080"},
-		{"username only", "socks5://user@127.0.0.1:1080", "socks5://user@127.0.0.1:1080"},
+		{"proxy password", "socks5://user:s3cret@127.0.0.1:1080", "socks5://***@127.0.0.1:1080"},
+		{"username only", "socks5://user@127.0.0.1:1080", "socks5://***@127.0.0.1:1080"},
 		{"query token", "https://air.com/api/v1/client/subscribe?token=abc123", "https://air.com/api/v1/client/subscribe?token=***"},
 		{"multi query", "https://air.com/sub?token=abc&flag=1", "https://air.com/sub?token=***&flag=***"},
-		{"creds and query", "https://u:p@air.com/sub?token=abc", "https://u:***@air.com/sub?token=***"},
+		{"creds and query", "https://u:p@air.com/sub?token=abc", "https://***@air.com/sub?token=***"},
+		{"trojan password", "trojan://mypassword@127.0.0.1:443?peer=example.com", "trojan://***@127.0.0.1:443?peer=***"},
+		{"vless uuid", "vless://550e8400-e29b-41d4-a716-446655440000@127.0.0.1:443", "vless://***@127.0.0.1:443"},
+		{"hysteria2 auth", "hysteria2://mytoken@127.0.0.1:443", "hysteria2://***@127.0.0.1:443"},
+		{"wireguard key", "wireguard://privatekey@127.0.0.1:51820", "wireguard://***@127.0.0.1:51820"},
+		{"ss base64", "ss://Y2hhY2hhMjA6cGFzc3dvcmQ@127.0.0.1:8388", "ss://***@127.0.0.1:8388"},
+		{"vmess payload", "vmess://eyJhZGQiOiIxMjcuMC4wLjEiLCJwb3J0IjoiNDQzIn0=", "vmess://***"},
+		{"ssr payload", "ssr://ZXhhbXBsZS5jb206ODg4ODpvcmlnaW46bm9uZQ==", "ssr://***"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -36,7 +43,9 @@ func TestRedactSubURL(t *testing.T) {
 		{"query token", "https://air.com/api/v1/client/subscribe?token=abc", "https://air.com/***"},
 		{"host only", "https://air.com", "https://air.com"},
 		{"trailing slash", "https://air.com/", "https://air.com"},
-		{"creds in path sub", "https://u:p@air.com/s/tok", "https://u:***@air.com/***"},
+		{"creds in path sub", "https://u:p@air.com/s/tok", "https://***@air.com/***"},
+		{"vmess sub", "vmess://eyJhZGQiOiIxMjcuMC4wLjEiLCJwb3J0IjoiNDQzIn0=", "vmess://***"},
+		{"ssr sub", "ssr://ZXhhbXBsZS5jb206ODg4ODpvcmlnaW46bm9uZQ==", "ssr://***"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -120,11 +129,27 @@ func TestRedactStringAndError(t *testing.T) {
 	}
 
 	socksErr := RedactError(errors.New("dial socks5://myuser:mypassword@proxy.host:1080: connect refused"))
-	if strings.Contains(socksErr.Error(), "mypassword") {
-		t.Fatalf("RedactError leaked socks5 password: %v", socksErr)
+	if strings.Contains(socksErr.Error(), "mypassword") || strings.Contains(socksErr.Error(), "myuser") {
+		t.Fatalf("RedactError leaked socks5 credentials: %v", socksErr)
 	}
-	if !strings.Contains(socksErr.Error(), "socks5://myuser:***@proxy.host:1080") {
+	if !strings.Contains(socksErr.Error(), "socks5://***@proxy.host:1080") {
 		t.Errorf("socks5 creds not redacted properly: %v", socksErr)
+	}
+
+	trojanErr := RedactError(errors.New("connect trojan://topsecret@proxy.host:443 failed"))
+	if strings.Contains(trojanErr.Error(), "topsecret") {
+		t.Fatalf("RedactError leaked trojan secret: %v", trojanErr)
+	}
+	if !strings.Contains(trojanErr.Error(), "trojan://***@proxy.host:443") {
+		t.Errorf("trojan creds not redacted properly: %v", trojanErr)
+	}
+
+	vmessErr := RedactError(errors.New("connect vmess://eyJhZGQiOiIxMjcuMC4wLjEifQ== failed"))
+	if strings.Contains(vmessErr.Error(), "eyJhZGQiOiIxMjcuMC4wLjEifQ==") {
+		t.Fatalf("RedactError leaked vmess payload: %v", vmessErr)
+	}
+	if !strings.Contains(vmessErr.Error(), "vmess://***") {
+		t.Errorf("vmess payload not redacted properly: %v", vmessErr)
 	}
 }
 

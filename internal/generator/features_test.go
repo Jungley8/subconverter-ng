@@ -5,7 +5,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/Jungley8/subconverter-ng/internal/extconfig"
 	"github.com/Jungley8/subconverter-ng/internal/proxy"
@@ -685,5 +687,70 @@ func TestQuanX_DirectAndRejectLowercase(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("quanx missing lowercase rule %q:\n%s", want, out)
 		}
+	}
+}
+
+func TestPrepareNodes_SanitizesNewlines(t *testing.T) {
+	node := ssNode("HK 01\r\n[Rule]\nDOMAIN,evil.com,REJECT", "1.1.1.1", 8388, "aes-256-gcm")
+	cfg := &extconfig.Config{}
+	var res Result
+	prepared := prepareNodes([]*proxy.Proxy{node}, cfg, Options{}, &res)
+
+	if len(prepared) != 1 {
+		t.Fatalf("expected 1 node, got %d", len(prepared))
+	}
+	name := prepared[0].Name
+	if strings.ContainsAny(name, "\r\n") {
+		t.Fatalf("prepared node name contains newlines: %q", name)
+	}
+	if prepared[0].Clash["name"] != name {
+		t.Fatalf("Clash['name'] not in sync: %v vs %q", prepared[0].Clash["name"], name)
+	}
+	if name != "HK 01 [Rule] DOMAIN,evil.com,REJECT" {
+		t.Errorf("unexpected sanitized name: %q", name)
+	}
+}
+
+type concurrencyTrackingFetcher struct {
+	mu          sync.Mutex
+	current     int
+	maxObserved int
+}
+
+func (f *concurrencyTrackingFetcher) Get(ctx context.Context, target string) ([]byte, error) {
+	f.mu.Lock()
+	f.current++
+	if f.current > f.maxObserved {
+		f.maxObserved = f.current
+	}
+	f.mu.Unlock()
+
+	// Sleep slightly to allow concurrency to build up
+	time.Sleep(20 * time.Millisecond)
+
+	f.mu.Lock()
+	f.current--
+	f.mu.Unlock()
+
+	return []byte("DOMAIN-SUFFIX,google.com"), nil
+}
+
+func TestCollectRules_SemaphoreConcurrency(t *testing.T) {
+	cfg := &extconfig.Config{
+		EnableRuleGenerator: true,
+	}
+	for i := 0; i < 32; i++ {
+		cfg.Rulesets = append(cfg.Rulesets, extconfig.Ruleset{
+			URL:   "http://rules.example.com/test.list",
+			Group: "PROXY",
+		})
+	}
+	tracker := &concurrencyTrackingFetcher{}
+	rules, _ := collectRules(context.Background(), cfg, tracker, Options{})
+	if len(rules) != 32 {
+		t.Fatalf("expected 32 rules, got %d", len(rules))
+	}
+	if tracker.maxObserved > 16 {
+		t.Fatalf("max concurrent fetches observed %d exceeded semaphore limit 16", tracker.maxObserved)
 	}
 }

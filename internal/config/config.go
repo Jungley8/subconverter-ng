@@ -163,6 +163,23 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("config: invalid default_config_url %q", c.DefaultConfigURL)
 		}
 	}
+	for _, raw := range c.Insert.URLs {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" {
+			return errors.New("config: insert.urls cannot contain empty entries")
+		}
+		u, err := url.Parse(trimmed)
+		if err != nil {
+			return fmt.Errorf("config: invalid insert.urls entry %q: %w", raw, err)
+		}
+		scheme := strings.ToLower(u.Scheme)
+		if scheme != "http" && scheme != "https" {
+			return fmt.Errorf("config: invalid insert.urls entry %q: must be http or https URL", raw)
+		}
+		if u.Host == "" {
+			return fmt.Errorf("config: invalid insert.urls entry %q: missing host", raw)
+		}
+	}
 	return nil
 }
 

@@ -162,3 +162,26 @@ func TestConcurrentAllow(t *testing.T) {
 	wg.Wait()
 	// Just ensure no race/panic; -race will catch data races.
 }
+
+func TestDecoupledEvictionUnderRapidNewKeys(t *testing.T) {
+	clk := &fakeClock{t: time.Unix(0, 0)}
+	l := New(60, 5)
+	l.now = clk.now
+
+	// Rapidly add 1000 distinct keys at the same timestamp
+	for i := 0; i < 1000; i++ {
+		if !l.Allow(time.Duration(i).String()) {
+			t.Fatalf("key %d should be allowed", i)
+		}
+	}
+	if len(l.buckets) != 1000 {
+		t.Fatalf("expected 1000 buckets, got %d", len(l.buckets))
+	}
+
+	// Advance past TTL and call EvictStale explicitly
+	clk.advance(l.ttl + time.Minute)
+	l.EvictStale()
+	if len(l.buckets) != 0 {
+		t.Fatalf("expected all buckets evicted after TTL, got %d", len(l.buckets))
+	}
+}

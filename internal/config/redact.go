@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-var urlRegex = regexp.MustCompile(`(?:https?|socks5h?|file)://[^\s"'<>]+`)
+var urlRegex = regexp.MustCompile(`[a-zA-Z][a-zA-Z0-9+.-]*://[^\s"'<>]+`)
 
 // RedactString finds any HTTP/HTTPS URLs embedded within s and redacts their secrets.
 func RedactString(s string) string {
@@ -34,11 +34,10 @@ func RedactError(err error) error {
 	return errors.New(RedactString(err.Error()))
 }
 
-// RedactURL returns a display-safe form of a URL for logging. It masks the
-// password in any user:pass@ credential and replaces every query-parameter
-// value with "***" — subscription tokens, API keys and the like live in the
-// userinfo and query string. Values without a scheme are treated as opaque and
-// masked in the middle, so a stray secret never reaches the logs verbatim.
+// RedactURL returns a display-safe form of a URL for logging. It masks all
+// userinfo before '@', replaces every query-parameter value with "***",
+// and redacts vmess:// and ssr:// payloads. Values without a scheme are treated
+// as opaque and masked in the middle, so a stray secret never reaches the logs verbatim.
 //
 // It works on the raw string (not net/url) on purpose: round-tripping through
 // url.URL re-encodes the "***" mask into an unreadable %2A%2A%2A.
@@ -46,6 +45,13 @@ func RedactURL(raw string) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return ""
+	}
+	lower := strings.ToLower(raw)
+	if strings.HasPrefix(lower, "vmess://") {
+		return "vmess://***"
+	}
+	if strings.HasPrefix(lower, "ssr://") {
+		return "ssr://***"
 	}
 	if !strings.Contains(raw, "://") {
 		return maskMiddle(raw) // not a URL we can structurally parse
@@ -70,6 +76,13 @@ func RedactSubURL(raw string) string {
 	if raw == "" {
 		return ""
 	}
+	lower := strings.ToLower(raw)
+	if strings.HasPrefix(lower, "vmess://") {
+		return "vmess://***"
+	}
+	if strings.HasPrefix(lower, "ssr://") {
+		return "ssr://***"
+	}
 	if !strings.Contains(raw, "://") {
 		return maskMiddle(raw)
 	}
@@ -92,8 +105,8 @@ func RedactSubURL(raw string) string {
 	return base
 }
 
-// redactUserinfo masks the password in a scheme://user:pass@host... prefix,
-// leaving the username visible. The '@' must precede the path's first '/'.
+// redactUserinfo masks all credentials in a scheme://userinfo@host... prefix,
+// replacing whatever is before '@' with '***'. The '@' must precede the path's first '/'.
 func redactUserinfo(base string) string {
 	sep := strings.Index(base, "://")
 	if sep < 0 {
@@ -107,11 +120,7 @@ func redactUserinfo(base string) string {
 	if slash := strings.IndexByte(rest, '/'); slash >= 0 && slash < at {
 		return base // '@' lives in the path, not the userinfo
 	}
-	userinfo := rest[:at]
-	if colon := strings.IndexByte(userinfo, ':'); colon >= 0 {
-		userinfo = userinfo[:colon+1] + "***"
-	}
-	return base[:sep+3] + userinfo + rest[at:]
+	return base[:sep+3] + "***" + rest[at:]
 }
 
 // maskQuery replaces each query value with "***", preserving keys and order.
