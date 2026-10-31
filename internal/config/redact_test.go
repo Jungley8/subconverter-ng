@@ -25,6 +25,9 @@ func TestRedactURL(t *testing.T) {
 		{"ss base64", "ss://Y2hhY2hhMjA6cGFzc3dvcmQ@127.0.0.1:8388", "ss://***@127.0.0.1:8388"},
 		{"vmess payload", "vmess://eyJhZGQiOiIxMjcuMC4wLjEiLCJwb3J0IjoiNDQzIn0=", "vmess://***"},
 		{"ssr payload", "ssr://ZXhhbXBsZS5jb206ODg4ODpvcmlnaW46bm9uZQ==", "ssr://***"},
+		{"password with at", "http://user:p@ssword@host.com/path", "http://***@host.com/path"},
+		{"fragment with at", "trojan://1.2.3.4:443#user@domain", "trojan://1.2.3.4:443#user@domain"},
+		{"trojan pass with fragment at", "trojan://mypass@1.2.3.4:443#user@domain", "trojan://***@1.2.3.4:443#user@domain"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -46,6 +49,7 @@ func TestRedactSubURL(t *testing.T) {
 		{"creds in path sub", "https://u:p@air.com/s/tok", "https://***@air.com/***"},
 		{"vmess sub", "vmess://eyJhZGQiOiIxMjcuMC4wLjEiLCJwb3J0IjoiNDQzIn0=", "vmess://***"},
 		{"ssr sub", "ssr://ZXhhbXBsZS5jb206ODg4ODpvcmlnaW46bm9uZQ==", "ssr://***"},
+		{"fragment sub", "https://air.com#secret_token", "https://air.com/***"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

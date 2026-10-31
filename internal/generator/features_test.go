@@ -711,6 +711,15 @@ func TestPrepareNodes_SanitizesNewlines(t *testing.T) {
 	}
 }
 
+func TestPrepareNodes_NilSafe(t *testing.T) {
+	cfg := &extconfig.Config{}
+	var res Result
+	prepared := prepareNodes([]*proxy.Proxy{nil}, cfg, Options{}, &res)
+	if len(prepared) != 0 {
+		t.Fatalf("expected 0 nodes, got %d", len(prepared))
+	}
+}
+
 type concurrencyTrackingFetcher struct {
 	mu          sync.Mutex
 	current     int

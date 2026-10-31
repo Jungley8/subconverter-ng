@@ -53,7 +53,7 @@ func (c *Cache) get(url string) ([]byte, http.Header, bool) {
 		delete(c.entries, url)
 		return nil, nil, false
 	}
-	return e.body, e.header, true
+	return e.body, e.header.Clone(), true
 }
 
 // set stores body+headers for url with the cache's TTL, enforcing max capacity.
@@ -76,27 +76,22 @@ func (c *Cache) set(url string, body []byte, header http.Header) {
 		maxCap = defaultMaxEntries
 	}
 
-	// If capacity is reached, purge expired entries.
+	// If capacity is reached, purge expired entries or evict earliest-expiring entry in a single pass.
 	if len(c.entries) >= maxCap {
 		now := c.now()
+		var victimKey string
+		var victimExpires time.Time
+		purged := 0
 		for k, e := range c.entries {
 			if !now.Before(e.expires) {
 				delete(c.entries, k)
-			}
-		}
-	}
-
-	// If still at capacity, evict the entry that expires earliest.
-	if len(c.entries) >= maxCap {
-		var victimKey string
-		var victimExpires time.Time
-		for k, e := range c.entries {
-			if victimKey == "" || e.expires.Before(victimExpires) {
+				purged++
+			} else if victimKey == "" || e.expires.Before(victimExpires) {
 				victimKey = k
 				victimExpires = e.expires
 			}
 		}
-		if victimKey != "" {
+		if purged == 0 && victimKey != "" {
 			delete(c.entries, victimKey)
 		}
 	}

@@ -215,3 +215,20 @@ func TestCache_MaxCapacity(t *testing.T) {
 		t.Fatalf("expected len to remain 3 after update, got %d", c.Len())
 	}
 }
+
+func TestCache_GetHeaderIsolation(t *testing.T) {
+	c := NewCache(time.Hour)
+	hdr := http.Header{"X-Test": []string{"original"}}
+	c.set("http://test", []byte("ok"), hdr)
+
+	_, gotHdr, ok := c.get("http://test")
+	if !ok {
+		t.Fatal("expected hit")
+	}
+	gotHdr.Set("X-Test", "mutated")
+
+	_, gotHdr2, _ := c.get("http://test")
+	if gotHdr2.Get("X-Test") != "original" {
+		t.Fatalf("cache entry header was mutated in place: %q, want original", gotHdr2.Get("X-Test"))
+	}
+}
