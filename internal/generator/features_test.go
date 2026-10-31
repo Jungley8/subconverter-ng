@@ -763,3 +763,141 @@ func TestCollectRules_SemaphoreConcurrency(t *testing.T) {
 		t.Fatalf("max concurrent fetches observed %d exceeded semaphore limit 16", tracker.maxObserved)
 	}
 }
+
+func TestCanonicalProtocol(t *testing.T) {
+	cases := []struct {
+		input string
+		want  string
+	}{
+		{"hy2", "hysteria2"},
+		{"HY2", "hysteria2"},
+		{"hysteria2", "hysteria2"},
+		{"Hysteria-2", "hysteria2"},
+		{"hy", "hysteria"},
+		{"hysteria", "hysteria"},
+		{"hysteria1", "hysteria"},
+		{"hysteria-1", "hysteria"},
+		{"ss", "ss"},
+		{"shadowsocks", "ss"},
+		{"Shadowsocks", "ss"},
+		{"ssr", "ssr"},
+		{"shadowsocksr", "ssr"},
+		{"tuic", "tuic"},
+		{"TUIC", "tuic"},
+		{"vmess", "vmess"},
+		{"vless", "vless"},
+		{"trojan", "trojan"},
+		{"wg", "wireguard"},
+		{"wireguard", "wireguard"},
+		{"socks", "socks5"},
+		{"socks5", "socks5"},
+		{"http", "http"},
+		{"https", "http"},
+		{"anytls", "anytls"},
+		{"hy1", "hysteria"},
+		{"hy-1", "hysteria"},
+		{"hy_1", "hysteria"},
+		{"hysteria_1", "hysteria"},
+		{"hy_2", "hysteria2"},
+		{"hy-2", "hysteria2"},
+		{"hysteria_2", "hysteria2"},
+		{"tuic5", "tuic"},
+		{"tuic-5", "tuic"},
+		{"tuic_5", "tuic"},
+		{"tuicv5", "tuic"},
+		{"tuic-v5", "tuic"},
+		{"tuic_v5", "tuic"},
+		{"shadow_socks", "ss"},
+		{"shadow-socks", "ss"},
+		{"wire_guard", "wireguard"},
+		{"socks_5", "socks5"},
+		{"(hy2)", "hysteria2"},
+		{"\"hy2\"", "hysteria2"},
+		{"custom_proto", "custom_proto"},
+	}
+	for _, tc := range cases {
+		got := CanonicalProtocol(tc.input)
+		if got != tc.want {
+			t.Errorf("CanonicalProtocol(%q) = %q, want %q", tc.input, got, tc.want)
+		}
+	}
+}
+
+func TestParseProtocols(t *testing.T) {
+	got := ParseProtocols("hy2,tuic", "vless|ss", " wireguard ; socks5 ", "HY2", "(hy1)", "[vmess]", "")
+	want := []string{"hysteria", "hysteria2", "socks5", "ss", "tuic", "vless", "vmess", "wireguard"}
+	if len(got) != len(want) {
+		t.Fatalf("ParseProtocols length = %d, want %d: %v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("ParseProtocols[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+
+	set := ParseProtocolSet("hy2, tuic")
+	if !set["hysteria2"] || !set["tuic"] || set["vless"] {
+		t.Errorf("ParseProtocolSet unexpected: %v", set)
+	}
+}
+
+func TestFilterProtocols(t *testing.T) {
+	p1 := proxy.New("ss", "SS-Node", "1.1.1.1", 8388)
+	p2 := proxy.New("hysteria2", "HY2-Node", "2.2.2.2", 443)
+	p3 := proxy.New("tuic", "TUIC-Node", "3.3.3.3", 443)
+	p4 := proxy.New("vless", "VLESS-Node", "4.4.4.4", 443)
+
+	nodes := []*proxy.Proxy{p1, p2, p3, p4}
+	excluded := ParseProtocolSet("hy2,tuic")
+
+	kept, dropped := filterProtocols(nodes, excluded)
+	if dropped != 2 {
+		t.Fatalf("dropped = %d, want 2", dropped)
+	}
+	if len(kept) != 2 || kept[0].Name != "SS-Node" || kept[1].Name != "VLESS-Node" {
+		t.Fatalf("kept unexpected nodes: %v", kept)
+	}
+
+	// Empty exclusion set keeps all nodes
+	keptAll, droppedNone := filterProtocols(nodes, nil)
+	if droppedNone != 0 || len(keptAll) != 4 {
+		t.Fatalf("filterProtocols with nil excluded dropped = %d, len = %d", droppedNone, len(keptAll))
+	}
+}
+
+func TestPrepareNodes_ExcludeProtocols(t *testing.T) {
+	p1 := proxy.New("ss", "SS-Node", "1.1.1.1", 8388)
+	p2 := proxy.New("hysteria2", "HY2-Node", "2.2.2.2", 443)
+	p3 := proxy.New("tuic", "TUIC-Node", "3.3.3.3", 443)
+	p4 := proxy.New("vless", "VLESS-Node", "4.4.4.4", 443)
+
+	cfg := &extconfig.Config{
+		ExcludeProtocols: []string{"tuic"},
+	}
+	opts := Options{
+		ExcludeProtocols: []string{"hy2"},
+	}
+
+	var res Result
+	prepared := prepareNodes([]*proxy.Proxy{p1, p2, p3, p4}, cfg, opts, &res)
+	if res.ExcludedProtocols != 2 {
+		t.Fatalf("res.ExcludedProtocols = %d, want 2", res.ExcludedProtocols)
+	}
+	if res.NodeCount != 2 || len(prepared) != 2 {
+		t.Fatalf("res.NodeCount = %d, prepared = %d, want 2", res.NodeCount, len(prepared))
+	}
+	for _, n := range prepared {
+		if n.Type == "hysteria2" || n.Type == "tuic" {
+			t.Errorf("prepared contains excluded protocol node: %v (%s)", n.Name, n.Type)
+		}
+	}
+}
+
+func TestPrepareNodes_NilConfigDoesNotPanic(t *testing.T) {
+	p1 := proxy.New("ss", "SS-Node", "1.1.1.1", 8388)
+	var res Result
+	prepared := prepareNodes([]*proxy.Proxy{p1}, nil, Options{ExcludeProtocols: []string{"vmess"}}, &res)
+	if len(prepared) != 1 {
+		t.Fatalf("expected 1 node, got %d", len(prepared))
+	}
+}

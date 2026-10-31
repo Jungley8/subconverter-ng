@@ -55,6 +55,7 @@ Common flags:
 | `--fdn` | Filter out nodes Clash.Meta doesn't support |
 | `--list` | Output the node list only |
 | `--append-type` | Prefix node names with `[type]` |
+| `--exclude-protocol` | Exclude nodes by protocol or type (e.g. `hysteria2,tuic`) |
 | `--expand` | `=false` emits rule-providers instead |
 | `--emoji` `--add-emoji` `--remove-emoji` | Add/remove emoji |
 
@@ -65,6 +66,7 @@ Common flags:
 - `ruleset=` — remote rule lists, plus inline rules like `[]GEOIP,CN` and `[]FINAL`
 - `custom_proxy_group=` — backtick-separated groups (`select` / `url-test` / regex filters / `[]` group references)
 - `exclude_remarks=` / `include_remarks=` — node-name filtering
+- `exclude_protocol=` — exclude nodes by protocol or type (e.g. `hysteria2,tuic`)
 - `enable_rule_generator` / `overwrite_original_rules`
 - `clash_rule_base=` — custom Clash base template
 

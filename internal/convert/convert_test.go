@@ -527,3 +527,121 @@ func TestNormalizeTarget(t *testing.T) {
 		}
 	}
 }
+
+func TestRun_ExcludeProtocols(t *testing.T) {
+	f := fakeFetcher{
+		"client/subscribe": sampleSubscription(),
+		"config.init":      []byte(sampleINI),
+		"PROXY.list":       []byte("DOMAIN-SUFFIX,google.com\n"),
+	}
+	req := Request{
+		Target:    "clash",
+		SubURLs:   []string{"https://airport.example.com/api/v1/client/subscribe?token=secret"},
+		ConfigURL: "https://rules.example.com/config.init",
+		Gen: generator.Options{
+			ExcludeProtocols: []string{"hy2", "tuic"},
+		},
+	}
+	out, diag, err := Run(context.Background(), f, req)
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+	if diag.ExcludedProtocols != 2 {
+		t.Fatalf("diag.ExcludedProtocols = %d, want 2", diag.ExcludedProtocols)
+	}
+	if diag.NodeCount != 4 {
+		t.Fatalf("diag.NodeCount = %d, want 4", diag.NodeCount)
+	}
+
+	var parsed map[string]any
+	if err := yaml.Unmarshal(out, &parsed); err != nil {
+		t.Fatalf("yaml unmarshal: %v", err)
+	}
+	proxies, ok := parsed["proxies"].([]any)
+	if !ok || len(proxies) != 4 {
+		t.Fatalf("proxies count = %d, want 4", len(proxies))
+	}
+	for _, p := range proxies {
+		pm, _ := p.(map[string]any)
+		typ, _ := pm["type"].(string)
+		if typ == "hysteria2" || typ == "tuic" {
+			t.Fatalf("found excluded protocol in proxies: %v", pm)
+		}
+	}
+}
+
+func TestRun_ExcludeProtocols_OtherTargetsAndAllExcluded(t *testing.T) {
+	f := fakeFetcher{
+		"client/subscribe": sampleSubscription(),
+		"config.init":      []byte(sampleINI),
+		"PROXY.list":       []byte("DOMAIN-SUFFIX,google.com\n"),
+	}
+
+	// 1. singbox target
+	reqSB := Request{
+		Target:    "singbox",
+		SubURLs:   []string{"https://airport.example.com/api/v1/client/subscribe?token=secret"},
+		ConfigURL: "https://rules.example.com/config.init",
+		Gen: generator.Options{
+			ExcludeProtocols: []string{"vless", "trojan"},
+		},
+	}
+	outSB, diagSB, err := Run(context.Background(), f, reqSB)
+	if err != nil {
+		t.Fatalf("singbox Run failed: %v", err)
+	}
+	if diagSB.ExcludedProtocols != 2 {
+		t.Fatalf("singbox diag.ExcludedProtocols = %d, want 2", diagSB.ExcludedProtocols)
+	}
+	if strings.Contains(string(outSB), "vless") || strings.Contains(string(outSB), "us.example.com") {
+		t.Errorf("singbox output contains excluded vless node")
+	}
+
+	// 2. v2ray target (base64 links)
+	reqV2 := Request{
+		Target:  "v2ray",
+		SubURLs: []string{"https://airport.example.com/api/v1/client/subscribe?token=secret"},
+		Gen: generator.Options{
+			ExcludeProtocols: []string{"ss", "vmess", "vless", "trojan", "tuic"},
+		},
+	}
+	outV2, diagV2, err := Run(context.Background(), f, reqV2)
+	if err != nil {
+		t.Fatalf("v2ray Run failed: %v", err)
+	}
+	// Total 7 in sampleSubscription; 6 match the excluded list, 1 is excluded_remarks (none in v2ray, so 6 excluded + 1 kept = 1 hysteria2 node)
+	if diagV2.NodeCount != 1 {
+		t.Fatalf("v2ray NodeCount = %d, want 1 (only hysteria2)", diagV2.NodeCount)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(string(outV2))
+	if err != nil {
+		t.Fatalf("decode v2ray output: %v", err)
+	}
+	if !strings.HasPrefix(string(decoded), "hysteria2://") {
+		t.Errorf("v2ray output unexpected: %s", string(decoded))
+	}
+
+	// 3. Exclude all nodes -> does not crash, yields 0 nodes
+	reqAll := Request{
+		Target:  "clash",
+		SubURLs: []string{"https://airport.example.com/api/v1/client/subscribe?token=secret"},
+		Gen: generator.Options{
+			ExcludeProtocols: []string{"ss", "vmess", "vless", "trojan", "hy2", "tuic"},
+		},
+	}
+	outAll, diagAll, err := Run(context.Background(), f, reqAll)
+	if err != nil {
+		t.Fatalf("all excluded Run failed: %v", err)
+	}
+	if diagAll.NodeCount != 0 {
+		t.Fatalf("diagAll.NodeCount = %d, want 0", diagAll.NodeCount)
+	}
+	var parsedAll map[string]any
+	if err := yaml.Unmarshal(outAll, &parsedAll); err != nil {
+		t.Fatalf("yaml unmarshal all excluded: %v", err)
+	}
+	proxiesAll, _ := parsedAll["proxies"].([]any)
+	if len(proxiesAll) != 0 {
+		t.Fatalf("proxiesAll count = %d, want 0", len(proxiesAll))
+	}
+}

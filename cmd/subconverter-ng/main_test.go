@@ -99,3 +99,46 @@ func TestCLIFetcher_LocalFileAndStdin(t *testing.T) {
 		t.Errorf("error = %q, expected read file prefix", err)
 	}
 }
+
+func TestCmdConvert_ExcludeProtocol(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "out.yaml")
+	shareLinks := "ss://YWVzLTI1Ni1nY206cGFzc3dvcmRAMTI3LjAuMC4xOjgzODg=#NodeSS|trojan://pass@127.0.0.1:443?sni=example.com#NodeTrojan"
+
+	args := []string{
+		"--url", shareLinks,
+		"--exclude-protocol", "trojan",
+		"-o", outPath,
+	}
+	cmdConvert(args)
+
+	data, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("failed to read output file: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "NodeSS") {
+		t.Errorf("expected output to contain NodeSS, got: %s", content)
+	}
+	if strings.Contains(content, "NodeTrojan") {
+		t.Errorf("expected output to exclude NodeTrojan, got: %s", content)
+	}
+
+	// Test repeatable flags and alias --filter-type
+	outPath2 := filepath.Join(t.TempDir(), "out2.yaml")
+	args2 := []string{
+		"--url", shareLinks,
+		"--exclude-protocol", "trojan",
+		"--filter-type", "ss",
+		"-o", outPath2,
+	}
+	cmdConvert(args2)
+
+	data2, err := os.ReadFile(outPath2)
+	if err != nil {
+		t.Fatalf("failed to read output2 file: %v", err)
+	}
+	content2 := string(data2)
+	if strings.Contains(content2, "NodeSS") || strings.Contains(content2, "NodeTrojan") {
+		t.Errorf("expected both nodes to be excluded, got: %s", content2)
+	}
+}

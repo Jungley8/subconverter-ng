@@ -629,6 +629,11 @@
           <input type="text" id="proxy" placeholder="socks5://127.0.0.1:1080">
         </div>
 
+        <div class="field">
+          <label for="exclude_protocol">排除协议 exclude_protocol <span class="opt">可选 · 逗号分隔，如 hy2, tuic</span></label>
+          <input type="text" id="exclude_protocol" placeholder="hysteria2, tuic">
+        </div>
+
         <button type="submit" class="go" id="genBtn">生成订阅链接</button>
       </form>
 
@@ -858,7 +863,7 @@
   // 1. Form Caching & Converter Logic (Tab 1)
   // ==========================================
   var STORE_KEY_FORM = 'subng.form.v1';
-  var TEXT_FIELDS = ['urls', 'config', 'target', 'proxy'];
+  var TEXT_FIELDS = ['urls', 'config', 'target', 'proxy', 'exclude_protocol'];
   var FLAG_FIELDS = ['sort', 'dedup', 'udp', 'tfo', 'scv', 'fdn', 'append_type', 'tailscale', 'emoji'];
 
   function saveFormState() {
@@ -906,6 +911,9 @@
 
     var proxy = $('proxy').value.trim();
     if (proxy) { params.push('proxy=' + encodeURIComponent(proxy)); }
+
+    var excludeProto = $('exclude_protocol').value.trim();
+    if (excludeProto) { params.push('exclude_protocol=' + encodeURIComponent(excludeProto)); }
 
     return window.location.origin + '/sub?' + params.join('&');
   }
