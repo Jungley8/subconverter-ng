@@ -35,11 +35,17 @@ func sanitizeNodeName(name string) string {
 // (udp/tfo/scv, emoji, rename, append_type) are stamped onto each node's Clash
 // field bag, which all generators read from.
 func prepareNodes(nodes []*proxy.Proxy, cfg *extconfig.Config, opts Options, res *Result) []*proxy.Proxy {
+	clean := make([]*proxy.Proxy, 0, len(nodes))
 	for _, n := range nodes {
+		if n == nil {
+			continue
+		}
 		if strings.ContainsAny(n.Name, "\r\n") {
 			n.Rename(sanitizeNodeName(n.Name))
 		}
+		clean = append(clean, n)
 	}
+	nodes = clean
 	nodes = filterNodes(nodes, cfg)
 	if opts.FilterDeprecated {
 		var dropped int
@@ -74,6 +80,9 @@ func prepareNodes(nodes []*proxy.Proxy, cfg *extconfig.Config, opts Options, res
 func uniquifyNames(nodes []*proxy.Proxy) {
 	seen := make(map[string]bool, len(nodes))
 	for _, n := range nodes {
+		if n == nil {
+			continue
+		}
 		if !seen[n.Name] {
 			seen[n.Name] = true
 			continue

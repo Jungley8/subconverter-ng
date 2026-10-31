@@ -87,38 +87,44 @@ func RedactSubURL(raw string) string {
 		return maskMiddle(raw)
 	}
 	base := raw
-	if i := strings.IndexByte(raw, '?'); i >= 0 {
+	if i := strings.IndexAny(raw, "?#"); i >= 0 {
 		base = raw[:i]
 	}
 	base = redactUserinfo(base)
 	sep := strings.Index(base, "://")
 	rest := base[sep+3:]
 	if i := strings.IndexByte(rest, '/'); i >= 0 {
-		if rest[i:] == "/" { // bare trailing slash carries no secret
+		if rest[i:] == "/" && len(base) == len(raw) { // bare trailing slash without query/fragment carries no secret
 			return base[:sep+3] + rest[:i]
 		}
 		return base[:sep+3] + rest[:i] + "/***"
 	}
-	if len(base) < len(raw) { // had a query but no path
+	if len(base) < len(raw) { // had a query or fragment but no path
 		return base + "/***"
 	}
 	return base
 }
 
 // redactUserinfo masks all credentials in a scheme://userinfo@host... prefix,
-// replacing whatever is before '@' with '***'. The '@' must precede the path's first '/'.
+// replacing whatever is before the last '@' in the authority component with '***'.
+// The authority component is terminated by the first '/', '?', or '#'.
 func redactUserinfo(base string) string {
 	sep := strings.Index(base, "://")
 	if sep < 0 {
 		return base
 	}
 	rest := base[sep+3:]
-	at := strings.IndexByte(rest, '@')
+	end := len(rest)
+	for i := 0; i < len(rest); i++ {
+		if rest[i] == '/' || rest[i] == '?' || rest[i] == '#' {
+			end = i
+			break
+		}
+	}
+	auth := rest[:end]
+	at := strings.LastIndexByte(auth, '@')
 	if at < 0 {
 		return base
-	}
-	if slash := strings.IndexByte(rest, '/'); slash >= 0 && slash < at {
-		return base // '@' lives in the path, not the userinfo
 	}
 	return base[:sep+3] + "***" + rest[at:]
 }
