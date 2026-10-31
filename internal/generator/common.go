@@ -46,6 +46,20 @@ func prepareNodes(nodes []*proxy.Proxy, cfg *extconfig.Config, opts Options, res
 		clean = append(clean, n)
 	}
 	nodes = clean
+
+	var excludedList []string
+	if cfg != nil && len(cfg.ExcludeProtocols) > 0 {
+		excludedList = append(excludedList, cfg.ExcludeProtocols...)
+	}
+	if len(opts.ExcludeProtocols) > 0 {
+		excludedList = append(excludedList, opts.ExcludeProtocols...)
+	}
+	if len(excludedList) > 0 {
+		var dropped int
+		nodes, dropped = filterProtocols(nodes, ParseProtocolSet(excludedList...))
+		res.ExcludedProtocols = dropped
+	}
+
 	nodes = filterNodes(nodes, cfg)
 	if opts.FilterDeprecated {
 		var dropped int
@@ -97,6 +111,109 @@ func uniquifyNames(nodes []*proxy.Proxy) {
 		seen[candidate] = true
 		n.Rename(candidate)
 	}
+}
+
+// protocolAliases maps accepted protocol abbreviations and common aliases to
+// their canonical proxy types.
+var protocolAliases = map[string]string{
+	"ss":           "ss",
+	"shadowsocks":  "ss",
+	"ssr":          "ssr",
+	"shadowsocksr": "ssr",
+	"vmess":        "vmess",
+	"vless":        "vless",
+	"trojan":       "trojan",
+	"hysteria":     "hysteria",
+	"hysteria1":    "hysteria",
+	"hy":           "hysteria",
+	"hy1":          "hysteria",
+	"hysteria2":    "hysteria2",
+	"hy2":          "hysteria2",
+	"tuic":         "tuic",
+	"tuic5":        "tuic",
+	"tuicv5":       "tuic",
+	"wireguard":    "wireguard",
+	"wg":           "wireguard",
+	"socks":        "socks5",
+	"socks5":       "socks5",
+	"http":         "http",
+	"https":        "http",
+	"anytls":       "anytls",
+	"snell":        "snell",
+}
+
+// CanonicalProtocol normalizes a protocol name or alias to its standard form.
+func CanonicalProtocol(raw string) string {
+	key := strings.ToLower(strings.TrimSpace(raw))
+	key = strings.Trim(key, "()[]\"'")
+	if c, ok := protocolAliases[key]; ok {
+		return c
+	}
+	// Try without hyphens and underscores (e.g. hysteria_2, hy-2, shadow_socks, tuic_v5)
+	normalized := strings.ReplaceAll(strings.ReplaceAll(key, "-", ""), "_", "")
+	if c, ok := protocolAliases[normalized]; ok {
+		return c
+	}
+	return key
+}
+
+// ParseProtocols parses raw protocol strings (delimited by comma, pipe, semicolon,
+// or whitespace) into a sorted, deduplicated slice of canonical protocol names.
+func ParseProtocols(raw ...string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, r := range raw {
+		for _, token := range strings.FieldsFunc(r, func(c rune) bool {
+			return c == ',' || c == '|' || c == ';' || c == ' ' || c == '\t' || c == '\n' || c == '\r'
+		}) {
+			token = strings.TrimSpace(token)
+			token = strings.Trim(token, "()[]\"'")
+			if token == "" {
+				continue
+			}
+			canon := CanonicalProtocol(token)
+			if canon != "" && !seen[canon] {
+				seen[canon] = true
+				out = append(out, canon)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// ParseProtocolSet parses raw protocol strings into a set of canonical protocol names.
+func ParseProtocolSet(raw ...string) map[string]bool {
+	list := ParseProtocols(raw...)
+	m := make(map[string]bool, len(list))
+	for _, p := range list {
+		m[p] = true
+	}
+	return m
+}
+
+// filterProtocols drops nodes whose protocol or proxy type matches any in the
+// excluded set. Protocol aliases (e.g. hy2 -> hysteria2, ss -> shadowsocks) are
+// normalized so users can specify common abbreviations.
+func filterProtocols(nodes []*proxy.Proxy, excluded map[string]bool) ([]*proxy.Proxy, int) {
+	if len(excluded) == 0 {
+		return nodes, 0
+	}
+	out := make([]*proxy.Proxy, 0, len(nodes))
+	var dropped int
+	for _, n := range nodes {
+		if n == nil {
+			continue
+		}
+		rawType := strings.ToLower(strings.TrimSpace(n.Type))
+		canon := CanonicalProtocol(rawType)
+		if excluded[canon] || excluded[rawType] {
+			dropped++
+			continue
+		}
+		out = append(out, n)
+	}
+	return out, dropped
 }
 
 // Rule is a target-neutral routing rule. Type is the upper-case matcher

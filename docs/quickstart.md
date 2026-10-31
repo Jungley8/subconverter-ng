@@ -55,6 +55,7 @@ subconverter-ng convert \
 | `--fdn` | 过滤 Clash.Meta 不支持的节点 |
 | `--list` | 仅输出节点列表 |
 | `--append-type` | 节点名前加 `[类型]` |
+| `--exclude-protocol` | 手动排除指定协议（如 `hysteria2,tuic`） |
 | `--expand` | `=false` 时输出 rule-providers |
 | `--emoji` `--add-emoji` `--remove-emoji` | emoji 增删 |
 
@@ -65,6 +66,7 @@ subconverter-ng convert \
 - `ruleset=` —— 远程规则列表，以及 `[]GEOIP,CN`、`[]FINAL` 等内联规则
 - `custom_proxy_group=` —— backtick 分隔的分组（`select` / `url-test` / 正则筛选 / `[]` 组引用）
 - `exclude_remarks=` / `include_remarks=` —— 节点名过滤
+- `exclude_protocol=` —— 排除指定协议（如 `hysteria2,tuic`）
 - `enable_rule_generator` / `overwrite_original_rules`
 - `clash_rule_base=` —— 自定义 Clash 基础模板
 

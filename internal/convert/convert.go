@@ -75,13 +75,14 @@ type Request struct {
 
 // Diagnostics captures non-fatal information about a conversion.
 type Diagnostics struct {
-	NodeCount    int
-	SkippedLines []string // subscription lines that did not parse into a node
-	EmptyGroups  []string // proxy-groups that matched no nodes (filled with DIRECT)
-	SkippedRules []string // ruleset entries dropped for an unsupported rule type
-	SkippedNodes []string // nodes the chosen target cannot render
-	Duplicates   int      // nodes removed by dedup (&dedup=true)
-	Deprecated   int      // nodes removed by filter-deprecated (&fdn=true)
+	NodeCount         int
+	SkippedLines      []string // subscription lines that did not parse into a node
+	EmptyGroups       []string // proxy-groups that matched no nodes (filled with DIRECT)
+	SkippedRules      []string // ruleset entries dropped for an unsupported rule type
+	SkippedNodes      []string // nodes the chosen target cannot render
+	Duplicates        int      // nodes removed by dedup (&dedup=true)
+	Deprecated        int      // nodes removed by filter-deprecated (&fdn=true)
+	ExcludedProtocols int      // nodes removed by protocol exclusion (&exclude_protocol=...)
 
 	// ContentType is the HTTP Content-Type the rendered output should be served
 	// with (varies by target: YAML for clash, JSON for sing-box, etc.).
@@ -164,6 +165,7 @@ func Run(ctx context.Context, f Fetcher, req Request) ([]byte, *Diagnostics, err
 		SkippedNodes:         result.SkippedNodes,
 		Duplicates:           result.Duplicates,
 		Deprecated:           result.DeprecatedDropped,
+		ExcludedProtocols:    result.ExcludedProtocols,
 		ContentType:          result.ContentType,
 		SubscriptionUserinfo: userinfo,
 	}, nil

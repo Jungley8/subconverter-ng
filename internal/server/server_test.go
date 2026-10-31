@@ -686,3 +686,90 @@ func TestServer_InvalidTrustedProxiesPanics(t *testing.T) {
 	}()
 	_ = New(cfg)
 }
+
+func TestHandleSub_ExcludeProtocol(t *testing.T) {
+	air := fakeAirport()
+	defer air.Close()
+
+	h := New(testConfig()).Handler()
+
+	// 1. Exclude trojan -> only ss remains
+	req1 := "/sub?target=clash&url=" + url.QueryEscape(air.URL+"/sub.txt") +
+		"&config=" + url.QueryEscape(air.URL+"/config.init") + "&exclude_protocol=trojan"
+	rec1 := httptest.NewRecorder()
+	h.ServeHTTP(rec1, httptest.NewRequest(http.MethodGet, req1, nil))
+	if rec1.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec1.Code, rec1.Body.String())
+	}
+	var doc1 map[string]any
+	if err := yaml.Unmarshal(rec1.Body.Bytes(), &doc1); err != nil {
+		t.Fatalf("unmarshal yaml: %v", err)
+	}
+	proxies1, _ := doc1["proxies"].([]any)
+	if len(proxies1) != 1 {
+		t.Fatalf("proxies count = %d, want 1", len(proxies1))
+	}
+	p1, _ := proxies1[0].(map[string]any)
+	if p1["type"] != "ss" {
+		t.Errorf("remaining proxy type = %v, want ss", p1["type"])
+	}
+
+	// 2. Exclude shadowsocks via alias and comma delimiter
+	req2 := "/sub?target=clash&url=" + url.QueryEscape(air.URL+"/sub.txt") +
+		"&config=" + url.QueryEscape(air.URL+"/config.init") + "&exclude_protocols=shadowsocks"
+	rec2 := httptest.NewRecorder()
+	h.ServeHTTP(rec2, httptest.NewRequest(http.MethodGet, req2, nil))
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec2.Code, rec2.Body.String())
+	}
+	var doc2 map[string]any
+	if err := yaml.Unmarshal(rec2.Body.Bytes(), &doc2); err != nil {
+		t.Fatalf("unmarshal yaml: %v", err)
+	}
+	proxies2, _ := doc2["proxies"].([]any)
+	if len(proxies2) != 1 {
+		t.Fatalf("proxies count = %d, want 1", len(proxies2))
+	}
+	p2, _ := proxies2[0].(map[string]any)
+	if p2["type"] != "trojan" {
+		t.Errorf("remaining proxy type = %v, want trojan", p2["type"])
+	}
+
+	// 3. Exclude both via pipe delimiter: ss|trojan -> 0 proxies remain
+	req3 := "/sub?target=clash&url=" + url.QueryEscape(air.URL+"/sub.txt") +
+		"&config=" + url.QueryEscape(air.URL+"/config.init") + "&exclude_type=ss|trojan"
+	rec3 := httptest.NewRecorder()
+	h.ServeHTTP(rec3, httptest.NewRequest(http.MethodGet, req3, nil))
+	if rec3.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec3.Code, rec3.Body.String())
+	}
+	var doc3 map[string]any
+	if err := yaml.Unmarshal(rec3.Body.Bytes(), &doc3); err != nil {
+		t.Fatalf("unmarshal yaml: %v", err)
+	}
+	proxies3, _ := doc3["proxies"].([]any)
+	if len(proxies3) != 0 {
+		t.Errorf("proxies count = %d, want 0", len(proxies3))
+	}
+
+	// 4. Test filter_type alias
+	req4 := "/sub?target=clash&url=" + url.QueryEscape(air.URL+"/sub.txt") +
+		"&config=" + url.QueryEscape(air.URL+"/config.init") + "&filter_type=trojan"
+	rec4 := httptest.NewRecorder()
+	h.ServeHTTP(rec4, httptest.NewRequest(http.MethodGet, req4, nil))
+	if rec4.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec4.Code, rec4.Body.String())
+	}
+	var doc4 map[string]any
+	if err := yaml.Unmarshal(rec4.Body.Bytes(), &doc4); err != nil {
+		t.Fatalf("unmarshal yaml: %v", err)
+	}
+	proxies4, _ := doc4["proxies"].([]any)
+	if len(proxies4) != 1 {
+		t.Fatalf("proxies count = %d, want 1", len(proxies4))
+	}
+	p4, _ := proxies4[0].(map[string]any)
+	if p4["type"] != "ss" {
+		t.Errorf("remaining proxy type = %v, want ss", p4["type"])
+	}
+}

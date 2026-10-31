@@ -206,6 +206,15 @@ func cmdConvert(args []string) {
 	tailscale := fs.Bool("tailscale", false, "prepend Tailscale DIRECT rules (100.64.0.0/10, fd7a:115c:a1e0::/48)")
 	insert := fs.String("insert", "", "insert_url: extra node source URL(s), '|'-separated, merged into the output")
 	insertPrepend := fs.Bool("insert-prepend", true, "place inserted nodes before subscription nodes")
+	var excludeProtocols stringsFlag
+	fs.Var(&excludeProtocols, "exclude-protocol", "exclude nodes by protocol or type (e.g. hysteria2, tuic)")
+	fs.Var(&excludeProtocols, "exclude-protocols", "alias for --exclude-protocol")
+	fs.Var(&excludeProtocols, "exclude-type", "alias for --exclude-protocol")
+	fs.Var(&excludeProtocols, "exclude-types", "alias for --exclude-protocol")
+	fs.Var(&excludeProtocols, "filter-protocol", "alias for --exclude-protocol")
+	fs.Var(&excludeProtocols, "filter-protocols", "alias for --exclude-protocol")
+	fs.Var(&excludeProtocols, "filter-type", "alias for --exclude-protocol")
+	fs.Var(&excludeProtocols, "filter-types", "alias for --exclude-protocol")
 	timeout := fs.Duration("timeout", 30*time.Second, "per-fetch timeout")
 	cacheTTL := fs.Duration("cache-ttl", 0, "TTL for the in-memory fetch cache (0=default 300s, negative=disabled)")
 	if err := fs.Parse(args); err != nil {
@@ -243,6 +252,7 @@ func cmdConvert(args []string) {
 			AppendType:       *appendType,
 			ListOnly:         *list,
 			Tailscale:        *tailscale,
+			ExcludeProtocols: generator.ParseProtocols(excludeProtocols...),
 		},
 		Emoji:       triFromString(*emoji),
 		AddEmoji:    triFromString(*addEmoji),
@@ -255,8 +265,8 @@ func cmdConvert(args []string) {
 	if err != nil {
 		fatal("convert: %v", config.RedactError(err))
 	}
-	fmt.Fprintf(os.Stderr, "ok: %d nodes, %d unparsed lines, %d dup, %d deprecated, %d nodes unsupported by target, %d empty groups, %d rules dropped (unsupported type)\n",
-		diag.NodeCount, len(diag.SkippedLines), diag.Duplicates, diag.Deprecated, len(diag.SkippedNodes), len(diag.EmptyGroups), len(diag.SkippedRules))
+	fmt.Fprintf(os.Stderr, "ok: %d nodes, %d unparsed lines, %d dup, %d deprecated, %d excluded by protocol, %d nodes unsupported by target, %d empty groups, %d rules dropped (unsupported type)\n",
+		diag.NodeCount, len(diag.SkippedLines), diag.Duplicates, diag.Deprecated, diag.ExcludedProtocols, len(diag.SkippedNodes), len(diag.EmptyGroups), len(diag.SkippedRules))
 	for _, r := range diag.SkippedRules {
 		fmt.Fprintf(os.Stderr, "  dropped rule (unsupported type): %s\n", r)
 	}
@@ -302,4 +312,15 @@ func splitPipe(raw string) []string {
 func fatal(format string, a ...any) {
 	fmt.Fprintf(os.Stderr, "error: "+format+"\n", a...)
 	os.Exit(1)
+}
+
+type stringsFlag []string
+
+func (s *stringsFlag) String() string {
+	return strings.Join(*s, ",")
+}
+
+func (s *stringsFlag) Set(val string) error {
+	*s = append(*s, val)
+	return nil
 }

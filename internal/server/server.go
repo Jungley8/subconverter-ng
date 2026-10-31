@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -294,6 +295,7 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 			AppendType:       boolParam(q.Get("append_type"), false),
 			ListOnly:         boolParam(q.Get("list"), false),
 			Tailscale:        boolParam(q.Get("tailscale"), false),
+			ExcludeProtocols: parseProtocolParams(q),
 		},
 		// Emoji tribools (nil when the param is absent) resolved in convert.
 		Emoji:       boolTri(q.Get("emoji")),
@@ -314,6 +316,7 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 		"unparsed_lines", len(diag.SkippedLines),
 		"duplicates", diag.Duplicates,
 		"deprecated", diag.Deprecated,
+		"excluded_protocols", diag.ExcludedProtocols,
 		"unsupported_nodes", len(diag.SkippedNodes),
 		"empty_groups", len(diag.EmptyGroups),
 		"dropped_rules", len(diag.SkippedRules),
@@ -362,6 +365,28 @@ func writeUserError(w http.ResponseWriter, err error) {
 	}
 	w.WriteHeader(http.StatusBadGateway)
 	_, _ = fmt.Fprintf(w, "# subconverter-ng: 转换失败 / conversion failed\n# %s\n", redactedMsg)
+}
+
+// parseProtocolParams extracts excluded protocols from query parameters,
+// supporting common aliases (&exclude_protocol=, &exclude_protocols=, &exclude_types=, etc.).
+func parseProtocolParams(q url.Values) []string {
+	keys := []string{
+		"exclude_protocol", "exclude_protocols",
+		"exclude-protocol", "exclude-protocols",
+		"exclude_type", "exclude_types",
+		"exclude-type", "exclude-types",
+		"filter_protocol", "filter_protocols",
+		"filter-protocol", "filter-protocols",
+		"filter_type", "filter_types",
+		"filter-type", "filter-types",
+	}
+	var raw []string
+	for _, k := range keys {
+		if vals, ok := q[k]; ok {
+			raw = append(raw, vals...)
+		}
+	}
+	return generator.ParseProtocols(raw...)
 }
 
 // splitURLs splits the &url= value on the "|" multi-subscription separator.

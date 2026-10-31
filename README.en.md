@@ -100,6 +100,7 @@ See [docs/url-params.md](docs/url-params.md) for full documentation. Common opti
 | `list` | Output node list only without groups or rules (**clash only**) |
 | `append_type` | Prepend `[TYPE]` to node names |
 | `tailscale` | Prepend Tailscale DIRECT rules (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`) |
+| `exclude_protocol` | Exclude nodes by protocol or type (e.g. `hy2,tuic`; alias: `exclude_protocols`) |
 | `expand` | Set to `false` to output rule-providers referencing remote rules (**clash only**) |
 | `emoji` `add_emoji` `remove_emoji` | Add or remove emoji tags |
 | `udp` `tfo` `scv` | Node transport feature toggles |
