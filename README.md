@@ -19,7 +19,7 @@
 - ✅ **接口兼容**：`/sub?target=clash&url=...&config=...`，老客户端无需改动。
 - ✅ **全协议支持**：Shadowsocks、ShadowsocksR、VMess、VLESS（含 Reality / XTLS-Vision）、Trojan、Hysteria（v1/v2）、TUIC v5、AnyTLS、SOCKS5、**WireGuard**。
 - ✅ **多输出 target**：`clash`（Clash.Meta / mihomo）、`singbox`、`surge`、`shadowrocket`、`quanx`、`loon`、`v2ray`/`mixed`。
-- ✅ **安全与纵深防御**：物理连接层防御 SSRF 与 DNS Rebinding；日志与响应中机场 Token 强制脱敏（Token Redaction）；转换失败严格返回 HTTP 502/422，杜绝返回 200 导致客户端有效配置被覆写（防订阅投毒）。
+- ✅ **安全与纵深防御**：物理连接层防御 SSRF 与 DNS Rebinding（可选 `allow_private_cidrs` 精确放行自有内网）；日志与响应中机场 Token 强制脱敏（Token Redaction）；转换失败严格返回 HTTP 424/422，杜绝返回 200 导致客户端有效配置被覆写（防订阅投毒），且错误正文不会被 Cloudflare 等反向代理的 5xx 页面遮挡。
 - ✅ **并发与抗压韧性**：跨请求 SingleFlight 并发折叠，避免高频请求击垮上游机场或触发 GitHub API 限流；带容量上限的内存缓存；响应体流控保护（10MB 防 OOM）。
 - ✅ **生产级可观测性**：`log/slog` 结构化日志；健康探针（`/healthz`、`/readyz`）；支持 `SIGTERM`/`SIGINT` 优雅停机；可选 API Token 准入保护（`api_access_token`）。
 - ✅ **节点处理**：去重（`dedup`）、过滤不支持节点（`fdn`）、追加协议类型（`append_type`）、Tailscale 直连规则（`tailscale`）、`rename` 正则重命名、emoji 增删（对齐 subconverter）。

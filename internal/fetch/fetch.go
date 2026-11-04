@@ -18,6 +18,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/cookiejar"
+	"net/netip"
 	"net/url"
 	"strings"
 	"time"
@@ -50,6 +51,11 @@ type Options struct {
 	// private, loopback, multicast, or link-local IPs are blocked, and redirects
 	// to them are rejected.
 	AllowPrivateIPs bool
+
+	// AllowPrivateCIDRs lists operator-approved private/CGNAT prefixes that stay
+	// reachable while SSRF protection remains enabled for everything else. Use
+	// this instead of AllowPrivateIPs when only one internal host is needed.
+	AllowPrivateCIDRs []netip.Prefix
 
 	// Group, when non-nil, is a shared singleflight.Group injected by the caller
 	// (e.g. the HTTP server reuses one group across per-request Clients). When
@@ -114,7 +120,7 @@ func New(opts Options) (*Client, error) {
 		// If SSRF protection is active and this proxy was NOT the operator's explicitly
 		// trusted proxy, validate that the proxy itself does not target private IPs.
 		if !opts.AllowPrivateIPs && (opts.TrustedProxy == "" || opts.Proxy != opts.TrustedProxy) {
-			if err := ValidateProxyURL(opts.Proxy, false); err != nil {
+			if err := ValidateProxyURL(opts.Proxy, false, opts.AllowPrivateCIDRs); err != nil {
 				return nil, fmt.Errorf("proxy URL blocked by SSRF defense: %w", err)
 			}
 		}
@@ -128,7 +134,7 @@ func New(opts Options) (*Client, error) {
 		tr.Proxy = http.ProxyFromEnvironment
 	}
 
-	tr.DialContext = safeDialContext(dialer, opts.AllowPrivateIPs, trustedProxyHost)
+	tr.DialContext = safeDialContext(dialer, opts.AllowPrivateIPs, opts.AllowPrivateCIDRs, trustedProxyHost)
 
 	group := opts.Group
 	if group == nil {
@@ -142,7 +148,7 @@ func New(opts Options) (*Client, error) {
 			Transport:     tr,
 			Timeout:       opts.Timeout,
 			Jar:           jar,
-			CheckRedirect: safeCheckRedirect(opts.AllowPrivateIPs),
+			CheckRedirect: safeCheckRedirect(opts.AllowPrivateIPs, opts.AllowPrivateCIDRs),
 		},
 		group: group,
 	}
@@ -182,7 +188,7 @@ type metaResult struct {
 // entries also retain their headers so repeated reads see Subscription-Userinfo.
 // Singleflight deduplicates concurrent in-flight requests for identical targets.
 func (c *Client) GetWithMeta(ctx context.Context, target string) ([]byte, http.Header, error) {
-	if err := validateTargetURL(target, c.opts.AllowPrivateIPs); err != nil {
+	if err := validateTargetURL(target, c.opts.AllowPrivateIPs, c.opts.AllowPrivateCIDRs); err != nil {
 		return nil, nil, err
 	}
 

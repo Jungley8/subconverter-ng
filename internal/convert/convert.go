@@ -21,7 +21,7 @@ import (
 // ErrNoNodes is returned when a subscription fetched successfully but yielded no
 // usable nodes. It signals a subscription-content problem (empty sub, all lines
 // unparseable) rather than a gateway/fetch failure, so callers can respond with
-// a readable hint instead of a 502. Test with errors.Is.
+// a readable hint instead of a generic upstream-failure response. Test with errors.Is.
 var ErrNoNodes = errors.New("no usable nodes parsed from subscription(s)")
 
 // Fetcher is the subset of fetch.Client convert needs (kept as an interface for

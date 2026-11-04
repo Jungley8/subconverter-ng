@@ -90,21 +90,40 @@ func isBlockedHostname(host string) bool {
 	return false
 }
 
+// isDeniedIP reports whether addr must be blocked under the access policy.
+// allowPrivate disables SSRF defense entirely; allow lists individual prefixes
+// the operator approved (e.g. their own Tailscale or VPS network).
+func isDeniedIP(addr netip.Addr, allowPrivate bool, allow []netip.Prefix) bool {
+	if allowPrivate {
+		return false
+	}
+	if !isBlockedIP(addr) {
+		return false
+	}
+	addr = addr.Unmap()
+	for _, p := range allow {
+		if p.Contains(addr) {
+			return false
+		}
+	}
+	return true
+}
+
 // ValidateTargetURL validates an HTTP/HTTPS target URL against SSRF before dialing.
-func ValidateTargetURL(raw string, allowPrivate bool) error {
-	return validateURLWithSchemes(raw, allowPrivate, []string{"http", "https"})
+func ValidateTargetURL(raw string, allowPrivate bool, allow []netip.Prefix) error {
+	return validateURLWithSchemes(raw, allowPrivate, allow, []string{"http", "https"})
 }
 
 // ValidateProxyURL validates an upstream proxy URL against SSRF before use.
-func ValidateProxyURL(raw string, allowPrivate bool) error {
-	return validateURLWithSchemes(raw, allowPrivate, []string{"http", "https", "socks5", "socks5h"})
+func ValidateProxyURL(raw string, allowPrivate bool, allow []netip.Prefix) error {
+	return validateURLWithSchemes(raw, allowPrivate, allow, []string{"http", "https", "socks5", "socks5h"})
 }
 
-func validateTargetURL(raw string, allowPrivate bool) error {
-	return ValidateTargetURL(raw, allowPrivate)
+func validateTargetURL(raw string, allowPrivate bool, allow []netip.Prefix) error {
+	return ValidateTargetURL(raw, allowPrivate, allow)
 }
 
-func validateURLWithSchemes(raw string, allowPrivate bool, allowedSchemes []string) error {
+func validateURLWithSchemes(raw string, allowPrivate bool, allow []netip.Prefix, allowedSchemes []string) error {
 	if allowPrivate {
 		return nil
 	}
@@ -132,7 +151,7 @@ func validateURLWithSchemes(raw string, allowPrivate bool, allowedSchemes []stri
 	}
 	// If hostname is directly an IP literal
 	if ip, err := netip.ParseAddr(hostname); err == nil {
-		if isBlockedIP(ip) {
+		if isDeniedIP(ip, false, allow) {
 			return fmt.Errorf("%w: %s", ErrBlockedIP, ip)
 		}
 	}
@@ -141,7 +160,7 @@ func validateURLWithSchemes(raw string, allowPrivate bool, allowedSchemes []stri
 
 // safeDialContext creates a DialContext function that blocks private/loopback IPs
 // and dials directly to the resolved IP to prevent DNS rebinding attacks.
-func safeDialContext(dialer *net.Dialer, allowPrivate bool, trustedProxyHost string) func(ctx context.Context, network, addr string) (net.Conn, error) {
+func safeDialContext(dialer *net.Dialer, allowPrivate bool, allow []netip.Prefix, trustedProxyHost string) func(ctx context.Context, network, addr string) (net.Conn, error) {
 	return func(ctx context.Context, network, addr string) (net.Conn, error) {
 		host, port, err := net.SplitHostPort(addr)
 		if err != nil {
@@ -159,7 +178,7 @@ func safeDialContext(dialer *net.Dialer, allowPrivate bool, trustedProxyHost str
 
 		// Check if host is already an IP address
 		if ip, err := netip.ParseAddr(host); err == nil {
-			if isBlockedIP(ip) {
+			if isDeniedIP(ip, false, allow) {
 				return nil, fmt.Errorf("%w: %s", ErrBlockedIP, ip)
 			}
 			return dialer.DialContext(ctx, network, addr)
@@ -176,7 +195,7 @@ func safeDialContext(dialer *net.Dialer, allowPrivate bool, trustedProxyHost str
 
 		// Fail closed: if ANY resolved IP is blocked, reject the request (anti-rebinding / multihomed bypass)
 		for _, ip := range ips {
-			if isBlockedIP(ip) {
+			if isDeniedIP(ip, false, allow) {
 				return nil, fmt.Errorf("%w: %s resolves to %s", ErrBlockedIP, host, ip)
 			}
 		}
@@ -196,7 +215,7 @@ func safeDialContext(dialer *net.Dialer, allowPrivate bool, trustedProxyHost str
 }
 
 // safeCheckRedirect returns a CheckRedirect function that blocks redirects to private/loopback addresses.
-func safeCheckRedirect(allowPrivate bool) func(req *http.Request, via []*http.Request) error {
+func safeCheckRedirect(allowPrivate bool, allow []netip.Prefix) func(req *http.Request, via []*http.Request) error {
 	return func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 10 {
 			return errors.New("stopped after 10 redirects")
@@ -214,7 +233,7 @@ func safeCheckRedirect(allowPrivate bool) func(req *http.Request, via []*http.Re
 			return fmt.Errorf("%w: %s", ErrBlockedRedirect, host)
 		}
 		if ip, err := netip.ParseAddr(host); err == nil {
-			if isBlockedIP(ip) {
+			if isDeniedIP(ip, false, allow) {
 				return fmt.Errorf("%w: %s", ErrBlockedRedirect, ip)
 			}
 			return nil
@@ -227,7 +246,7 @@ func safeCheckRedirect(allowPrivate bool) func(req *http.Request, via []*http.Re
 			return fmt.Errorf("redirect DNS lookup: %w", err)
 		}
 		for _, ip := range ips {
-			if isBlockedIP(ip) {
+			if isDeniedIP(ip, false, allow) {
 				return fmt.Errorf("%w: %s resolves to %s", ErrBlockedRedirect, host, ip)
 			}
 		}

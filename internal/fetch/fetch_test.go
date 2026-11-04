@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -213,7 +214,7 @@ func TestSSRF_DefenseBlocksPrivateAndLoopback(t *testing.T) {
 
 func TestSSRF_RedirectBlocked(t *testing.T) {
 	// 1. Direct unit test of safeCheckRedirect func
-	check := safeCheckRedirect(false)
+	check := safeCheckRedirect(false, nil)
 	via := []*http.Request{{}}
 
 	blockedRedirects := []string{
@@ -248,7 +249,7 @@ func TestSSRF_RedirectBlocked(t *testing.T) {
 	defer srv.Close()
 
 	httpClient := &http.Client{
-		CheckRedirect: safeCheckRedirect(false),
+		CheckRedirect: safeCheckRedirect(false, nil),
 	}
 	req, _ := http.NewRequest(http.MethodGet, srv.URL, nil)
 	_, err := httpClient.Do(req)
@@ -338,5 +339,42 @@ func TestFetchDirect_BodySizeLimit(t *testing.T) {
 	}
 	if len(body) != 10<<20 {
 		t.Fatalf("expected body capped at 10MB (%d bytes), got %d", 10<<20, len(body))
+	}
+}
+
+func TestSSRF_AllowPrivateCIDR(t *testing.T) {
+	allow := []netip.Prefix{
+		netip.MustParsePrefix("100.106.251.111/32"),
+		netip.MustParsePrefix("fd7a:115c:a1e0::/48"),
+	}
+
+	// Allowlisted private targets pass URL validation; other private ones stay blocked.
+	for _, target := range []string{
+		"http://100.106.251.111:45865/sub",
+		"http://[fd7a:115c:a1e0::1]:8080/sub",
+	} {
+		if err := validateTargetURL(target, false, allow); err != nil {
+			t.Errorf("allowlisted target %s blocked: %v", target, err)
+		}
+	}
+	if err := validateTargetURL("http://100.106.251.112:45865/sub", false, allow); !errors.Is(err, ErrBlockedIP) {
+		t.Errorf("non-allowlisted private IP error = %v, want ErrBlockedIP", err)
+	}
+
+	// Redirects to allowlisted private IPs are permitted.
+	check := safeCheckRedirect(false, allow)
+	req, _ := http.NewRequest(http.MethodGet, "http://100.106.251.111:45865/next", nil)
+	via := []*http.Request{{}}
+	if err := check(req, via); err != nil {
+		t.Errorf("redirect to allowlisted IP blocked: %v", err)
+	}
+	req, _ = http.NewRequest(http.MethodGet, "http://127.0.0.1:80/secret", nil)
+	if err := check(req, via); !errors.Is(err, ErrBlockedRedirect) {
+		t.Errorf("redirect to unlisted loopback error = %v, want ErrBlockedRedirect", err)
+	}
+
+	// AllowPrivateIPs still disables the defense globally.
+	if err := validateTargetURL("http://10.0.0.1:80/x", true, nil); err != nil {
+		t.Errorf("allowPrivate=true blocked: %v", err)
 	}
 }

@@ -196,6 +196,8 @@ func (c *Config) Summary() string {
 
 	if c.Fetch.AllowPrivateIPs {
 		b.WriteString("  private ips:    allowed (SSRF protection off)\n")
+	} else if len(c.Fetch.AllowPrivateCIDRs) > 0 {
+		fmt.Fprintf(&b, "  private cidrs:  %s (SSRF allowlist)\n", strings.Join(c.Fetch.AllowPrivateCIDRs, ", "))
 	}
 
 	if c.RateLimit.Enabled {

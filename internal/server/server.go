@@ -241,20 +241,21 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 	// configured upstream proxy.
 	userProxy := q.Get("proxy")
 	if userProxy != "" && !s.cfg.Fetch.AllowPrivateIPs {
-		if err := fetch.ValidateProxyURL(userProxy, false); err != nil {
+		if err := fetch.ValidateProxyURL(userProxy, false, s.cfg.Fetch.PrivateCIDRs()); err != nil {
 			http.Error(w, "invalid proxy parameter: "+config.RedactString(err.Error()), http.StatusBadRequest)
 			return
 		}
 	}
 
 	opts := fetch.Options{
-		UserAgent:       s.cfg.Fetch.UserAgent,
-		Proxy:           firstNonEmpty(userProxy, s.cfg.Fetch.Proxy),
-		TrustedProxy:    s.cfg.Fetch.Proxy,
-		FlareSolverrURL: s.cfg.Fetch.FlareSolverrURL,
-		Timeout:         s.cfg.Fetch.Timeout,
-		AllowPrivateIPs: s.cfg.Fetch.AllowPrivateIPs,
-		Group:           s.group,
+		UserAgent:         s.cfg.Fetch.UserAgent,
+		Proxy:             firstNonEmpty(userProxy, s.cfg.Fetch.Proxy),
+		TrustedProxy:      s.cfg.Fetch.Proxy,
+		FlareSolverrURL:   s.cfg.Fetch.FlareSolverrURL,
+		Timeout:           s.cfg.Fetch.Timeout,
+		AllowPrivateIPs:   s.cfg.Fetch.AllowPrivateIPs,
+		AllowPrivateCIDRs: s.cfg.Fetch.PrivateCIDRs(),
+		Group:             s.group,
 	}
 	if noCache || s.cache == nil {
 		opts.CacheTTL = -1 // disable caching for this request
@@ -353,8 +354,10 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 }
 
 // writeUserError renders a conversion failure with an appropriate HTTP error status
-// (422 for unprocessable content such as no usable nodes, 502 for upstream fetch failure)
+// (422 for unprocessable content such as no usable nodes, 424 for upstream fetch failure)
 // along with plain-text comments detailing the cause with secrets redacted.
+// 4xx is deliberate: reverse proxies such as Cloudflare replace 5xx bodies with
+// their own error page, hiding the diagnostic.
 func writeUserError(w http.ResponseWriter, err error) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	redactedMsg := config.RedactString(err.Error())
@@ -363,7 +366,7 @@ func writeUserError(w http.ResponseWriter, err error) {
 		_, _ = fmt.Fprintf(w, "# subconverter-ng: %s\n# 订阅无可用节点，请检查订阅链接或订阅内容是否有效。\n", redactedMsg)
 		return
 	}
-	w.WriteHeader(http.StatusBadGateway)
+	w.WriteHeader(http.StatusFailedDependency)
 	_, _ = fmt.Fprintf(w, "# subconverter-ng: 转换失败 / conversion failed\n# %s\n", redactedMsg)
 }
 

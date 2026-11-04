@@ -3,6 +3,7 @@
 # server defaults. Environment variables override these:
 #   SUBNG_LISTEN, SUBNG_API_ACCESS_TOKEN, SUBNG_PROXY, SUBNG_FLARESOLVERR_URL,
 #   SUBNG_USER_AGENT, SUBNG_CACHE_TTL, SUBNG_ALLOW_PRIVATE_IPS,
+#   SUBNG_ALLOW_PRIVATE_CIDRS,
 #   SUBNG_RATELIMIT_ENABLED, SUBNG_RATELIMIT_RPM, SUBNG_RATELIMIT_BURST,
 #   SUBNG_TRUSTED_PROXIES (comma-separated), SUBNG_INSERT_URLS (comma-separated),
 #   SUBNG_INSERT_PREPEND, SUBNG_INSERT_ENABLED, SUBNG_DEFAULT_CONFIG_URL
@@ -47,6 +48,17 @@ fetch:
   # and prevent DNS rebinding or internal redirects. Set to true only in private
   # lab environments where upstream airports run on private networks.
   allow_private_ips: false
+
+  # Narrow SSRF allowlist. Private/CGNAT prefixes listed here stay reachable
+  # while SSRF protection remains on for everything else. Accepts CIDRs or
+  # single IPs (a plain IP becomes a /32 or /128). Every entry must be a
+  # private, CGNAT, loopback, link-local, or reserved range; public ranges and
+  # catch-alls such as 0.0.0.0/0 are rejected at startup.
+  # Use this for one internal endpoint (e.g. your own Tailscale/VPS service)
+  # instead of allow_private_ips, which disables SSRF defense globally.
+  allow_private_cidrs: []
+  #  - "100.106.251.111/32"
+  #  - "fd7a:115c:a1e0::/48"
 
 # Per-client-IP rate limiting for the /sub endpoint. Each /sub request fans out
 # into many upstream fetches, so this protects the instance from abuse. Only

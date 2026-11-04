@@ -291,3 +291,52 @@ func TestConfig_Validate(t *testing.T) {
 		t.Error("expected error for unparseable insert URL")
 	}
 }
+
+func TestConfig_AllowPrivateCIDRs(t *testing.T) {
+	cases := []struct {
+		name    string
+		entries []string
+		wantErr bool
+	}{
+		{"tailscale range", []string{"100.64.0.0/10"}, false},
+		{"single cgnat ip", []string{"100.106.251.111"}, false},
+		{"rfc1918", []string{"192.168.1.0/24"}, false},
+		{"ipv6 ula", []string{"fd7a:115c:a1e0::/48"}, false},
+		{"loopback", []string{"127.0.0.1"}, false},
+		{"empty entry", []string{""}, true},
+		{"garbage", []string{"not-a-cidr"}, true},
+		{"public range", []string{"8.8.8.0/24"}, true},
+		{"catch-all", []string{"0.0.0.0/0"}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := Default()
+			cfg.Fetch.AllowPrivateCIDRs = tc.entries
+			err := cfg.Validate()
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("Validate() error = %v, wantErr %v", err, tc.wantErr)
+			}
+		})
+	}
+
+	// Parsing keeps only valid entries; a plain IP becomes a host prefix.
+	f := Fetch{AllowPrivateCIDRs: []string{"100.106.251.111", "fd7a:115c:a1e0::/48"}}
+	got := f.PrivateCIDRs()
+	if len(got) != 2 || got[0].String() != "100.106.251.111/32" || got[1].String() != "fd7a:115c:a1e0::/48" {
+		t.Fatalf("PrivateCIDRs() = %v", got)
+	}
+}
+
+func TestAllowPrivateCIDRsFromEnv(t *testing.T) {
+	t.Setenv("SUBNG_ALLOW_PRIVATE_CIDRS", "100.106.251.111/32, fd7a:115c:a1e0::/48")
+	c, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Fetch.AllowPrivateCIDRs) != 2 {
+		t.Fatalf("env allowlist not applied: %v", c.Fetch.AllowPrivateCIDRs)
+	}
+	if got := c.Fetch.PrivateCIDRs(); len(got) != 2 {
+		t.Fatalf("parsed allowlist = %v", got)
+	}
+}

@@ -19,7 +19,7 @@
 - ✅ **Drop-in compatibility**: `/sub?target=clash&url=...&config=...` keeps existing client setups working.
 - ✅ **Full modern protocol support**: Shadowsocks, ShadowsocksR, VMess, VLESS (Reality / XTLS-Vision), Trojan, Hysteria (v1/v2), TUIC v5, AnyTLS, SOCKS5, **WireGuard**.
 - ✅ **Multiple output targets**: `clash` (Clash.Meta / mihomo), `singbox`, `surge`, `shadowrocket`, `quanx`, `loon`, `v2ray`/`mixed`.
-- ✅ **Zero-trust security defense**: Network-level SSRF defense with DNS rebinding protection. Mandatory credential redaction in logs and responses. Strict HTTP 502/422 responses on conversion failures to prevent client config poisoning.
+- ✅ **Zero-trust security defense**: Network-level SSRF defense with DNS rebinding protection (`allow_private_cidrs` can allow specific internal hosts). Mandatory credential redaction in logs and responses. Strict HTTP 424/422 responses on conversion failures to prevent client config poisoning, and the error body survives reverse proxies such as Cloudflare that replace 5xx pages.
 - ✅ **Concurrency resilience**: Cross-request SingleFlight deduplication prevents thundering herd loads on upstream servers and GitHub rate-limits. Memory cache with capacity bounds and eviction. Response stream limits (10MB max).
 - ✅ **Production observability**: Structured `log/slog` logging. Native health endpoints (`/healthz`, `/readyz`). Graceful shutdown via `SIGTERM`/`SIGINT`. Optional access token authentication (`api_access_token`).
 - ✅ **Node processing**: Dedup (`dedup`), unsupported cipher filtering (`fdn`), protocol prefixing (`append_type`), Tailscale rules (`tailscale`), regex `rename`, and emoji additions/removals.

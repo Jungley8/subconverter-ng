@@ -130,8 +130,8 @@ func TestHandleSub_BrokenDefaultConfigFailsClosed(t *testing.T) {
 	target := "/sub?target=clash&url=" + url.QueryEscape(air.URL+"/sub.txt")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
-	if rec.Code != http.StatusBadGateway {
-		t.Fatalf("status = %d, want 502 Bad Gateway", rec.Code)
+	if rec.Code != http.StatusFailedDependency {
+		t.Fatalf("status = %d, want 424 Failed Dependency", rec.Code)
 	}
 	body := rec.Body.String()
 	if !strings.Contains(body, "fetch external config") {
@@ -160,8 +160,8 @@ func TestHandleSub_BrokenDefaultConfig500FailsClosed(t *testing.T) {
 	target := "/sub?target=clash&url=" + url.QueryEscape(air.URL+"/sub.txt")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
-	if rec.Code != http.StatusBadGateway {
-		t.Fatalf("status = %d, want 502 Bad Gateway", rec.Code)
+	if rec.Code != http.StatusFailedDependency {
+		t.Fatalf("status = %d, want 424 Failed Dependency", rec.Code)
 	}
 	body := rec.Body.String()
 	if !strings.Contains(body, "fetch external config") {
@@ -579,8 +579,8 @@ func TestHandleSub_SSRFProtected(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sub?target=clash&url=http://127.0.0.1:9999/sub.txt", nil))
 
-	if rec.Code != http.StatusBadGateway {
-		t.Fatalf("status = %d, want 502 Bad Gateway for SSRF block", rec.Code)
+	if rec.Code != http.StatusFailedDependency {
+		t.Fatalf("status = %d, want 424 Failed Dependency for SSRF block", rec.Code)
 	}
 	if !strings.Contains(rec.Body.String(), "SSRF") {
 		t.Errorf("expected SSRF error message in body, got: %s", rec.Body.String())
@@ -595,8 +595,8 @@ func TestHandleSub_RedactsTokenInErrorResponse(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sub?target=clash&url="+url.QueryEscape(secretSubURL), nil))
 
-	if rec.Code != http.StatusBadGateway {
-		t.Fatalf("status = %d, want 502", rec.Code)
+	if rec.Code != http.StatusFailedDependency {
+		t.Fatalf("status = %d, want 424", rec.Code)
 	}
 	body := rec.Body.String()
 	if strings.Contains(body, "SuperSecretTokenValue") {

@@ -31,6 +31,12 @@ type Fetch struct {
 	// private, loopback, multicast, or link-local IPs are blocked, and redirects
 	// to them are rejected.
 	AllowPrivateIPs bool `yaml:"allow_private_ips"`
+
+	// AllowPrivateCIDRs lists private/CGNAT prefixes that stay reachable while
+	// SSRF protection remains on for everything else. Accepts CIDRs or single
+	// IPs (e.g. "100.106.251.111/32" or "fd7a:115c:a1e0::/48"). Use this
+	// instead of allow_private_ips when only one internal host is needed.
+	AllowPrivateCIDRs []string `yaml:"allow_private_cidrs"`
 }
 
 // RateLimit configures per-client-IP rate limiting on the expensive /sub
@@ -123,6 +129,21 @@ func (c *Config) Validate() error {
 	}
 	if c.Fetch.Timeout < 0 {
 		return errors.New("config: fetch.timeout cannot be negative")
+	}
+	for _, raw := range c.Fetch.AllowPrivateCIDRs {
+		p, ok := parseCIDROrIP(raw)
+		if !ok {
+			return fmt.Errorf("config: invalid fetch.allow_private_cidrs entry %q: must be a valid IP or CIDR", raw)
+		}
+		// Reject prefixes that include public address space: a typo like
+		// 0.0.0.0/0 would otherwise turn SSRF protection off by accident.
+		minBits := 8
+		if p.Addr().Is6() {
+			minBits = 16
+		}
+		if p.Bits() < minBits || !isSpecialAddr(p.Addr()) {
+			return fmt.Errorf("config: fetch.allow_private_cidrs entry %q must be a private/CGNAT/reserved range (/%d or narrower)", raw, minBits)
+		}
 	}
 	if c.RateLimit.RequestsPerMinute < 0 {
 		return errors.New("config: ratelimit.requests_per_minute cannot be negative")
@@ -243,6 +264,15 @@ func applyEnv(cfg *Config) {
 			cfg.Fetch.AllowPrivateIPs = b
 		}
 	}
+	if v := os.Getenv("SUBNG_ALLOW_PRIVATE_CIDRS"); v != "" {
+		var cidrs []string
+		for _, p := range strings.Split(v, ",") {
+			if p = strings.TrimSpace(p); p != "" {
+				cidrs = append(cidrs, p)
+			}
+		}
+		cfg.Fetch.AllowPrivateCIDRs = cidrs
+	}
 	if v := os.Getenv("SUBNG_TRUSTED_PROXIES"); v != "" {
 		var proxies []string
 		for _, p := range strings.Split(v, ",") {
@@ -267,4 +297,52 @@ func parseBool(v string) (bool, error) {
 		return false, nil
 	}
 	return strconv.ParseBool(v)
+}
+
+var (
+	cgnatPrefix    = netip.MustParsePrefix("100.64.0.0/10") // RFC 6598
+	reservedPrefix = netip.MustParsePrefix("240.0.0.0/4")   // reserved + broadcast
+)
+
+// isSpecialAddr reports whether addr is private, loopback, link-local,
+// multicast, unspecified, CGNAT, or reserved.
+func isSpecialAddr(addr netip.Addr) bool {
+	addr = addr.Unmap()
+	return addr.IsLoopback() ||
+		addr.IsPrivate() ||
+		addr.IsLinkLocalUnicast() ||
+		addr.IsLinkLocalMulticast() ||
+		addr.IsInterfaceLocalMulticast() ||
+		addr.IsMulticast() ||
+		addr.IsUnspecified() ||
+		cgnatPrefix.Contains(addr) ||
+		reservedPrefix.Contains(addr)
+}
+
+// parseCIDROrIP parses a CIDR or a single IP (as a host prefix).
+func parseCIDROrIP(raw string) (netip.Prefix, bool) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return netip.Prefix{}, false
+	}
+	if p, err := netip.ParsePrefix(trimmed); err == nil {
+		return p.Masked(), true
+	}
+	if a, err := netip.ParseAddr(trimmed); err == nil {
+		return netip.PrefixFrom(a, a.BitLen()), true
+	}
+	return netip.Prefix{}, false
+}
+
+// PrivateCIDRs returns the parsed allow_private_cidrs prefixes. Validate rejects
+// invalid entries at startup; this skips anything unparsable so a bad entry can
+// never fail open.
+func (f Fetch) PrivateCIDRs() []netip.Prefix {
+	out := make([]netip.Prefix, 0, len(f.AllowPrivateCIDRs))
+	for _, raw := range f.AllowPrivateCIDRs {
+		if p, ok := parseCIDROrIP(raw); ok {
+			out = append(out, p)
+		}
+	}
+	return out
 }
