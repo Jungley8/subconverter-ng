@@ -18,6 +18,7 @@
 
 - ✅ **接口兼容**：`/sub?target=clash&url=...&config=...`，老客户端无需改动。
 - ✅ **全协议支持**：Shadowsocks、ShadowsocksR、VMess、VLESS（含 Reality / XTLS-Vision）、Trojan、Hysteria（v1/v2）、TUIC v5、AnyTLS、SOCKS5、**WireGuard**。
+- ✅ **内置 Web 界面与订阅管理**：单个二进制内嵌，浏览器访问根路径即可使用。提供可视化订阅转换、节点参数勾选、本地订阅库管理（到期时间预警、流量重置日、月均开销折算、批量一键转换、JSON 备份恢复），数据仅保存在浏览器本地，保护隐私安全。
 - ✅ **多输出 target**：`clash`（Clash.Meta / mihomo）、`singbox`、`surge`、`shadowrocket`、`quanx`、`loon`、`v2ray`/`mixed`。
 - ✅ **安全与纵深防御**：物理连接层防御 SSRF 与 DNS Rebinding（可选 `allow_private_cidrs` 精确放行自有内网）；日志与响应中机场 Token 强制脱敏（Token Redaction）；转换失败严格返回 HTTP 424/422，杜绝返回 200 导致客户端有效配置被覆写（防订阅投毒），且错误正文不会被 Cloudflare 等反向代理的 5xx 页面遮挡。
 - ✅ **并发与抗压韧性**：跨请求 SingleFlight 并发折叠，避免高频请求击垮上游机场或触发 GitHub API 限流；带容量上限的内存缓存；响应体流控保护（10MB 防 OOM）。
@@ -43,7 +44,7 @@
 # http://127.0.0.1:25500/sub?target=clash&url=<订阅URL编码>&config=<规则URL编码>
 ```
 
-> 内置 Web 界面：浏览器打开 <http://127.0.0.1:25500/> 即可可视化生成订阅链接（详见 [docs/web.md](docs/web.md)）。
+> 内置 Web 界面：浏览器打开 <http://127.0.0.1:25500/> 即可使用可视化订阅转换与「我的订阅」集中管理面板（详见 [docs/web.md](docs/web.md)）。
 
 ### 方式二：Docker 容器
 
@@ -82,7 +83,7 @@ docker compose up -d
 | `/healthz` | GET | 存活探针（Liveness Probe） |
 | `/readyz` | GET | 就绪探针（Readiness Probe） |
 | `/version` | GET | 返回当前程序版本及构建 Git Commit |
-| `/` | GET | 内置可视化订阅生成 Web 页面 |
+| `/` | GET | 内置可视化订阅生成与订阅管理 Web 页面 |
 
 ## 常用 URL 参数
 

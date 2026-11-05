@@ -29,6 +29,9 @@ http://127.0.0.1:25500/sub?target=clash&url=<订阅URL编码>&config=<规则URL�
 
 支持的全部参数见 [URL 参数](url-params.md)。
 
+!!! tip "内置 Web 界面"
+    服务启动后，用浏览器打开 `http://127.0.0.1:25500/` 即可可视化生成配置并管理订阅库。详见 [Web 界面](web.md)。
+
 ## 方式二：CLI 单次转换
 
 适合本地生成一份配置文件，或在脚本里用：
@@ -74,6 +77,7 @@ subconverter-ng convert \
 
 ## 下一步
 
+- 可视化操作与订阅管理 → [Web 界面](web.md)
 - 机场访问受限 → [上游代理与 UA](proxy.md)
 - 机场套了 Cloudflare → [绕过 Cloudflare](cloudflare.md)
 - 生产部署 → [Docker 部署](docker.md)

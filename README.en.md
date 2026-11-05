@@ -18,6 +18,7 @@
 
 - ✅ **Drop-in compatibility**: `/sub?target=clash&url=...&config=...` keeps existing client setups working.
 - ✅ **Full modern protocol support**: Shadowsocks, ShadowsocksR, VMess, VLESS (Reality / XTLS-Vision), Trojan, Hysteria (v1/v2), TUIC v5, AnyTLS, SOCKS5, **WireGuard**.
+- ✅ **Built-in Web UI & Subscription Manager**: Bundled into the binary. Open the root URL to generate configs visually and manage subscriptions locally (expiry countdown, traffic reset day, monthly expense estimate, batch conversion, JSON backup/restore). Data stays in local storage.
 - ✅ **Multiple output targets**: `clash` (Clash.Meta / mihomo), `singbox`, `surge`, `shadowrocket`, `quanx`, `loon`, `v2ray`/`mixed`.
 - ✅ **Zero-trust security defense**: Network-level SSRF defense with DNS rebinding protection (`allow_private_cidrs` can allow specific internal hosts). Mandatory credential redaction in logs and responses. Strict HTTP 424/422 responses on conversion failures to prevent client config poisoning, and the error body survives reverse proxies such as Cloudflare that replace 5xx pages.
 - ✅ **Concurrency resilience**: Cross-request SingleFlight deduplication prevents thundering herd loads on upstream servers and GitHub rate-limits. Memory cache with capacity bounds and eviction. Response stream limits (10MB max).
@@ -43,7 +44,7 @@ Download the binary for your platform directly from the [Releases page](https://
 # http://127.0.0.1:25500/sub?target=clash&url=<encoded-sub-url>&config=<encoded-rules-url>
 ```
 
-> Built-in Web UI: Open <http://127.0.0.1:25500/> in your browser to generate subscription links visually (see [docs/web.md](docs/web.md)).
+> Built-in Web UI: Open <http://127.0.0.1:25500/> in your browser for visual subscription conversion and the "My Subscriptions" management panel (see [docs/web.md](docs/web.md)).
 
 ### Option 2: Docker Container
 
@@ -82,7 +83,7 @@ Convert remote subscriptions or local files offline without running an HTTP daem
 | `/healthz` | GET | Liveness probe endpoint. |
 | `/readyz` | GET | Readiness probe endpoint. |
 | `/version` | GET | Returns build version and commit hash. |
-| `/` | GET | Web UI for building subscription links visually. |
+| `/` | GET | Built-in Web UI for subscription generation and management. |
 
 ## Common URL Parameters
 

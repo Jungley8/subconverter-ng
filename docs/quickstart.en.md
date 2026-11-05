@@ -29,6 +29,9 @@ Paste that address into the subscription field of Clash.Meta / mihomo / clash-ve
 
 For all supported parameters, see [URL Parameters](url-params.md).
 
+!!! tip "Built-in Web UI"
+    Open `http://127.0.0.1:25500/` in your browser to build configs and manage subscriptions visually. See [Web UI](web.en.md).
+
 ## Option 2: one-shot CLI conversion
 
 Handy for generating a config file locally or inside a script:
@@ -74,6 +77,7 @@ You can reuse your existing `config.init` as-is, no changes needed.
 
 ## Next steps
 
+- Visual builder & subscription management → [Web UI](web.en.md)
 - Provider unreachable → [Upstream Proxy & UA](proxy.md)
 - Provider behind Cloudflare → [Bypass Cloudflare](cloudflare.md)
 - Production deployment → [Docker Deployment](docker.md)
