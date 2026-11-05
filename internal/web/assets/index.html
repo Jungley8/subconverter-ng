@@ -757,6 +757,7 @@
             <option value="loon">Loon</option>
             <option value="v2ray">v2ray / mixed (base64)</option>
           </select>
+          <p class="hint">Shadowrocket（小火箭）首页添加订阅请选 <strong>clash</strong> 格式。若选 shadowrocket 需在客户端底部「配置」页导入。</p>
         </div>
 
         <div class="field">
@@ -776,7 +777,8 @@
 
         <div class="field">
           <label for="proxy">上游代理 proxy <span class="opt">可选 · 本次请求覆盖全局</span></label>
-          <input type="text" id="proxy" placeholder="socks5://127.0.0.1:1080">
+          <input type="text" id="proxy" placeholder="如 socks5://proxy.example.com:1080">
+          <p class="hint">由服务端发起连接。若部署在远程服务器，代理需公网可访问（不能填客户端本机的 127.0.0.1）。</p>
         </div>
 
         <div class="field">
@@ -808,7 +810,7 @@
             </div>
           </div>
 
-          <p class="hint">把上面的链接粘贴到客户端配置 URL，或使用手机客户端扫码快速导入。</p>
+          <p class="hint">把上面的链接粘贴到客户端配置 URL，或使用手机客户端扫码快速导入。<br>Shadowrocket 首页添加订阅推荐选 <code>clash</code> 格式；若生成 <code>shadowrocket</code> 配置请在客户端底部「配置」页添加。</p>
         </div>
       </div>
     </div>

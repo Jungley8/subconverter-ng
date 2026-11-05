@@ -20,9 +20,10 @@ http://127.0.0.1:25500/
 
 1. **订阅链接**：在文本框里粘贴机场订阅地址，一行一个，多个会自动用 `|` 合并；也可点击上方「从订阅库导入」快速载入已保存的订阅，或点击「存入订阅库」将当前链接收藏管理。
 2. **外部配置 config**（可选）：填入 INI 规则配置的 URL（兼容 subconverter / ACL4SSR）。
-3. **目标 target**：下拉选择输出格式 —— `clash`（Clash.Meta / mihomo）、`singbox`、`surge`、`shadowrocket`、`quanx`、`loon`、`v2ray`/`mixed`。
+3. **目标 target**：下拉选择输出格式 —— `clash`（Clash.Meta / mihomo / Shadowrocket 推荐）、`singbox`、`surge`、`shadowrocket`、`quanx`、`loon`、`v2ray`/`mixed`。
+   > **Shadowrocket 说明**：小火箭首页「添加订阅」请选 `clash` 格式（原生支持，自动解析节点与策略组）；若选择 `shadowrocket` 则是 Surge 规则配置，需在客户端底部「配置」页添加。
 4. **选项**：按需勾选 `节点排序`、`节点去重`、`强制 UDP`、`TCP Fast Open`、`跳过证书校验`、`过滤不兼容节点`、`节点名加类型`、`Tailscale 直连`、`允许 emoji`。对应 [URL 参数](url-params.md) 里的 `sort` / `dedup` / `udp` / `tfo` / `scv` / `fdn` / `append_type` / `tailscale` / `emoji`。
-5. **上游代理 proxy**（可选）：例如 `socks5://127.0.0.1:1080`，仅对本次请求生效，覆盖全局配置。
+5. **上游代理 proxy**（可选）：仅对本次请求生效，覆盖全局配置。该代理用于服务端拉取订阅，若服务部署在远程服务器或 Docker 中，需填写服务端可达且公网可访问的代理地址（不可填写客户端本机的 `127.0.0.1`）。
 6. 点击 **生成订阅链接**，下方会显示完整的 `/sub?...` 链接。
 7. 点击 **复制**，把链接粘贴到 Clash / mihomo 客户端的「配置 URL」即可；也可以点 **打开 / 预览** 在新标签页直接查看转换结果。
 

@@ -38,6 +38,8 @@ func TestHandler_ServesIndex(t *testing.T) {
 		"dialog-confirm-backdrop",
 		"qrBox",
 		"QRCode",
+		"Shadowrocket 推荐",
+		"需公网可访问",
 		// The config input must tell users that leaving it blank falls back to
 		// the server-side default (SUBNG_DEFAULT_CONFIG_URL).
 		"留空用服务端默认",

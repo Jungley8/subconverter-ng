@@ -11,7 +11,7 @@
 | `clash` | `clash.meta` `clashr` | Clash.Meta / mihomo YAML | `text/yaml` |
 | `singbox` | `sing-box` | sing-box JSON | `application/json` |
 | `surge` | | Surge `.conf`（含 `[Proxy]`/`[Proxy Group]`/`[Rule]`） | `text/plain` |
-| `shadowrocket` | `shadow-rocket` | Surge 风格托管 conf（Shadowrocket 可直接导入） | `text/plain` |
+| `shadowrocket` | `shadow-rocket` | Surge 风格托管 conf（Shadowrocket 需在底部「配置」页添加；若在首页添加订阅推荐选 clash） | `text/plain` |
 | `quanx` | `quantumultx` `quantumult-x` | Quantumult X 资源配置 | `text/plain` |
 | `loon` | | Loon `.conf` | `text/plain` |
 | `v2ray` | `mixed` `v2rayn` | base64 节点订阅（ss/vmess/vless/trojan/hysteria2/tuic 分享链接） | `text/plain` |
@@ -38,7 +38,7 @@
 | `remove_emoji` | 是否先移除节点名中已有的 emoji（默认 `true`） | :material-check: |
 | `filename` | 设置下载文件名（`Content-Disposition`） | :material-check: |
 | `interval` | 客户端订阅自动更新间隔（小时，默认 24，`Profile-Update-Interval` 头） | :material-check: |
-| `proxy` | **本次请求**的上游代理，覆盖全局配置（扩展参数） | :material-check: |
+| `proxy` | **本次请求**的上游代理，由服务端发起连接，需服务端公网可达（扩展参数） | :material-check: |
 | `nocache` | `1` 时绕过本次请求的 TTL 缓存，强制重新抓取 | :material-check: |
 | `flushcache` | `1` 时先清空整个共享缓存再处理本次请求（另有 `GET /flushcache` 端点） | :material-check: |
 
