@@ -597,19 +597,6 @@
         </div>
 
         <div class="field">
-          <label for="target">目标 target</label>
-          <select id="target">
-            <option value="clash">clash (Clash.Meta / mihomo)</option>
-            <option value="singbox">sing-box</option>
-            <option value="surge">surge</option>
-            <option value="shadowrocket">shadowrocket</option>
-            <option value="quanx">Quantumult X</option>
-            <option value="loon">Loon</option>
-            <option value="v2ray">v2ray / mixed (base64)</option>
-          </select>
-        </div>
-
-        <div class="field">
           <label for="source">订阅源格式 source <span class="opt">指定抓取 User-Agent 预设；singbox/surge 等原始格式本工具暂不可解析，仅当面板返回兼容载荷时可用</span></label>
           <select id="source">
             <option value="">不指定（使用全局/默认 UA）</option>
@@ -626,6 +613,19 @@
         <div class="field">
           <label for="ua">订阅 UA ua <span class="opt">可选 · 覆盖 source 预设</span></label>
           <input type="text" id="ua" placeholder="clash.meta/1.19.0">
+        </div>
+
+        <div class="field">
+          <label for="target">目标 target</label>
+          <select id="target">
+            <option value="clash">clash (Clash.Meta / mihomo)</option>
+            <option value="singbox">sing-box</option>
+            <option value="surge">surge</option>
+            <option value="shadowrocket">shadowrocket</option>
+            <option value="quanx">Quantumult X</option>
+            <option value="loon">Loon</option>
+            <option value="v2ray">v2ray / mixed (base64)</option>
+          </select>
         </div>
 
         <div class="field">
