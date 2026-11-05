@@ -1502,14 +1502,6 @@
     subDialog.close();
   }
 
-  function requestCloseSubDialog() {
-    if (isSubFormDirty()) {
-      showSubConfirm();
-      return;
-    }
-    closeSubDialog();
-  }
-
   $('subConfirmStay').addEventListener('click', function () {
     hideSubConfirm();
     $('subName').focus();
@@ -1542,8 +1534,8 @@
 
   $('btnOpenAddSub').addEventListener('click', function () { openSubDialog(); });
   $('btnEmptyAdd').addEventListener('click', function () { openSubDialog(); });
-  $('subDialogClose').addEventListener('click', requestCloseSubDialog);
-  $('subDialogCancel').addEventListener('click', requestCloseSubDialog);
+  $('subDialogClose').addEventListener('click', closeSubDialog);
+  $('subDialogCancel').addEventListener('click', closeSubDialog);
 
   // Light dismiss on backdrop click: intercept if form is dirty
   subDialog.addEventListener('click', function (e) {
