@@ -34,6 +34,8 @@ func TestHandler_ServesIndex(t *testing.T) {
 		"subng.subscriptions.v1",
 		"isSubFormDirty",
 		"dialog-shake",
+		"subConfirmBox",
+		"dialog-confirm-backdrop",
 		// The config input must tell users that leaving it blank falls back to
 		// the server-side default (SUBNG_DEFAULT_CONFIG_URL).
 		"留空用服务端默认",

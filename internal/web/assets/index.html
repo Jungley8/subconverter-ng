@@ -544,6 +544,88 @@
     color: #fff;
   }
 
+  /* In-Dialog Confirmation Overlay */
+  .dialog-confirm-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.65);
+    backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+    padding: 20px;
+  }
+  .dialog-confirm-backdrop.hidden {
+    display: none;
+  }
+  .dialog-confirm-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 24px;
+    max-width: 380px;
+    width: 100%;
+    box-shadow: 0 20px 48px rgba(0, 0, 0, 0.45);
+    text-align: center;
+    color: var(--fg);
+    animation: dialog-pop 0.18s ease-out;
+  }
+  @keyframes dialog-pop {
+    from { opacity: 0; transform: scale(0.92); }
+    to { opacity: 1; transform: scale(1); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .dialog-confirm-card { animation: none; }
+  }
+  .dialog-confirm-icon {
+    font-size: 2rem;
+    line-height: 1;
+    margin-bottom: 12px;
+  }
+  .dialog-confirm-title {
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: var(--fg);
+    margin-bottom: 8px;
+  }
+  .dialog-confirm-desc {
+    font-size: .92rem;
+    color: var(--muted);
+    line-height: 1.5;
+    margin-bottom: 22px;
+  }
+  .dialog-confirm-actions {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+  }
+  .dialog-confirm-actions button {
+    flex: 1;
+    padding: 10px 16px;
+    border-radius: 10px;
+    font: inherit;
+    font-weight: 600;
+    font-size: .9rem;
+    cursor: pointer;
+  }
+  .btn-confirm-cancel {
+    background: var(--field);
+    border: 1px solid var(--border);
+    color: var(--fg);
+  }
+  .btn-confirm-cancel:hover {
+    background: var(--border);
+  }
+  .btn-confirm-leave {
+    background: var(--danger);
+    border: none;
+    color: #fff;
+  }
+  .btn-confirm-leave:hover {
+    filter: brightness(1.1);
+  }
+
   /* Toast Notification */
   .toast {
     position: fixed;
@@ -814,6 +896,19 @@
       <button type="submit" class="btn-confirm" id="subDialogSave">保存</button>
     </div>
   </form>
+
+  <!-- In-Dialog Confirmation Card -->
+  <div class="dialog-confirm-backdrop hidden" id="subConfirmBox">
+    <div class="dialog-confirm-card" role="alertdialog" aria-modal="true" aria-labelledby="subConfirmTitle" aria-describedby="subConfirmDesc">
+      <div class="dialog-confirm-icon">⚠️</div>
+      <div class="dialog-confirm-title" id="subConfirmTitle">表单内容已修改</div>
+      <div class="dialog-confirm-desc" id="subConfirmDesc">确定要放弃修改并退出吗？</div>
+      <div class="dialog-confirm-actions">
+        <button type="button" class="btn-confirm-cancel" id="subConfirmStay">继续编辑</button>
+        <button type="button" class="btn-confirm-leave" id="subConfirmLeave">放弃并退出</button>
+      </div>
+    </div>
+  </div>
 </dialog>
 
 <!-- MODAL: Backup & Restore Dialog -->
@@ -1342,7 +1437,19 @@
     dialogEl.classList.add('dialog-shake');
   }
 
+  var subConfirmBox = $('subConfirmBox');
+
+  function showSubConfirm() {
+    subConfirmBox.classList.remove('hidden');
+    $('subConfirmStay').focus();
+  }
+
+  function hideSubConfirm() {
+    subConfirmBox.classList.add('hidden');
+  }
+
   function openSubDialog(item) {
+    hideSubConfirm();
     $('subForm').reset();
     $('subResetCustomField').classList.add('hidden');
     $('subCycleCustomField').classList.add('hidden');
@@ -1389,6 +1496,7 @@
   }
 
   function closeSubDialog() {
+    hideSubConfirm();
     subDialogInitialState = null;
     subDialog.classList.remove('dialog-shake');
     subDialog.close();
@@ -1396,12 +1504,27 @@
 
   function requestCloseSubDialog() {
     if (isSubFormDirty()) {
-      if (!confirm('表单内容已修改。确定要放弃修改并退出吗？')) {
-        return;
-      }
+      showSubConfirm();
+      return;
     }
     closeSubDialog();
   }
+
+  $('subConfirmStay').addEventListener('click', function () {
+    hideSubConfirm();
+    $('subName').focus();
+  });
+
+  $('subConfirmLeave').addEventListener('click', function () {
+    closeSubDialog();
+  });
+
+  subConfirmBox.addEventListener('click', function (e) {
+    if (e.target === subConfirmBox) {
+      hideSubConfirm();
+      $('subName').focus();
+    }
+  });
 
   subDialog.addEventListener('animationend', function () {
     subDialog.classList.remove('dialog-shake');
@@ -1440,7 +1563,7 @@
 
     if (isSubFormDirty()) {
       shakeDialog(subDialog);
-      showToast('表单内容已修改。请保存或点击关闭按钮。');
+      showSubConfirm();
       return;
     }
     closeSubDialog();
@@ -1448,12 +1571,18 @@
 
   // Intercept Esc key when form is dirty
   subDialog.addEventListener('cancel', function (e) {
+    if (!subConfirmBox.classList.contains('hidden')) {
+      e.preventDefault();
+      hideSubConfirm();
+      $('subName').focus();
+      return;
+    }
     if (isSubFormDirty()) {
       e.preventDefault();
       shakeDialog(subDialog);
-      showToast('表单内容已修改。请保存或点击关闭按钮。');
+      showSubConfirm();
     } else {
-      subDialogInitialState = null;
+      closeSubDialog();
     }
   });
 
