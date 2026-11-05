@@ -125,10 +125,15 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 	if target == "" {
 		target = "clash"
 	}
-	// &template= renders a full sing-box config, so it pins the target; a
-	// conflicting target= would inject nodes into a non-JSON template.
+	// &template= renders a full sing-box config, so it pins the target. An
+	// explicitly conflicting target= is a user error — fail closed with a 400
+	// instead of silently overriding (CLI behaves the same way).
 	template := strings.TrimSpace(q.Get("template"))
 	if template != "" {
+		if explicit := q.Get("target"); explicit != "" && explicit != "singbox" && !strings.HasPrefix(explicit, "singbox/") {
+			http.Error(w, fmt.Sprintf("target=%s conflicts with template= (template output is always sing-box); drop the target param or use singbox", explicit), http.StatusBadRequest)
+			return
+		}
 		target = convert.TargetSingbox
 	}
 	// Early target validation: reject unknown names and malformed versions

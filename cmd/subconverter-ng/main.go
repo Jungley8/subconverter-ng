@@ -128,6 +128,22 @@ func cmdConvert(args []string) {
 		fatal("--url is required")
 	}
 
+	// --template always renders sing-box JSON. A conflicting --target given
+	// explicitly is a user error (matches the server's 400 behavior); when
+	// --target was left at its default it is silently pinned to singbox.
+	if *template != "" && *target != "singbox" {
+		explicitTarget := false
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name == "target" {
+				explicitTarget = true
+			}
+		})
+		if explicitTarget {
+			fatal("--target %s conflicts with --template (template output is always sing-box); drop --target or use singbox", *target)
+		}
+		*target = "singbox"
+	}
+
 	resolvedUA, err := resolveUserAgent(*ua, *source)
 	if err != nil {
 		fatal("%v", err)

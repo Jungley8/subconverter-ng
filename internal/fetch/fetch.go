@@ -142,7 +142,13 @@ func (c *Client) GetWithMeta(ctx context.Context, target string) ([]byte, http.H
 	// subconverter deployments cache by full URL and would otherwise replay the
 	// cached failure.
 	for attempt := 1; attempt <= c.opts.MaxRetries && err == nil && isTransientStatus(status); attempt++ {
-		time.Sleep(retryBackoff)
+		// Back off only while the caller is still waiting: a cancelled or
+		// timed-out request must not linger in sleep.
+		select {
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
+		case <-time.After(retryBackoff):
+		}
 		body, hdr, status, err = c.do(ctx, cacheBusted(target, attempt), nil)
 	}
 	if err == nil && !isCloudflareChallenge(status, body) {

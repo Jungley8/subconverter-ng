@@ -70,6 +70,16 @@ func GenerateSingboxTemplate(ctx context.Context, nodes []*proxy.Proxy, cfg *ext
 	res.NodeCount = len(nodes)
 	outbounds, _, _ := nodeOutbounds(nodes, opts, res)
 
+	// Fail closed before rendering: an empty injection would leave the
+	// template's trailing comma as a syntax error, and a template without the
+	// placeholder would silently drop every converted node.
+	if len(outbounds) == 0 {
+		return nil, fmt.Errorf("no valid nodes for template rendering: all nodes were filtered out, dropped, or unsupported by sing-box")
+	}
+	if !nodesPlaceholder.Match(tmpl) {
+		return nil, fmt.Errorf(`template has no {{ Nodes }} placeholder: refusing to render a config without the converted nodes`)
+	}
+
 	// Node outbounds are rendered compactly and joined with commas; the
 	// template keeps its own trailing comma after the placeholder.
 	var b strings.Builder
@@ -83,7 +93,11 @@ func GenerateSingboxTemplate(ctx context.Context, nodes []*proxy.Proxy, cfg *ext
 		}
 		b.Write(raw)
 	}
-	out := nodesPlaceholder.ReplaceAllString(string(tmpl), b.String())
+	// ReplaceAllLiteralString, NOT ReplaceAllString: the injected JSON contains
+	// user data (passwords, node names) where "$" would otherwise be expanded
+	// as a capture-group reference ($0 even expands to the matched placeholder
+	// itself), silently corrupting credentials like "pass$1word" -> "pass".
+	out := nodesPlaceholder.ReplaceAllLiteralString(string(tmpl), b.String())
 
 	var notesErr error
 	out = notesNamePlaceholder.ReplaceAllStringFunc(out, func(m string) string {

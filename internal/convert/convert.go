@@ -57,7 +57,7 @@ type Request struct {
 	// template (a built-in name such as "momo", or an http(s) URL) instead of
 	// generating a bare config. See generator.GenerateSingboxTemplate.
 	Template string
-	Gen       generator.Options
+	Gen      generator.Options
 
 	// Emoji intent from URL params, as tribools (nil = unspecified). Emoji is
 	// the subconverter shortcut: when set it drives add_emoji and forces

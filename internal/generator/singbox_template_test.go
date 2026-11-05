@@ -181,3 +181,60 @@ func TestGenerateSingboxTemplate_BuiltinMomo(t *testing.T) {
 		t.Error("route.final missing")
 	}
 }
+
+func TestGenerateSingboxTemplate_DollarInUserDataIsLiteral(t *testing.T) {
+	// "$" in passwords/node names must survive rendering: ReplaceAllString
+	// would expand "$0" to the matched placeholder and "$1" to "".
+	nodes, _, err := parseLinks(
+		"ss://"+b64("aes-256-gcm:pass$0x1")+"@1.2.3.4:8388#[US] $0.05/GB",
+		"ss://"+b64("aes-256-gcm:pass$1word")+"@5.6.7.8:8388#JP$2",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := GenerateSingboxTemplate(context.Background(), nodes, &extconfig.Config{EnableRuleGenerator: true}, []byte(miniTemplate), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := string(res.Output)
+	for _, want := range []string{"pass$0x1", "[US] $0.05/GB", "pass$1word", "JP$2"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing literal %q ($-expansion corrupted it):\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "{{ Nodes }}") {
+		t.Errorf("placeholder expanded into user data:\n%s", out)
+	}
+}
+
+func TestGenerateSingboxTemplate_NoValidNodesFailsClosed(t *testing.T) {
+	// All nodes filtered/dropped/unsupported: must return a clear business
+	// error, not a leading-comma JSON syntax error from an empty injection.
+	nodes, _, err := parseLinks("ss://" + b64("aes-256-gcm:pass") + "@127.0.0.1:8388#官网占位")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = GenerateSingboxTemplate(context.Background(), nodes, &extconfig.Config{EnableRuleGenerator: true}, []byte(miniTemplate), Options{})
+	if err == nil {
+		t.Fatal("expected error for zero renderable outbounds")
+	}
+	if !strings.Contains(err.Error(), "no valid nodes") {
+		t.Errorf("error = %v, want a clear no-nodes message", err)
+	}
+}
+
+func TestGenerateSingboxTemplate_MissingPlaceholderFailsClosed(t *testing.T) {
+	// A template without {{ Nodes }} would silently drop every node; reject it.
+	nodes, _, err := parseLinks("ss://" + b64("aes-256-gcm:pass") + "@1.2.3.4:8388#HK01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bad := `{"outbounds": [{"type": "direct", "tag": "direct"}], "route": {"final": "direct"}}`
+	_, err = GenerateSingboxTemplate(context.Background(), nodes, &extconfig.Config{EnableRuleGenerator: true}, []byte(bad), Options{})
+	if err == nil {
+		t.Fatal("expected error for template without {{ Nodes }}")
+	}
+	if !strings.Contains(err.Error(), "placeholder") {
+		t.Errorf("error = %v, want a missing-placeholder message", err)
+	}
+}

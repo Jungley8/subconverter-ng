@@ -404,8 +404,8 @@ func TestGenerateSingboxSchemaSwitch(t *testing.T) {
 	// Top-level rule_set definitions: geosite-ads + geoip-cn + geosite-google@cn,
 	// no geoip-private (ip_is_private) and no geoip-twitter (skipped).
 	wantSets := map[string]string{
-		"geosite-ads":      "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-ads.srs",
-		"geoip-cn":         "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs",
+		"geosite-ads":       "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-ads.srs",
+		"geoip-cn":          "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs",
 		"geosite-google@cn": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-google@cn.srs",
 	}
 	if len(doc.RuleSet) != len(wantSets) {

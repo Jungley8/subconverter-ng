@@ -75,6 +75,9 @@ func parseTargetVersion(s string) (*generator.Version, error) {
 		if err != nil {
 			break
 		}
+		if num < 0 {
+			return nil, fmt.Errorf("invalid target version %q: negative segment", s)
+		}
 		switch n {
 		case 0:
 			v.Major = num

@@ -58,6 +58,10 @@ func TestParseTarget(t *testing.T) {
 		// Errors: a "/" with no usable numeric segment.
 		{raw: "singbox/", err: `invalid target version ""`},
 		{raw: "singbox/abc", err: `invalid target version "abc"`},
+
+		// Errors: negative segments must not parse as valid versions.
+		{raw: "singbox/-1.0", err: `invalid target version "-1.0": negative segment`},
+		{raw: "singbox/1.-2", err: `invalid target version "1.-2": negative segment`},
 	}
 	for _, c := range cases {
 		name, ver, err := ParseTarget(c.raw)
