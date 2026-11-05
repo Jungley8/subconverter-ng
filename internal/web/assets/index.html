@@ -475,6 +475,19 @@
     background: rgba(0, 0, 0, 0.45);
     backdrop-filter: blur(3px);
   }
+  @keyframes dialog-shake {
+    0%, 100% { transform: translateX(0); }
+    20%, 60% { transform: translateX(-6px); }
+    40%, 80% { transform: translateX(6px); }
+  }
+  dialog.dialog-shake {
+    animation: dialog-shake 0.3s ease-in-out;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    dialog.dialog-shake {
+      animation: none;
+    }
+  }
   .dialog-header {
     display: flex;
     justify-content: space-between;
@@ -1293,6 +1306,41 @@
   // 3. Add / Edit Subscription Dialog
   // ==========================================
   var subDialog = $('subDialog');
+  var subDialogInitialState = null;
+  var subDialogMouseDownInside = false;
+
+  function getSubFormState() {
+    return {
+      name: $('subName').value,
+      url: $('subUrl').value,
+      website: $('subWebsite').value,
+      expireDate: $('subExpireDate').value,
+      resetDay: $('subResetDay').value,
+      resetCustom: $('subResetCustom').value,
+      cost: $('subCost').value,
+      cycle: $('subCycle').value,
+      cycleCustom: $('subCycleCustom').value,
+      currency: $('subCurrency').value,
+      notes: $('subNotes').value
+    };
+  }
+
+  function isSubFormDirty() {
+    if (!subDialogInitialState) return false;
+    var cur = getSubFormState();
+    for (var k in subDialogInitialState) {
+      if (Object.prototype.hasOwnProperty.call(subDialogInitialState, k)) {
+        if (cur[k] !== subDialogInitialState[k]) return true;
+      }
+    }
+    return false;
+  }
+
+  function shakeDialog(dialogEl) {
+    dialogEl.classList.remove('dialog-shake');
+    void dialogEl.offsetWidth;
+    dialogEl.classList.add('dialog-shake');
+  }
 
   function openSubDialog(item) {
     $('subForm').reset();
@@ -1336,21 +1384,77 @@
     }
 
     subDialog.showModal();
+    subDialogInitialState = getSubFormState();
     $('subName').focus();
   }
 
   function closeSubDialog() {
+    subDialogInitialState = null;
+    subDialog.classList.remove('dialog-shake');
     subDialog.close();
   }
 
+  function requestCloseSubDialog() {
+    if (isSubFormDirty()) {
+      if (!confirm('表单内容已修改。确定要放弃修改并退出吗？')) {
+        return;
+      }
+    }
+    closeSubDialog();
+  }
+
+  subDialog.addEventListener('animationend', function () {
+    subDialog.classList.remove('dialog-shake');
+  });
+
+  subDialog.addEventListener('mousedown', function (e) {
+    var rect = subDialog.getBoundingClientRect();
+    subDialogMouseDownInside = (
+      e.clientX >= rect.left &&
+      e.clientX <= rect.right &&
+      e.clientY >= rect.top &&
+      e.clientY <= rect.bottom
+    );
+  });
+
   $('btnOpenAddSub').addEventListener('click', function () { openSubDialog(); });
   $('btnEmptyAdd').addEventListener('click', function () { openSubDialog(); });
-  $('subDialogClose').addEventListener('click', closeSubDialog);
-  $('subDialogCancel').addEventListener('click', closeSubDialog);
+  $('subDialogClose').addEventListener('click', requestCloseSubDialog);
+  $('subDialogCancel').addEventListener('click', requestCloseSubDialog);
 
-  // Light dismiss on backdrop click
+  // Light dismiss on backdrop click: intercept if form is dirty
   subDialog.addEventListener('click', function (e) {
-    if (e.target === subDialog) closeSubDialog();
+    if (e.target !== subDialog) return;
+    if (subDialogMouseDownInside) {
+      subDialogMouseDownInside = false;
+      return;
+    }
+    var rect = subDialog.getBoundingClientRect();
+    var isOutside = (
+      e.clientX < rect.left ||
+      e.clientX > rect.right ||
+      e.clientY < rect.top ||
+      e.clientY > rect.bottom
+    );
+    if (!isOutside) return;
+
+    if (isSubFormDirty()) {
+      shakeDialog(subDialog);
+      showToast('表单内容已修改。请保存或点击关闭按钮。');
+      return;
+    }
+    closeSubDialog();
+  });
+
+  // Intercept Esc key when form is dirty
+  subDialog.addEventListener('cancel', function (e) {
+    if (isSubFormDirty()) {
+      e.preventDefault();
+      shakeDialog(subDialog);
+      showToast('表单内容已修改。请保存或点击关闭按钮。');
+    } else {
+      subDialogInitialState = null;
+    }
   });
 
   $('subResetDay').addEventListener('change', function () {
@@ -1450,7 +1554,15 @@
   $('backupDialogClose').addEventListener('click', function () { backupDialog.close(); });
   $('backupDialogDone').addEventListener('click', function () { backupDialog.close(); });
   backupDialog.addEventListener('click', function (e) {
-    if (e.target === backupDialog) backupDialog.close();
+    if (e.target !== backupDialog) return;
+    var rect = backupDialog.getBoundingClientRect();
+    var isOutside = (
+      e.clientX < rect.left ||
+      e.clientX > rect.right ||
+      e.clientY < rect.top ||
+      e.clientY > rect.bottom
+    );
+    if (isOutside) backupDialog.close();
   });
 
   function getBackupDataString() {
