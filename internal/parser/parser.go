@@ -1,11 +1,12 @@
 // Package parser turns raw subscription payloads into proxy.Proxy values.
 //
-// It handles the two payload shapes airports commonly serve:
-//
+// It handles common subscription payload shapes:
+//   - A ready-made Clash/Clash.Meta YAML document.
+//   - A sing-box JSON configuration or outbounds array.
+//   - A Surge .conf file or [Proxy] node list.
 //   - A base64 blob whose decoded body is a newline-separated list of share
-//     links (ss://, vmess://, vless://, trojan://, hysteria2://, tuic://).
-//   - A ready-made Clash/Clash.Meta YAML document (served when the request
-//     carries a clash-like User-Agent). Its `proxies:` list is lifted directly.
+//     links (ss://, vmess://, vless://, trojan://, hysteria2://, tuic://, etc.)
+//     or one of the structured document formats above.
 package parser
 
 import (
@@ -84,18 +85,33 @@ func IsShareLink(s string) bool { return matchScheme(s) != "" }
 // Parse decodes a subscription payload into proxy nodes. Unparseable or
 // unsupported lines are skipped and returned in skipped for diagnostics; a
 // non-nil error is only returned for a payload that is neither a node list nor
-// a Clash document.
+// a recognized subscription document format.
 func Parse(payload []byte) (nodes []*proxy.Proxy, skipped []string, err error) {
 	text := strings.TrimSpace(string(payload))
 
-	// A Clash YAML document is served verbatim by some airports.
+	// Direct document formats
 	if looksLikeClashYAML(text) {
 		return parseClashYAML(text)
+	}
+	if looksLikeSingboxJSON(text) {
+		return parseSingboxJSON(text)
+	}
+	if looksLikeSurge(text) {
+		return parseSurge(text)
 	}
 
 	body := text
 	if decoded, ok := tryBase64(text); ok {
 		body = decoded
+		if looksLikeClashYAML(body) {
+			return parseClashYAML(body)
+		}
+		if looksLikeSingboxJSON(body) {
+			return parseSingboxJSON(body)
+		}
+		if looksLikeSurge(body) {
+			return parseSurge(body)
+		}
 	}
 
 	for _, raw := range strings.Split(body, "\n") {
@@ -127,7 +143,7 @@ func dispatch(line string) *proxy.Proxy {
 
 // tryBase64 decodes a subscription body that is wrapped in standard or
 // URL-safe base64, with or without padding. Returns ok=false when the input is
-// not base64 (i.e. it is already a plain node list).
+// not base64 (i.e. it is already a plain node list or unencoded document).
 func tryBase64(s string) (string, bool) {
 	compact := strings.Map(func(r rune) rune {
 		if r == '\n' || r == '\r' || r == ' ' || r == '\t' {
@@ -141,8 +157,9 @@ func tryBase64(s string) (string, bool) {
 	} {
 		if b, err := enc.DecodeString(compact); err == nil {
 			d := string(b)
-			// Guard against false positives: a real node list contains "://".
-			if strings.Contains(d, "://") {
+			// Guard against false positives: a real subscription contains "://"
+			// or matches one of the structured document formats.
+			if strings.Contains(d, "://") || looksLikeClashYAML(d) || looksLikeSingboxJSON(d) || looksLikeSurge(d) {
 				return d, true
 			}
 		}

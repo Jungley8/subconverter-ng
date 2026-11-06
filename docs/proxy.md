@@ -51,4 +51,4 @@ subconverter-ng convert --url '<订阅>' --ua "ClashforWindows/0.20.39"
 
 - **订阅解析出 0 个节点**：先确认 UA。用 `curl -A "<你的UA>" '<订阅>' | base64 -d | head` 看机场到底返回了什么。
 - **连接超时**：机场需要代理却没配，或代理本身不通。先用 `--proxy` 在 convert 模式下手测。
-- **返回的是 Clash YAML 而非 base64**：本工具会自动识别并直接提取其中的 `proxies`，无需额外配置。
+- **返回的是 Clash YAML、sing-box JSON 或 Surge 格式**：本工具会自动识别并提取其中的代理节点，无需额外配置；亦原生兼容 Hiddify 等基于 sing-box 的客户端订阅。

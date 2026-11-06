@@ -645,3 +645,54 @@ func TestRun_ExcludeProtocols_OtherTargetsAndAllExcluded(t *testing.T) {
 		t.Fatalf("proxiesAll count = %d, want 0", len(proxiesAll))
 	}
 }
+
+func TestRun_SingboxAndSurgeSubscriptionSources(t *testing.T) {
+	singboxJSON := `{"outbounds":[{"tag":"SB-Node","type":"shadowsocks","server":"1.2.3.4","server_port":8388,"method":"aes-256-gcm","password":"pwd"}]}`
+	surgeConf := "[Proxy]\nSurge-Node = vmess, 5.6.7.8, 443, username=uuid123, ws=true, ws-path=/ws, tls=true, sni=vm.example.com\n"
+
+	f := fakeFetcher{
+		"singbox-sub": []byte(singboxJSON),
+		"surge-sub":   []byte(surgeConf),
+	}
+
+	// 1. sing-box subscription source -> Clash target
+	req1 := Request{
+		Target:  "clash",
+		SubURLs: []string{"https://airport.example.com/singbox-sub"},
+	}
+	out1, diag1, err := Run(context.Background(), f, req1)
+	if err != nil {
+		t.Fatalf("Run singbox-sub -> clash failed: %v", err)
+	}
+	if diag1.NodeCount != 1 {
+		t.Errorf("diag1.NodeCount = %d, want 1", diag1.NodeCount)
+	}
+	var clashDoc map[string]any
+	if err := yaml.Unmarshal(out1, &clashDoc); err != nil {
+		t.Fatalf("yaml unmarshal failed: %v", err)
+	}
+	proxies, _ := clashDoc["proxies"].([]any)
+	if len(proxies) != 1 {
+		t.Fatalf("len(proxies) = %d, want 1", len(proxies))
+	}
+	p0 := proxies[0].(map[string]any)
+	if p0["name"] != "SB-Node" || p0["type"] != "ss" {
+		t.Errorf("unexpected proxy in clash: %v", p0)
+	}
+
+	// 2. Surge subscription source -> singbox target
+	req2 := Request{
+		Target:  "singbox",
+		SubURLs: []string{"https://airport.example.com/surge-sub"},
+	}
+	out2, diag2, err := Run(context.Background(), f, req2)
+	if err != nil {
+		t.Fatalf("Run surge-sub -> singbox failed: %v", err)
+	}
+	if diag2.NodeCount != 1 {
+		t.Errorf("diag2.NodeCount = %d, want 1", diag2.NodeCount)
+	}
+	if !strings.Contains(string(out2), `"Surge-Node"`) || !strings.Contains(string(out2), `"vmess"`) {
+		t.Errorf("singbox output missing Surge-Node: %s", string(out2))
+	}
+}

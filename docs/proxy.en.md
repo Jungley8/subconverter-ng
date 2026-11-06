@@ -53,4 +53,4 @@ subconverter-ng convert --url '<subscription>' --ua "ClashforWindows/0.20.39"
 
 - **Subscription parses to 0 nodes**: check the UA first. Run `curl -A "<your UA>" '<subscription>' | base64 -d | head` to see what the provider actually returns.
 - **Connection timeout**: the provider needs a proxy that isn't configured, or the proxy itself is down. Test with `--proxy` in convert mode first.
-- **It returns Clash YAML instead of base64**: the tool auto-detects this and extracts the `proxies` directly, no extra config needed.
+- **It returns Clash YAML, sing-box JSON, or Surge configuration**: the tool auto-detects this and extracts proxy nodes directly, no extra config needed (including Hiddify and other sing-box based subscriptions).
