@@ -120,6 +120,8 @@ func cmdConvert(args []string) {
 	insertPrepend := fs.Bool("insert-prepend", true, "place inserted nodes before subscription nodes")
 	includeRe := fs.String("include", "", "keep only nodes whose name matches this regex (overrides config include_remarks)")
 	excludeRe := fs.String("exclude", "", "drop nodes whose name matches this regex (overrides config exclude_remarks)")
+	provider := fs.Bool("provider", false, "clash proxy-provider mode: subscriptions become mihomo proxy-providers (client fetches nodes itself)")
+	providerInterval := fs.Int("interval", 0, "proxy-provider update interval in seconds (0=default 86400, provider mode only)")
 	timeout := fs.Duration("timeout", 30*time.Second, "per-fetch timeout")
 	cacheTTL := fs.Duration("cache-ttl", 0, "TTL for the in-memory fetch cache (0=default 300s, negative=disabled)")
 	fs.Parse(args)
@@ -142,6 +144,26 @@ func cmdConvert(args []string) {
 			fatal("--target %s conflicts with --template (template output is always sing-box); drop --target or use singbox", *target)
 		}
 		*target = "singbox"
+	}
+
+	// --provider turns target=clash into proxy-provider output. Conflicts fail
+	// closed like the server does; a default --target is pinned to clash.
+	if *provider {
+		if *template != "" {
+			fatal("--provider conflicts with --template (template output is always sing-box)")
+		}
+		if *target != "clash" {
+			explicitTarget := false
+			fs.Visit(func(f *flag.Flag) {
+				if f.Name == "target" {
+					explicitTarget = true
+				}
+			})
+			if explicitTarget {
+				fatal("--provider is only available with target=clash (got --target %s)", *target)
+			}
+			*target = "clash"
+		}
 	}
 
 	resolvedUA, err := resolveUserAgent(*ua, *source)
@@ -178,6 +200,10 @@ func cmdConvert(args []string) {
 		Emoji:       triFromString(*emoji),
 		AddEmoji:    triFromString(*addEmoji),
 		RemoveEmoji: triFromString(*removeEmoji),
+
+		Provider:         *provider,
+		ProviderInterval: *providerInterval,
+		UserAgent:        resolvedUA,
 	}
 	if req.IncludeRemarks, err = convert.CompileRemarks(*includeRe); err != nil {
 		fatal("%v", err)

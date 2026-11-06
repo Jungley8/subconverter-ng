@@ -59,6 +59,15 @@ type Request struct {
 	Template string
 	Gen      generator.Options
 
+	// Provider switches target=clash to proxy-provider output (&provider=true):
+	// http(s) subscription URLs become mihomo proxy-providers the client
+	// refreshes itself; only share-link entries are parsed and inlined locally.
+	// ProviderInterval is the providers' update interval in seconds (0 = 86400).
+	// UserAgent is the UA the providers should fetch with (&ua= / &source=).
+	Provider         bool
+	ProviderInterval int
+	UserAgent        string
+
 	// Emoji intent from URL params, as tribools (nil = unspecified). Emoji is
 	// the subconverter shortcut: when set it drives add_emoji and forces
 	// remove_emoji=true. Resolved against the external config + defaults below.
@@ -136,6 +145,68 @@ func Run(ctx context.Context, f Fetcher, req Request) ([]byte, *Diagnostics, err
 		return nil, nil, fmt.Errorf("no subscription url provided")
 	}
 
+	var cfg *extconfig.Config
+	if req.ConfigURL != "" {
+		data, err := f.Get(ctx, req.ConfigURL)
+		if err != nil {
+			return nil, nil, fmt.Errorf("fetch external config: %w", err)
+		}
+		cfg = extconfig.Parse(data)
+	} else {
+		cfg = &extconfig.Config{EnableRuleGenerator: true}
+	}
+
+	// Provider mode (&provider=true): delegate node fetching to the mihomo
+	// client. The server never touches the subscription payloads — each http(s)
+	// url= entry becomes a proxy-provider; share-link entries are parsed and
+	// inlined as local nodes.
+	if req.Provider {
+		if name != "clash" {
+			return nil, nil, fmt.Errorf("provider mode is only available with target=clash (got %s)", describeTarget(name, ver))
+		}
+		var subs, links []string
+		for _, u := range req.SubURLs {
+			if parser.IsShareLink(u) {
+				links = append(links, u)
+			} else {
+				subs = append(subs, u)
+			}
+		}
+		if len(subs) == 0 {
+			return nil, nil, fmt.Errorf("provider mode needs at least one http(s) subscription url")
+		}
+		var localNodes []*proxy.Proxy
+		var skipped []string
+		for _, l := range links {
+			ns, sk, err := parser.Parse([]byte(l))
+			if err != nil {
+				return nil, nil, fmt.Errorf("parse local node link: %w", err)
+			}
+			localNodes = append(localNodes, ns...)
+			skipped = append(skipped, sk...)
+		}
+		gen := req.Gen
+		gen.TargetVersion = ver
+		gen.ProviderMode = true
+		gen.ProviderURLs = subs
+		gen.ProviderUA = req.UserAgent
+		gen.ProviderInterval = req.ProviderInterval
+		if gen.ProviderInterval <= 0 {
+			gen.ProviderInterval = 86400
+		}
+		if len(req.IncludeRemarks) > 0 {
+			gen.ProviderInclude = req.IncludeRemarks[0].String()
+		}
+		if len(req.ExcludeRemarks) > 0 {
+			gen.ProviderExclude = req.ExcludeRemarks[0].String()
+		}
+		result, err := generator.GenerateClashProvider(ctx, localNodes, cfg, f, gen)
+		if err != nil {
+			return nil, nil, err
+		}
+		return result.Output, diagnosticsFor(result, skipped, ""), nil
+	}
+
 	nodes, skipped, userinfo, err := fetchAndParseAll(ctx, f, req.SubURLs)
 	if err != nil {
 		return nil, nil, err
@@ -161,17 +232,6 @@ func Run(ctx context.Context, f Fetcher, req Request) ([]byte, *Diagnostics, err
 		// Surface a snippet of what came back so the cause is diagnosable
 		// instead of opaque — the raw body is far more useful than a bare count.
 		return nil, nil, fmt.Errorf("%w; %d lines skipped%s", ErrNoNodes, len(skipped), skippedHint(skipped))
-	}
-
-	var cfg *extconfig.Config
-	if req.ConfigURL != "" {
-		data, err := f.Get(ctx, req.ConfigURL)
-		if err != nil {
-			return nil, nil, fmt.Errorf("fetch external config: %w", err)
-		}
-		cfg = extconfig.Parse(data)
-	} else {
-		cfg = &extconfig.Config{EnableRuleGenerator: true}
 	}
 
 	gen := req.Gen

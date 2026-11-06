@@ -222,6 +222,35 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// &provider=true (target=clash only): emit proxy-providers instead of
+	// inlined proxies. Fail closed on conflicting params instead of silently
+	// overriding: template= renders sing-box JSON, and an explicitly non-clash
+	// target= cannot carry providers.
+	provider := boolParam(q.Get("provider"), false)
+	if provider {
+		if template != "" {
+			http.Error(w, "provider=true conflicts with template= (template output is always sing-box)", http.StatusBadRequest)
+			return
+		}
+		if explicit := q.Get("target"); explicit != "" && explicit != "clash" && !strings.HasPrefix(explicit, "clash/") {
+			http.Error(w, fmt.Sprintf("provider=true is only available with target=clash (got target=%s)", explicit), http.StatusBadRequest)
+			return
+		}
+		target = convert.TargetClash
+	}
+	// &interval=: proxy-provider update interval in seconds (provider mode only).
+	providerInterval := 0
+	if provider {
+		if v := q.Get("interval"); v != "" {
+			n, err := strconv.Atoi(v)
+			if err != nil || n <= 0 {
+				http.Error(w, fmt.Sprintf("invalid interval %q: want a positive integer of seconds", v), http.StatusBadRequest)
+				return
+			}
+			providerInterval = n
+		}
+	}
+
 	req := convert.Request{
 		Target:        target,
 		SubURLs:       splitURLs(rawURL),
@@ -252,6 +281,11 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 		// Per-request remarks filters (&include= / &exclude=).
 		IncludeRemarks: includeRe,
 		ExcludeRemarks: excludeRe,
+
+		// Provider mode (&provider=true) + provider fetch params.
+		Provider:         provider,
+		ProviderInterval: providerInterval,
+		UserAgent:        resolvedUA,
 	}
 
 	// `insert` is handled above (insert_url). `new_name` is accepted for

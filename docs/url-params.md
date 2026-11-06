@@ -113,6 +113,20 @@ sing-box 协议能力表（best-effort，依据 sing-box 官方 release notes）
 |---|---|---|
 | `list` | 仅输出节点列表（`proxies:`），不含分组与规则 | :material-check: |
 | `expand` | `true`（默认）把规则内联进配置；`false` 改为输出 `rule-providers` 引用远程规则 | :material-check: |
+| `provider` | proxy-provider 模式：输出 `proxy-providers` 骨架，客户端自行拉取/更新节点（见下） | :material-check: |
+| `interval` | provider 更新间隔（秒），默认 86400；仅 provider 模式消费 | :material-check: |
+
+### Provider 模式（`&provider=true`）
+
+与原版 subconverter 的 `clash.proxy-provider` 模板思路一致：转换器不再抓取/内联节点，
+而是生成含 `proxy-providers` 的 Clash.Meta 骨架，由 mihomo 客户端按 `interval` 自行
+拉取订阅并更新节点（分组/规则保持服务端模板编排）。
+
+- 每个 http(s) 的 `url=` 条目 → 一个 `sub-N` provider；`ss://` 等分享链接条目仍被解析为本地内联节点
+- `&ua=` / `&source=` → provider 的 `header.User-Agent`；`&include=` / `&exclude=` → `filter` / `exclude-filter`（对客户端新拉取的节点持续生效）；`&udp` / `&scv` → `override`
+- 分组：INI `custom_proxy_group` 的 `[]字面量` 保持 `proxies:` 成员；**正则选择器映射为组级 `filter` + `use:`**（mihomo 原生能力，region 分组照常工作）；无外部配置时生成「🚀 节点选择 / ♻️ 自动选择」最小分组
+- **不适用**：emoji、rename、fdn、dedup 等服务端节点处理不作用于 provider 载荷（客户端看到机场原始节点）；协议版本门控同理
+- 与 `template=` 或非 clash 的显式 `target=` 同用会返回 400
 
 !!! note "其它 target 的规则处理"
     surge 系 / quanx / sing-box 统一把规则**展开为内联规则**（远程规则集会被抓取并逐条转换为目标语法）；
