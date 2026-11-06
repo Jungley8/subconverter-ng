@@ -263,3 +263,47 @@ func TestIsShareLink(t *testing.T) {
 		}
 	}
 }
+
+func TestParse_SingboxIntegration(t *testing.T) {
+	doc := `{"outbounds":[{"tag":"SB1","type":"shadowsocks","server":"1.1.1.1","server_port":8388,"method":"aes-128-gcm","password":"pwd"}]}`
+	// 1. Raw JSON
+	nodes, skipped, err := Parse([]byte(doc))
+	if err != nil || len(nodes) != 1 || len(skipped) != 0 {
+		t.Fatalf("Parse raw singbox failed: nodes=%v, skipped=%v, err=%v", nodes, skipped, err)
+	}
+	if nodes[0].Name != "SB1" || nodes[0].Type != "ss" {
+		t.Errorf("unexpected node: %+v", nodes[0])
+	}
+
+	// 2. Base64 encoded singbox JSON
+	b64Doc := b64(doc)
+	nodesB64, skippedB64, err := Parse([]byte(b64Doc))
+	if err != nil || len(nodesB64) != 1 || len(skippedB64) != 0 {
+		t.Fatalf("Parse b64 singbox failed: nodes=%v, skipped=%v, err=%v", nodesB64, skippedB64, err)
+	}
+	if nodesB64[0].Name != "SB1" {
+		t.Errorf("unexpected b64 node: %+v", nodesB64[0])
+	}
+}
+
+func TestParse_SurgeIntegration(t *testing.T) {
+	conf := "[Proxy]\nSurgeNode = ss, 2.2.2.2, 8388, encrypt-method=aes-128-gcm, password=pwd\n"
+	// 1. Raw conf
+	nodes, skipped, err := Parse([]byte(conf))
+	if err != nil || len(nodes) != 1 || len(skipped) != 0 {
+		t.Fatalf("Parse raw surge failed: nodes=%v, skipped=%v, err=%v", nodes, skipped, err)
+	}
+	if nodes[0].Name != "SurgeNode" || nodes[0].Type != "ss" {
+		t.Errorf("unexpected node: %+v", nodes[0])
+	}
+
+	// 2. Base64 encoded Surge
+	b64Conf := b64(conf)
+	nodesB64, skippedB64, err := Parse([]byte(b64Conf))
+	if err != nil || len(nodesB64) != 1 || len(skippedB64) != 0 {
+		t.Fatalf("Parse b64 surge failed: nodes=%v, skipped=%v, err=%v", nodesB64, skippedB64, err)
+	}
+	if nodesB64[0].Name != "SurgeNode" {
+		t.Errorf("unexpected b64 node: %+v", nodesB64[0])
+	}
+}
