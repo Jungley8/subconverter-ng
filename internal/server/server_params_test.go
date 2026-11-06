@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Jungley8/subconverter-ng/internal/config"
 	"gopkg.in/yaml.v3"
 )
 
@@ -19,7 +18,7 @@ func paramURL(air *httptest.Server, extra string) string {
 func TestHandleSub_ListOnly(t *testing.T) {
 	air := fakeAirport()
 	defer air.Close()
-	h := New(config.Default()).Handler()
+	h := New(testConfig()).Handler()
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, paramURL(air, "&list=true"), nil))
@@ -41,7 +40,7 @@ func TestHandleSub_ListOnly(t *testing.T) {
 func TestHandleSub_FilenameAndInterval(t *testing.T) {
 	air := fakeAirport()
 	defer air.Close()
-	h := New(config.Default()).Handler()
+	h := New(testConfig()).Handler()
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, paramURL(air, "&filename=my%20clash.yaml&interval=12"), nil))
@@ -63,7 +62,7 @@ func TestSanitizeFilename(t *testing.T) {
 }
 
 func TestHandleSub_UnsupportedSource(t *testing.T) {
-	h := New(config.Default()).Handler()
+	h := New(testConfig()).Handler()
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sub?target=clash&url=x&source=foo", nil))
 	if rec.Code != http.StatusBadRequest {
@@ -75,7 +74,7 @@ func TestHandleSub_UnsupportedSource(t *testing.T) {
 }
 
 func TestHandleSub_InvalidTargetVersion(t *testing.T) {
-	h := New(config.Default()).Handler()
+	h := New(testConfig()).Handler()
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sub?target=singbox/abc&url=x", nil))
 	if rec.Code != http.StatusBadRequest {
@@ -109,7 +108,7 @@ func TestHandleSub_UAPriority(t *testing.T) {
 	air := httptest.NewServer(mux)
 	defer air.Close()
 
-	h := New(config.Default()).Handler()
+	h := New(testConfig()).Handler()
 	do := func(query string) {
 		t.Helper()
 		rec := httptest.NewRecorder()

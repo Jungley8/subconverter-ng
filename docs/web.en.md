@@ -20,9 +20,10 @@ The web interface offers dual modes: **Subscription Converter** and **My Subscri
 
 1. **Subscription link**: paste your provider's subscription URL into the text box, one per line; multiple lines are automatically joined with `|`. You can also click "Import from library" to quickly load saved subscriptions, or "Save to library" to bookmark the current link.
 2. **External config (optional)**: enter the URL of an INI rules config (subconverter / ACL4SSR compatible).
-3. **target**: choose the output format from the dropdown — `clash` (Clash.Meta / mihomo), `singbox`, `surge`, `shadowrocket`, `quanx`, `loon`, `v2ray`/`mixed`.
+3. **target**: choose the output format from the dropdown — `clash` (Clash.Meta / mihomo / recommended for Shadowrocket), `singbox`, `surge`, `shadowrocket`, `quanx`, `loon`, `v2ray`/`mixed`.
+   > **Shadowrocket Note**: Select `clash` when adding a subscription on the Shadowrocket home screen (natively supported; automatically parses nodes and proxy groups). The `shadowrocket` target outputs Surge-style rules, which must be imported under the bottom "Config" tab.
 4. **Options**: tick `sort nodes`, `dedup nodes`, `force UDP`, `TCP Fast Open`, `skip cert verify`, `filter incompatible nodes`, `append type to name`, `Tailscale DIRECT`, `allow emoji` as needed. These map to the [URL parameters](url-params.md) `sort` / `dedup` / `udp` / `tfo` / `scv` / `fdn` / `append_type` / `tailscale` / `emoji`.
-5. **Upstream proxy (optional)**: e.g. `socks5://127.0.0.1:1080`, applied to this request only, overriding the global config.
+5. **Upstream proxy (optional)**: applied to this request only, overriding global config. The proxy is used by the server process to fetch subscriptions; if subconverter-ng is deployed on a remote server or in Docker, the proxy address must be publicly accessible from the server (do not use client-side `127.0.0.1`).
 6. Click **Generate subscription link** and the full `/sub?...` link appears below.
 7. Click **Copy** and paste the link into your Clash / mihomo client's "Config URL"; or click **Open / Preview** to view the converted result directly in a new tab.
 

@@ -29,6 +29,9 @@ Paste that address into the subscription field of Clash.Meta / mihomo / clash-ve
 
 For all supported parameters, see [URL Parameters](url-params.md).
 
+!!! tip "Built-in Web UI"
+    Open `http://127.0.0.1:25500/` in your browser to build configs and manage subscriptions visually. See [Web UI](web.en.md).
+
 ## Option 2: one-shot CLI conversion
 
 Handy for generating a config file locally or inside a script:
@@ -55,6 +58,7 @@ Common flags:
 | `--fdn` | Filter out nodes Clash.Meta doesn't support |
 | `--list` | Output the node list only |
 | `--append-type` | Prefix node names with `[type]` |
+| `--exclude-protocol` | Exclude nodes by protocol or type (e.g. `hysteria2,tuic`) |
 | `--expand` | `=false` emits rule-providers instead |
 | `--emoji` `--add-emoji` `--remove-emoji` | Add/remove emoji |
 
@@ -65,6 +69,7 @@ Common flags:
 - `ruleset=` — remote rule lists, plus inline rules like `[]GEOIP,CN` and `[]FINAL`
 - `custom_proxy_group=` — backtick-separated groups (`select` / `url-test` / regex filters / `[]` group references)
 - `exclude_remarks=` / `include_remarks=` — node-name filtering
+- `exclude_protocol=` — exclude nodes by protocol or type (e.g. `hysteria2,tuic`)
 - `enable_rule_generator` / `overwrite_original_rules`
 - `clash_rule_base=` — custom Clash base template
 
@@ -72,6 +77,7 @@ You can reuse your existing `config.init` as-is, no changes needed.
 
 ## Next steps
 
+- Visual builder & subscription management → [Web UI](web.en.md)
 - Provider unreachable → [Upstream Proxy & UA](proxy.md)
 - Provider behind Cloudflare → [Bypass Cloudflare](cloudflare.md)
 - Production deployment → [Docker Deployment](docker.md)

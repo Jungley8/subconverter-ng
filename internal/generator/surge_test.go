@@ -153,3 +153,77 @@ func TestGenerateLoon(t *testing.T) {
 		t.Errorf("loon vless line wrong:\n%s", out)
 	}
 }
+
+func TestGenerateSurge_ListOnly_And_TFO(t *testing.T) {
+	nodes := surgeNodes(t)
+	res, err := GenerateSurge(context.Background(), nodes, &extconfig.Config{}, fakeFetcher{}, Options{ListOnly: true, TFO: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := string(res.Output)
+	if !strings.HasPrefix(out, "[Proxy]\n") {
+		t.Errorf("surge list must start with [Proxy]: %s", out)
+	}
+	if strings.Contains(out, "[General]") || strings.Contains(out, "[Proxy Group]") || strings.Contains(out, "[Rule]") {
+		t.Errorf("surge list must omit other sections: %s", out)
+	}
+	if !strings.Contains(out, "tfo=true") {
+		t.Errorf("surge should contain tfo=true: %s", out)
+	}
+}
+
+func TestGenerateShadowrocket_Enhancements(t *testing.T) {
+	links := []string{
+		"vless://uuid-2@us.example.com:443?encryption=none&security=reality&sni=www.microsoft.com&fp=chrome&pbk=PUBKEY&sid=ab&flow=xtls-rprx-vision&type=tcp#US-REALITY",
+		"tuic://uuid-3:tpass@tw.example.com:443?congestion_control=bbr&alpn=h3&sni=tw.example.com#TW-TUIC",
+	}
+	sub := []byte(base64.StdEncoding.EncodeToString([]byte(strings.Join(links, "\n"))))
+	nodes, _, err := parser.Parse(sub)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := GenerateShadowrocket(context.Background(), nodes, &extconfig.Config{}, fakeFetcher{}, Options{TFO: true, ListOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := string(res.Output)
+
+	// Reality
+	if !strings.Contains(out, "US-REALITY = vless, us.example.com, 443, username=uuid-2, tls=true, sni=www.microsoft.com, reality=true, public-key=PUBKEY, short-id=ab, fingerprint=chrome, flow=xtls-rprx-vision, tfo=true") {
+		t.Errorf("shadowrocket vless reality wrong:\n%s", out)
+	}
+	// TUIC
+	if !strings.Contains(out, "TW-TUIC = tuic, tw.example.com, 443, token=tpass, sni=tw.example.com, alpn=h3") {
+		t.Errorf("shadowrocket tuic wrong:\n%s", out)
+	}
+}
+
+func TestGenerateLoon_Enhancements(t *testing.T) {
+	links := []string{
+		"vless://uuid-2@us.example.com:443?encryption=none&security=reality&sni=www.microsoft.com&fp=chrome&pbk=PUBKEY&sid=ab&flow=xtls-rprx-vision&type=tcp#US-REALITY",
+		"tuic://uuid-3:tpass@tw.example.com:443?congestion_control=bbr&alpn=h3&sni=tw.example.com#TW-TUIC",
+		"wireguard://privkey@wg.example.com:51820?publickey=pubkey&address=10.0.0.2&presharedkey=psk&mtu=1420#WG",
+	}
+	sub := []byte(base64.StdEncoding.EncodeToString([]byte(strings.Join(links, "\n"))))
+	nodes, _, err := parser.Parse(sub)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := GenerateLoon(context.Background(), nodes, &extconfig.Config{}, fakeFetcher{}, Options{TFO: true, ListOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := string(res.Output)
+
+	if !strings.Contains(out, `US-REALITY = VLESS,us.example.com,443,"uuid-2",transport=tcp,over-tls=true,tls-name=www.microsoft.com,public-key="PUBKEY",short-id="ab",flow=xtls-rprx-vision,fast-open=true`) {
+		t.Errorf("loon vless reality wrong:\n%s", out)
+	}
+	if !strings.Contains(out, `TW-TUIC = TUIC,tw.example.com,443,"uuid-3","tpass",sni=tw.example.com,alpn=h3,fast-open=true`) {
+		t.Errorf("loon tuic wrong:\n%s", out)
+	}
+	if !strings.Contains(out, `WG = WireGuard,wg.example.com,51820,private-key="privkey",public-key="pubkey",ip=10.0.0.2,preshared-key="psk",mtu=1420`) {
+		t.Errorf("loon wireguard wrong:\n%s", out)
+	}
+}

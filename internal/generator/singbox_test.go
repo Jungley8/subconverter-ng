@@ -182,13 +182,9 @@ func TestGenerateSingboxProtocolGate(t *testing.T) {
 			t.Errorf("skipped nodes missing %q: %v", want, res.SkippedNodes)
 		}
 	}
-	// hysteria (floor 1.1) passes the 1.3 gate; it is skipped only because the
-	// generator has no hysteria outbound (pre-existing behaviour).
-	if !strings.Contains(skipped, "HY1 (hysteria: unsupported by sing-box generator)") {
-		t.Errorf("hysteria should not be version-gated at 1.3, skipped = %v", res.SkippedNodes)
-	}
+	// hysteria (floor 1.1) passes the 1.3 gate and is rendered.
 	tags := parseTags(t, res)
-	for _, tag := range []string{"SS", "VM", "TJ", "TU"} {
+	for _, tag := range []string{"SS", "VM", "TJ", "TU", "HY1"} {
 		if tags[tag] == nil {
 			t.Errorf("outbound %q missing under sing-box 1.3", tag)
 		}
@@ -210,15 +206,14 @@ func TestGenerateSingboxProtocolGate(t *testing.T) {
 		t.Errorf("Auto group must not reference gated nodes: %v", got)
 	}
 
-	// (b) No declared version: unchanged behaviour — hysteria2 and anytls
-	// emitted, hysteria skipped as unsupported (no hysteria outbound exists),
-	// no version-gate skips at all.
+	// (b) No declared version: unchanged behaviour — hysteria, hysteria2 and
+	// anytls are all emitted, no version-gate skips at all.
 	resNil, err := GenerateSingbox(context.Background(), gateNodes(), cfg, fakeFetcher{}, Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	tagsNil := parseTags(t, resNil)
-	for _, tag := range []string{"SS", "VM", "TJ", "TU", "HY2", "AT"} {
+	for _, tag := range []string{"SS", "VM", "TJ", "TU", "HY1", "HY2", "AT"} {
 		if tagsNil[tag] == nil {
 			t.Errorf("outbound %q missing without a declared version", tag)
 		}
@@ -238,9 +233,9 @@ func TestGenerateSingboxProtocolGate(t *testing.T) {
 			t.Errorf("unexpected version-gate skip without a declared version: %q", entry)
 		}
 	}
-	skippedNil := strings.Join(resNil.SkippedNodes, "\n")
-	if !strings.Contains(skippedNil, "HY1 (hysteria: unsupported by sing-box generator)") {
-		t.Errorf("skipped nodes missing HY1: %v", resNil.SkippedNodes)
+	// hysteria renders with its TLS block enabled (TLS-always protocol).
+	if tls, ok := tagsNil["HY1"]["tls"].(map[string]any); !ok || tls["enabled"] != true {
+		t.Errorf("outbound HY1 tls = %v, want enabled", tagsNil["HY1"]["tls"])
 	}
 	if !containsStr(members(tagsNil, "Auto"), "HY2") {
 		t.Error("Auto group should reference HY2 when no version is declared")
@@ -488,5 +483,123 @@ func TestGenerateSingboxSchemaSwitch(t *testing.T) {
 	}
 	if !sawPrivate12 {
 		t.Errorf("GEOIP,private must become ip_is_private at 1.12: %+v", doc12.Route.Rules)
+	}
+}
+
+func TestGenerateSingbox_Enhancements(t *testing.T) {
+	links := []string{
+		"wireguard://privkey@wg.example.com:51820?publickey=pubkey&address=10.0.0.2&presharedkey=psk&mtu=1420&reserved=1,2,3#WG",
+		"hysteria://hy.example.com:443?auth=authpass&peer=hy.example.com&insecure=1&upmbps=100&downmbps=50&obfs=hyobfs#HY",
+		"ss://" + b64("aes-256-gcm:pass") + "@1.2.3.4:8388?plugin=obfs-local%3Bobfs%3Dhttp%3Bobfs-host%3Dexample.com#SS-OBFS",
+	}
+	sub := []byte(base64.StdEncoding.EncodeToString([]byte(strings.Join(links, "\n"))))
+	nodes, _, err := parser.Parse(sub)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &extconfig.Config{
+		EnableRuleGenerator: true,
+		ProxyGroups: []extconfig.ProxyGroup{
+			{Name: "Proxy", Type: "select", Selectors: []string{".*"}},
+		},
+		Rulesets: []extconfig.Ruleset{
+			{Group: "Proxy", Inline: "IP-ASN,13335"},
+			{Group: "Proxy", Inline: "SRC-IP-CIDR,192.168.1.0/24"},
+			{Group: "Proxy", Inline: "FINAL"},
+		},
+	}
+
+	res, err := GenerateSingbox(context.Background(), nodes, cfg, fakeFetcher{}, Options{TFO: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var doc struct {
+		Outbounds []map[string]any `json:"outbounds"`
+		Route     struct {
+			Rules []map[string]any `json:"rules"`
+		} `json:"route"`
+	}
+	if err := json.Unmarshal(res.Output, &doc); err != nil {
+		t.Fatalf("unmarshal singbox JSON: %v", err)
+	}
+
+	tags := map[string]map[string]any{}
+	for _, ob := range doc.Outbounds {
+		tags[ob["tag"].(string)] = ob
+	}
+
+	// WireGuard outbound check
+	wg, ok := tags["WG"]
+	if !ok || wg["type"] != "wireguard" {
+		t.Fatalf("missing or wrong WG outbound: %v", wg)
+	}
+	if wg["private_key"] != "privkey" || wg["peer_public_key"] != "pubkey" || wg["pre_shared_key"] != "psk" {
+		t.Errorf("WG keys mismatch: %v", wg)
+	}
+	if addrs, ok := wg["local_address"].([]any); !ok || len(addrs) != 1 || addrs[0] != "10.0.0.2/32" {
+		t.Errorf("WG local_address mismatch: %v", wg["local_address"])
+	}
+
+	// Hysteria v1 check
+	hy, ok := tags["HY"]
+	if !ok || hy["type"] != "hysteria" {
+		t.Fatalf("missing or wrong HY outbound: %v", hy)
+	}
+	if hy["auth_str"] != "authpass" || hy["up_mbps"] != float64(100) || hy["down_mbps"] != float64(50) {
+		t.Errorf("HY speed/auth mismatch: %v", hy)
+	}
+
+	// SS with obfs-local and TFO
+	ss, ok := tags["SS-OBFS"]
+	if !ok || ss["type"] != "shadowsocks" {
+		t.Fatalf("missing or wrong SS outbound: %v", ss)
+	}
+	if ss["plugin"] != "obfs-local" {
+		t.Errorf("SS plugin mismatch: %v", ss["plugin"])
+	}
+	if ss["tcp_fast_open"] != true {
+		t.Errorf("SS tcp_fast_open should be true: %v", ss["tcp_fast_open"])
+	}
+
+	// Rules check: ip_asn and source_ip_cidr
+	var sawASN, sawSrcCIDR bool
+	for _, r := range doc.Route.Rules {
+		if asn, ok := r["ip_asn"].([]any); ok && len(asn) > 0 && asn[0] == float64(13335) {
+			sawASN = true
+		}
+		if src, ok := r["source_ip_cidr"].([]any); ok && len(src) > 0 && src[0] == "192.168.1.0/24" {
+			sawSrcCIDR = true
+		}
+	}
+	if !sawASN || !sawSrcCIDR {
+		t.Errorf("missing ip_asn or source_ip_cidr in rules: %+v", doc.Route.Rules)
+	}
+}
+
+func TestGenerateSingbox_ListOnly(t *testing.T) {
+	links := []string{
+		"ss://" + b64("aes-256-gcm:pass") + "@1.2.3.4:8388#HK",
+	}
+	sub := []byte(base64.StdEncoding.EncodeToString([]byte(strings.Join(links, "\n"))))
+	nodes, _, err := parser.Parse(sub)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := GenerateSingbox(context.Background(), nodes, &extconfig.Config{}, fakeFetcher{}, Options{ListOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(res.Output, &doc); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if doc["outbounds"] == nil {
+		t.Error("singbox list output missing outbounds")
+	}
+	if doc["route"] != nil || doc["dns"] != nil || doc["inbounds"] != nil {
+		t.Errorf("singbox list output must omit route/dns/inbounds: %v", doc)
 	}
 }

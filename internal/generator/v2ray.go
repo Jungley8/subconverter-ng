@@ -165,6 +165,106 @@ func nodeShareLink(n *proxy.Proxy) (string, bool) {
 		}
 		link += hostport + frag
 		return link, true
+
+	case "http":
+		link := "http://"
+		if cb(c, "tls") {
+			link = "https://"
+		}
+		u := cs(c, "username")
+		pw := cs(c, "password")
+		if u != "" || pw != "" {
+			link += url.UserPassword(u, pw).String() + "@"
+		}
+		link += hostport + frag
+		return link, true
+
+	case "wireguard":
+		q := url.Values{}
+		if pk := cs(c, "public-key"); pk != "" {
+			q.Set("publickey", pk)
+		}
+		var addrs []string
+		if ip := cs(c, "ip"); ip != "" {
+			addrs = append(addrs, ip)
+		}
+		if ipv6 := cs(c, "ipv6"); ipv6 != "" {
+			addrs = append(addrs, ipv6)
+		}
+		if len(addrs) > 0 {
+			q.Set("address", strings.Join(addrs, ","))
+		}
+		if psk := cs(c, "pre-shared-key"); psk != "" {
+			q.Set("presharedkey", psk)
+		}
+		if mtu := ci(c, "mtu"); mtu > 0 {
+			q.Set("mtu", strconv.Itoa(mtu))
+		}
+		if rsv := parseReserved(c["reserved"]); len(rsv) > 0 {
+			var parts []string
+			for _, v := range rsv {
+				parts = append(parts, strconv.Itoa(v))
+			}
+			q.Set("reserved", strings.Join(parts, ","))
+		}
+		link := "wireguard://" + cs(c, "private-key") + "@" + hostport
+		if enc := q.Encode(); enc != "" {
+			link += "?" + enc
+		}
+		return link + frag, true
+
+	case "hysteria":
+		q := url.Values{}
+		if auth := cs(c, "auth-str"); auth != "" {
+			q.Set("auth", auth)
+		}
+		if up := cs(c, "up"); up != "" {
+			q.Set("upmbps", up)
+		}
+		if down := cs(c, "down"); down != "" {
+			q.Set("downmbps", down)
+		}
+		if sni := getSNI(c); sni != "" {
+			q.Set("peer", sni)
+		}
+		if cb(c, "skip-cert-verify") {
+			q.Set("insecure", "1")
+		}
+		if obfs := cs(c, "obfs"); obfs != "" {
+			q.Set("obfs", obfs)
+		}
+		if alpn := joinAny(c["alpn"]); alpn != "" {
+			q.Set("alpn", alpn)
+		}
+		if proto := cs(c, "protocol"); proto != "" {
+			q.Set("protocol", proto)
+		}
+		link := "hysteria://" + hostport
+		if enc := q.Encode(); enc != "" {
+			link += "?" + enc
+		}
+		return link + frag, true
+
+	case "ssr":
+		protocol := cs(c, "protocol")
+		method := cs(c, "cipher")
+		obfs := cs(c, "obfs")
+		passB64 := base64.RawURLEncoding.EncodeToString([]byte(cs(c, "password")))
+		q := url.Values{}
+		if op := cs(c, "obfs-param"); op != "" {
+			q.Set("obfsparam", base64.RawURLEncoding.EncodeToString([]byte(op)))
+		}
+		if pp := cs(c, "protocol-param"); pp != "" {
+			q.Set("protoparam", base64.RawURLEncoding.EncodeToString([]byte(pp)))
+		}
+		if n.Name != "" {
+			q.Set("remarks", base64.RawURLEncoding.EncodeToString([]byte(n.Name)))
+		}
+		body := host + ":" + strconv.Itoa(port) + ":" + protocol + ":" + method + ":" + obfs + ":" + passB64
+		if enc := q.Encode(); enc != "" {
+			body += "/?" + enc
+		}
+		return "ssr://" + base64.RawURLEncoding.EncodeToString([]byte(body)), true
 	}
 	return "", false
 }
@@ -263,30 +363,6 @@ func tlsField(c map[string]any) string {
 // spaces as %20 (url.QueryEscape would turn them into '+').
 func encodeFragment(name string) string {
 	return strings.ReplaceAll(url.QueryEscape(name), "+", "%20")
-}
-
-// --- small typed accessors over the Clash field bag (map[string]any) ---
-
-func cs(m map[string]any, k string) string { s, _ := m[k].(string); return s }
-func cb(m map[string]any, k string) bool   { b, _ := m[k].(bool); return b }
-
-func cmap(m map[string]any, k string) map[string]any {
-	mm, _ := m[k].(map[string]any)
-	return mm
-}
-
-// ci reads an int field, tolerating the int/int64/float64 forms a decoded map
-// may carry.
-func ci(m map[string]any, k string) int {
-	switch v := m[k].(type) {
-	case int:
-		return v
-	case int64:
-		return int(v)
-	case float64:
-		return int(v)
-	}
-	return 0
 }
 
 func firstNonEmptyStr(a, b string) string {

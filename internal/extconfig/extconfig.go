@@ -46,6 +46,7 @@ type Config struct {
 	ProxyGroups         []ProxyGroup
 	ExcludeRemarks      []*regexp.Regexp
 	IncludeRemarks      []*regexp.Regexp
+	ExcludeProtocols    []string
 	EnableRuleGenerator bool
 	OverwriteRules      bool
 	ClashRuleBase       string
@@ -106,6 +107,11 @@ func Parse(data []byte) *Config {
 		case "include_remarks":
 			if re, err := regexp.Compile(val); err == nil {
 				cfg.IncludeRemarks = append(cfg.IncludeRemarks, re)
+			}
+		case "exclude_protocol", "exclude_protocols", "exclude_type", "exclude_types",
+			"filter_protocol", "filter_protocols", "filter_type", "filter_types":
+			if val != "" {
+				cfg.ExcludeProtocols = append(cfg.ExcludeProtocols, val)
 			}
 		case "enable_rule_generator":
 			cfg.EnableRuleGenerator = boolVal(val)

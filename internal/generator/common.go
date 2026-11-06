@@ -39,12 +39,43 @@ func (v *Version) AtLeast(major, minor int) bool {
 	return v.Minor >= minor
 }
 
+func sanitizeNodeName(name string) string {
+	name = strings.ReplaceAll(name, "\r", "")
+	name = strings.ReplaceAll(name, "\n", " ")
+	return name
+}
+
 // prepareNodes runs the target-agnostic node pipeline and records its
 // diagnostics (dedup/deprecated counts, final NodeCount) into res. The returned
 // slice is the processed node list every generator renders from. Node options
 // (udp/tfo/scv, emoji, rename, append_type) are stamped onto each node's Clash
 // field bag, which all generators read from.
 func prepareNodes(nodes []*proxy.Proxy, cfg *extconfig.Config, opts Options, res *Result) []*proxy.Proxy {
+	clean := make([]*proxy.Proxy, 0, len(nodes))
+	for _, n := range nodes {
+		if n == nil {
+			continue
+		}
+		if strings.ContainsAny(n.Name, "\r\n") {
+			n.Rename(sanitizeNodeName(n.Name))
+		}
+		clean = append(clean, n)
+	}
+	nodes = clean
+
+	var excludedList []string
+	if cfg != nil && len(cfg.ExcludeProtocols) > 0 {
+		excludedList = append(excludedList, cfg.ExcludeProtocols...)
+	}
+	if len(opts.ExcludeProtocols) > 0 {
+		excludedList = append(excludedList, opts.ExcludeProtocols...)
+	}
+	if len(excludedList) > 0 {
+		var dropped int
+		nodes, dropped = filterProtocols(nodes, ParseProtocolSet(excludedList...))
+		res.ExcludedProtocols = dropped
+	}
+
 	before := len(nodes)
 	nodes = filterNodes(nodes, cfg)
 	res.Filtered = before - len(nodes)
@@ -62,6 +93,11 @@ func prepareNodes(nodes []*proxy.Proxy, cfg *extconfig.Config, opts Options, res
 		sort.SliceStable(nodes, func(i, j int) bool { return nodes[i].Name < nodes[j].Name })
 	}
 	applyNodeOptions(nodes, opts)
+	for _, n := range nodes {
+		if strings.ContainsAny(n.Name, "\r\n") {
+			n.Rename(sanitizeNodeName(n.Name))
+		}
+	}
 	uniquifyNames(nodes)
 	res.NodeCount = len(nodes)
 	return nodes
@@ -76,6 +112,9 @@ func prepareNodes(nodes []*proxy.Proxy, cfg *extconfig.Config, opts Options, res
 func uniquifyNames(nodes []*proxy.Proxy) {
 	seen := make(map[string]bool, len(nodes))
 	for _, n := range nodes {
+		if n == nil {
+			continue
+		}
 		if !seen[n.Name] {
 			seen[n.Name] = true
 			continue
@@ -90,6 +129,109 @@ func uniquifyNames(nodes []*proxy.Proxy) {
 		seen[candidate] = true
 		n.Rename(candidate)
 	}
+}
+
+// protocolAliases maps accepted protocol abbreviations and common aliases to
+// their canonical proxy types.
+var protocolAliases = map[string]string{
+	"ss":           "ss",
+	"shadowsocks":  "ss",
+	"ssr":          "ssr",
+	"shadowsocksr": "ssr",
+	"vmess":        "vmess",
+	"vless":        "vless",
+	"trojan":       "trojan",
+	"hysteria":     "hysteria",
+	"hysteria1":    "hysteria",
+	"hy":           "hysteria",
+	"hy1":          "hysteria",
+	"hysteria2":    "hysteria2",
+	"hy2":          "hysteria2",
+	"tuic":         "tuic",
+	"tuic5":        "tuic",
+	"tuicv5":       "tuic",
+	"wireguard":    "wireguard",
+	"wg":           "wireguard",
+	"socks":        "socks5",
+	"socks5":       "socks5",
+	"http":         "http",
+	"https":        "http",
+	"anytls":       "anytls",
+	"snell":        "snell",
+}
+
+// CanonicalProtocol normalizes a protocol name or alias to its standard form.
+func CanonicalProtocol(raw string) string {
+	key := strings.ToLower(strings.TrimSpace(raw))
+	key = strings.Trim(key, "()[]\"'")
+	if c, ok := protocolAliases[key]; ok {
+		return c
+	}
+	// Try without hyphens and underscores (e.g. hysteria_2, hy-2, shadow_socks, tuic_v5)
+	normalized := strings.ReplaceAll(strings.ReplaceAll(key, "-", ""), "_", "")
+	if c, ok := protocolAliases[normalized]; ok {
+		return c
+	}
+	return key
+}
+
+// ParseProtocols parses raw protocol strings (delimited by comma, pipe, semicolon,
+// or whitespace) into a sorted, deduplicated slice of canonical protocol names.
+func ParseProtocols(raw ...string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, r := range raw {
+		for _, token := range strings.FieldsFunc(r, func(c rune) bool {
+			return c == ',' || c == '|' || c == ';' || c == ' ' || c == '\t' || c == '\n' || c == '\r'
+		}) {
+			token = strings.TrimSpace(token)
+			token = strings.Trim(token, "()[]\"'")
+			if token == "" {
+				continue
+			}
+			canon := CanonicalProtocol(token)
+			if canon != "" && !seen[canon] {
+				seen[canon] = true
+				out = append(out, canon)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// ParseProtocolSet parses raw protocol strings into a set of canonical protocol names.
+func ParseProtocolSet(raw ...string) map[string]bool {
+	list := ParseProtocols(raw...)
+	m := make(map[string]bool, len(list))
+	for _, p := range list {
+		m[p] = true
+	}
+	return m
+}
+
+// filterProtocols drops nodes whose protocol or proxy type matches any in the
+// excluded set. Protocol aliases (e.g. hy2 -> hysteria2, ss -> shadowsocks) are
+// normalized so users can specify common abbreviations.
+func filterProtocols(nodes []*proxy.Proxy, excluded map[string]bool) ([]*proxy.Proxy, int) {
+	if len(excluded) == 0 {
+		return nodes, 0
+	}
+	out := make([]*proxy.Proxy, 0, len(nodes))
+	var dropped int
+	for _, n := range nodes {
+		if n == nil {
+			continue
+		}
+		rawType := strings.ToLower(strings.TrimSpace(n.Type))
+		canon := CanonicalProtocol(rawType)
+		if excluded[canon] || excluded[rawType] {
+			dropped++
+			continue
+		}
+		out = append(out, n)
+	}
+	return out, dropped
 }
 
 // Rule is a target-neutral routing rule. Type is the upper-case matcher
@@ -108,6 +250,26 @@ func (r Rule) IsMatch() bool {
 	return strings.EqualFold(r.Type, "MATCH") || strings.EqualFold(r.Type, "FINAL")
 }
 
+// normalizeRuleType maps common rule type aliases to their canonical forms.
+func normalizeRuleType(typ string) string {
+	switch strings.ToUpper(strings.TrimSpace(typ)) {
+	case "HOST":
+		return "DOMAIN"
+	case "HOST-SUFFIX":
+		return "DOMAIN-SUFFIX"
+	case "HOST-KEYWORD":
+		return "DOMAIN-KEYWORD"
+	case "HOST-WILDCARD":
+		return "DOMAIN-SUFFIX"
+	case "DEST-PORT":
+		return "DST-PORT"
+	case "IP6-CIDR":
+		return "IP-CIDR6"
+	default:
+		return strings.ToUpper(strings.TrimSpace(typ))
+	}
+}
+
 // formatClashRule renders r as a Clash.Meta rule line. ok is false for a rule
 // type Clash.Meta does not accept — this is the Clash-specific gate (mihomo
 // rejects the WHOLE config on an unknown type). The neutral parsers keep every
@@ -117,10 +279,11 @@ func formatClashRule(r Rule) (string, bool) {
 	if r.IsMatch() {
 		return "MATCH," + r.Group, true
 	}
-	if !isValidRuleType(r.Type) {
+	canon := normalizeRuleType(r.Type)
+	if !isValidRuleType(canon) {
 		return "", false
 	}
-	s := r.Type + "," + r.Value + "," + r.Group
+	s := canon + "," + r.Value + "," + r.Group
 	if r.Flag != "" {
 		s += "," + r.Flag
 	}
@@ -151,6 +314,8 @@ func collectRules(ctx context.Context, cfg *extconfig.Config, f Fetcher, opts Op
 		skipped []string
 	}
 	results := make([]fetched, len(cfg.Rulesets))
+	const maxConcurrentRulesetFetches = 16
+	sem := make(chan struct{}, maxConcurrentRulesetFetches)
 	var wg sync.WaitGroup
 	for i, rs := range cfg.Rulesets {
 		if rs.URL == "" {
@@ -159,6 +324,12 @@ func collectRules(ctx context.Context, cfg *extconfig.Config, f Fetcher, opts Op
 		wg.Add(1)
 		go func(i int, url, group string) {
 			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				return
+			}
 			data, err := f.Get(ctx, url)
 			if err != nil {
 				return
@@ -268,4 +439,99 @@ func parseRemoteRuleset(data []byte, group string) (out []Rule, skipped []string
 		}
 	}
 	return out, skipped
+}
+
+// --- shared typed accessors over the Clash field bag (map[string]any) ---
+
+// cs extracts a string value from a map, converting numeric types if needed.
+func cs(m map[string]any, k string) string {
+	switch v := m[k].(type) {
+	case string:
+		return v
+	case int:
+		return strconv.Itoa(v)
+	case int64:
+		return strconv.FormatInt(v, 10)
+	case float64:
+		return strconv.Itoa(int(v))
+	}
+	return ""
+}
+
+// cb extracts a boolean value from a map, tolerating string/int representations.
+func cb(m map[string]any, k string) bool {
+	switch v := m[k].(type) {
+	case bool:
+		return v
+	case string:
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "1", "true", "yes", "on":
+			return true
+		}
+	case int:
+		return v != 0
+	}
+	return false
+}
+
+// cmap extracts a nested map[string]any.
+func cmap(m map[string]any, k string) map[string]any {
+	mm, _ := m[k].(map[string]any)
+	return mm
+}
+
+// ci reads an int field, tolerating int/int64/float64 and numeric string representations.
+func ci(m map[string]any, k string) int {
+	switch v := m[k].(type) {
+	case int:
+		return v
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	case string:
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+			return n
+		}
+	}
+	return 0
+}
+
+// parseReserved parses reserved bytes for WireGuard, tolerating []int, []any, and comma-separated string.
+func parseReserved(v any) []int {
+	switch val := v.(type) {
+	case []int:
+		return val
+	case []any:
+		var res []int
+		for _, x := range val {
+			switch n := x.(type) {
+			case int:
+				res = append(res, n)
+			case int64:
+				res = append(res, int(n))
+			case float64:
+				res = append(res, int(n))
+			case string:
+				if i, err := strconv.Atoi(strings.TrimSpace(n)); err == nil {
+					res = append(res, i)
+				}
+			}
+		}
+		return res
+	case string:
+		var res []int
+		for _, part := range strings.Split(val, ",") {
+			if i, err := strconv.Atoi(strings.TrimSpace(part)); err == nil {
+				res = append(res, i)
+			}
+		}
+		return res
+	}
+	return nil
+}
+
+// getSNI returns the server name or SNI, checking both "servername" and "sni".
+func getSNI(c map[string]any) string {
+	return firstNonEmptyStr(cs(c, "servername"), cs(c, "sni"))
 }

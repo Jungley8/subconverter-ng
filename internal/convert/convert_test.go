@@ -585,3 +585,173 @@ func TestRun_TailscaleOption(t *testing.T) {
 		t.Errorf("rules[0..1] mismatch with tailscale option: %v", doc.Rules[:2])
 	}
 }
+
+func TestNormalizeTarget(t *testing.T) {
+	cases := map[string]string{
+		"clash":         TargetClash,
+		"CLASH":         TargetClash,
+		"Clash":         TargetClash,
+		"ClashMeta":     TargetClash,
+		"clashr":        TargetClash,
+		"  singbox  ":   TargetSingbox,
+		"clashmeta":     TargetClash,
+		"clash.meta":    TargetClash,
+		"clash-meta":    TargetClash,
+		"clash_meta":    TargetClash,
+		"mihomo":        TargetClash,
+		"singbox":       TargetSingbox,
+		"sing-box":      TargetSingbox,
+		"sing_box":      TargetSingbox,
+		"SING_BOX":      TargetSingbox,
+		"sb":            TargetSingbox,
+		"surge":         TargetSurge,
+		"surge2":        TargetSurge,
+		"surge3":        TargetSurge,
+		"surge4":        TargetSurge,
+		"surge5":        TargetSurge,
+		"shadowrocket":  TargetShadowrocket,
+		"shadow-rocket": TargetShadowrocket,
+		"sr":            TargetShadowrocket,
+		"QUANX":         TargetQuanX,
+		"quanx":         TargetQuanX,
+		"quantumultx":   TargetQuanX,
+		"qx":            TargetQuanX,
+		"quantumult":    TargetQuanX,
+		"surfboard":     TargetSurge,
+		"loon":          TargetLoon,
+		"v2ray":         TargetV2Ray,
+		"v2rayn":        TargetV2Ray,
+		"v2rayng":       TargetV2Ray,
+		"ss":            TargetV2Ray,
+		"mixed":         TargetV2Ray,
+		"ssr":           TargetV2Ray,
+		"trojan":        TargetV2Ray,
+		// Unknown values pass through unchanged (caller validates).
+		"quan": "quan",
+	}
+
+	for input, want := range cases {
+		got := NormalizeTarget(input)
+		if got != want {
+			t.Errorf("NormalizeTarget(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestRun_ExcludeProtocols(t *testing.T) {
+	f := fakeFetcher{
+		"client/subscribe": sampleSubscription(),
+		"config.init":      []byte(sampleINI),
+		"PROXY.list":       []byte("DOMAIN-SUFFIX,google.com\n"),
+	}
+	req := Request{
+		Target:    "clash",
+		SubURLs:   []string{"https://airport.example.com/api/v1/client/subscribe?token=secret"},
+		ConfigURL: "https://rules.example.com/config.init",
+		Gen: generator.Options{
+			ExcludeProtocols: []string{"hy2", "tuic"},
+		},
+	}
+	out, diag, err := Run(context.Background(), f, req)
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+	if diag.ExcludedProtocols != 2 {
+		t.Fatalf("diag.ExcludedProtocols = %d, want 2", diag.ExcludedProtocols)
+	}
+	if diag.NodeCount != 4 {
+		t.Fatalf("diag.NodeCount = %d, want 4", diag.NodeCount)
+	}
+
+	var parsed map[string]any
+	if err := yaml.Unmarshal(out, &parsed); err != nil {
+		t.Fatalf("yaml unmarshal: %v", err)
+	}
+	proxies, ok := parsed["proxies"].([]any)
+	if !ok || len(proxies) != 4 {
+		t.Fatalf("proxies count = %d, want 4", len(proxies))
+	}
+	for _, p := range proxies {
+		pm, _ := p.(map[string]any)
+		typ, _ := pm["type"].(string)
+		if typ == "hysteria2" || typ == "tuic" {
+			t.Fatalf("found excluded protocol in proxies: %v", pm)
+		}
+	}
+}
+
+func TestRun_ExcludeProtocols_OtherTargetsAndAllExcluded(t *testing.T) {
+	f := fakeFetcher{
+		"client/subscribe": sampleSubscription(),
+		"config.init":      []byte(sampleINI),
+		"PROXY.list":       []byte("DOMAIN-SUFFIX,google.com\n"),
+	}
+
+	// 1. singbox target
+	reqSB := Request{
+		Target:    "singbox",
+		SubURLs:   []string{"https://airport.example.com/api/v1/client/subscribe?token=secret"},
+		ConfigURL: "https://rules.example.com/config.init",
+		Gen: generator.Options{
+			ExcludeProtocols: []string{"vless", "trojan"},
+		},
+	}
+	outSB, diagSB, err := Run(context.Background(), f, reqSB)
+	if err != nil {
+		t.Fatalf("singbox Run failed: %v", err)
+	}
+	if diagSB.ExcludedProtocols != 2 {
+		t.Fatalf("singbox diag.ExcludedProtocols = %d, want 2", diagSB.ExcludedProtocols)
+	}
+	if strings.Contains(string(outSB), "vless") || strings.Contains(string(outSB), "us.example.com") {
+		t.Errorf("singbox output contains excluded vless node")
+	}
+
+	// 2. v2ray target (base64 links)
+	reqV2 := Request{
+		Target:  "v2ray",
+		SubURLs: []string{"https://airport.example.com/api/v1/client/subscribe?token=secret"},
+		Gen: generator.Options{
+			ExcludeProtocols: []string{"ss", "vmess", "vless", "trojan", "tuic"},
+		},
+	}
+	outV2, diagV2, err := Run(context.Background(), f, reqV2)
+	if err != nil {
+		t.Fatalf("v2ray Run failed: %v", err)
+	}
+	// Total 7 in sampleSubscription; 6 match the excluded list, 1 is excluded_remarks (none in v2ray, so 6 excluded + 1 kept = 1 hysteria2 node)
+	if diagV2.NodeCount != 1 {
+		t.Fatalf("v2ray NodeCount = %d, want 1 (only hysteria2)", diagV2.NodeCount)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(string(outV2))
+	if err != nil {
+		t.Fatalf("decode v2ray output: %v", err)
+	}
+	if !strings.HasPrefix(string(decoded), "hysteria2://") {
+		t.Errorf("v2ray output unexpected: %s", string(decoded))
+	}
+
+	// 3. Exclude all nodes -> does not crash, yields 0 nodes
+	reqAll := Request{
+		Target:  "clash",
+		SubURLs: []string{"https://airport.example.com/api/v1/client/subscribe?token=secret"},
+		Gen: generator.Options{
+			ExcludeProtocols: []string{"ss", "vmess", "vless", "trojan", "hy2", "tuic"},
+		},
+	}
+	outAll, diagAll, err := Run(context.Background(), f, reqAll)
+	if err != nil {
+		t.Fatalf("all excluded Run failed: %v", err)
+	}
+	if diagAll.NodeCount != 0 {
+		t.Fatalf("diagAll.NodeCount = %d, want 0", diagAll.NodeCount)
+	}
+	var parsedAll map[string]any
+	if err := yaml.Unmarshal(outAll, &parsedAll); err != nil {
+		t.Fatalf("yaml unmarshal all excluded: %v", err)
+	}
+	proxiesAll, _ := parsedAll["proxies"].([]any)
+	if len(proxiesAll) != 0 {
+		t.Fatalf("proxiesAll count = %d, want 0", len(proxiesAll))
+	}
+}

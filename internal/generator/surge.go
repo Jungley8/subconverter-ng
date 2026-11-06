@@ -63,6 +63,20 @@ func generateSurgeFamily(ctx context.Context, flavor surgeFlavor, nodes []*proxy
 		allNames = append(allNames, n.Name)
 	}
 
+	// list=true: emit only the [Proxy] section
+	if opts.ListOnly {
+		var listB strings.Builder
+		listB.WriteString("[Proxy]\n")
+		for _, n := range nodes {
+			if line, ok := surgeNodeLine(flavor, n); ok {
+				listB.WriteString(line)
+				listB.WriteByte('\n')
+			}
+		}
+		res.Output = []byte(listB.String())
+		return res, nil
+	}
+
 	// Proxy groups: reuse the shared resolver, then drop members that were not
 	// emitted as proxies (so a group never points at a missing node line).
 	groups := buildGroups(cfg.ProxyGroups, nodes, allNames, res)
@@ -135,6 +149,7 @@ var surgeSupportedRuleTypes = map[string]string{
 	"DOMAIN": "DOMAIN", "DOMAIN-SUFFIX": "DOMAIN-SUFFIX", "DOMAIN-KEYWORD": "DOMAIN-KEYWORD",
 	"IP-CIDR": "IP-CIDR", "IP-CIDR6": "IP-CIDR6", "IP-ASN": "IP-ASN", "GEOIP": "GEOIP",
 	"DST-PORT": "DEST-PORT", "SRC-PORT": "SRC-PORT", "IN-PORT": "IN-PORT",
+	"SRC-IP-CIDR":  "SRC-IP-CIDR",
 	"PROCESS-NAME": "PROCESS-NAME", "USER-AGENT": "USER-AGENT", "URL-REGEX": "URL-REGEX",
 	"RULE-SET": "RULE-SET", "AND": "AND", "OR": "OR", "NOT": "NOT",
 }
@@ -145,7 +160,8 @@ func formatSurgeRule(r Rule) (string, bool) {
 	if r.IsMatch() {
 		return "FINAL," + r.Group, true
 	}
-	typ, ok := surgeSupportedRuleTypes[strings.ToUpper(r.Type)]
+	canon := normalizeRuleType(r.Type)
+	typ, ok := surgeSupportedRuleTypes[canon]
 	if !ok {
 		return "", false
 	}
@@ -180,6 +196,9 @@ func surgeNodeLine(flavor surgeFlavor, n *proxy.Proxy) (string, bool) {
 				parts = append(parts, "obfs-host="+h)
 			}
 		}
+		if cb(c, "tfo") {
+			parts = append(parts, "tfo=true")
+		}
 		return head + strings.Join(parts, ", "), true
 
 	case "vmess":
@@ -192,11 +211,14 @@ func surgeNodeLine(flavor surgeFlavor, n *proxy.Proxy) (string, bool) {
 		if cb(c, "udp") {
 			parts = append(parts, "udp-relay=true")
 		}
+		if cb(c, "tfo") {
+			parts = append(parts, "tfo=true")
+		}
 		return head + strings.Join(parts, ", "), true
 
 	case "trojan":
 		parts := []string{"trojan", server, port, "password=" + cs(c, "password")}
-		if sni := cs(c, "sni"); sni != "" {
+		if sni := getSNI(c); sni != "" {
 			parts = append(parts, "sni="+sni)
 		}
 		if cb(c, "skip-cert-verify") {
@@ -206,15 +228,52 @@ func surgeNodeLine(flavor surgeFlavor, n *proxy.Proxy) (string, bool) {
 		if cb(c, "udp") {
 			parts = append(parts, "udp-relay=true")
 		}
+		if cb(c, "tfo") {
+			parts = append(parts, "tfo=true")
+		}
 		return head + strings.Join(parts, ", "), true
 
 	case "hysteria2":
 		parts := []string{"hysteria2", server, port, "password=" + cs(c, "password")}
-		if sni := cs(c, "sni"); sni != "" {
+		if sni := getSNI(c); sni != "" {
 			parts = append(parts, "sni="+sni)
 		}
 		if cb(c, "skip-cert-verify") {
 			parts = append(parts, "skip-cert-verify=true")
+		}
+		return head + strings.Join(parts, ", "), true
+
+	case "hysteria":
+		if flavor != flavorShadowrocket {
+			return "", false
+		}
+		parts := []string{"hysteria", server, port}
+		if auth := cs(c, "auth-str"); auth != "" {
+			parts = append(parts, "auth="+auth)
+		}
+		if up := cs(c, "up"); up != "" {
+			parts = append(parts, "upmbps="+up)
+		}
+		if down := cs(c, "down"); down != "" {
+			parts = append(parts, "downmbps="+down)
+		}
+		if sni := getSNI(c); sni != "" {
+			parts = append(parts, "peer="+sni)
+		}
+		if cb(c, "skip-cert-verify") {
+			parts = append(parts, "skip-cert-verify=true")
+		}
+		if obfs := cs(c, "obfs"); obfs != "" {
+			parts = append(parts, "obfs="+obfs)
+		}
+		if alpn := joinAny(c["alpn"]); alpn != "" {
+			parts = append(parts, "alpn="+alpn)
+		}
+		if proto := cs(c, "protocol"); proto != "" {
+			parts = append(parts, "protocol="+proto)
+		}
+		if cb(c, "tfo") {
+			parts = append(parts, "tfo=true")
 		}
 		return head + strings.Join(parts, ", "), true
 
@@ -225,10 +284,74 @@ func surgeNodeLine(flavor surgeFlavor, n *proxy.Proxy) (string, bool) {
 		}
 		parts := []string{"vless", server, port, "username=" + cs(c, "uuid")}
 		parts = append(parts, surgeTLSParts(c)...)
+		ro := cmap(c, "reality-opts")
+		if len(ro) > 0 {
+			parts = append(parts, "reality=true")
+			if pbk := cs(ro, "public-key"); pbk != "" {
+				parts = append(parts, "public-key="+pbk)
+			}
+			if sid := cs(ro, "short-id"); sid != "" {
+				parts = append(parts, "short-id="+sid)
+			}
+			if fp := cs(c, "client-fingerprint"); fp != "" {
+				parts = append(parts, "fingerprint="+fp)
+			}
+		}
 		if flow := cs(c, "flow"); flow != "" {
 			parts = append(parts, "flow="+flow)
 		}
 		parts = append(parts, surgeWSParts(c)...)
+		if cb(c, "tfo") {
+			parts = append(parts, "tfo=true")
+		}
+		return head + strings.Join(parts, ", "), true
+
+	case "tuic":
+		if flavor != flavorShadowrocket {
+			return "", false
+		}
+		parts := []string{"tuic", server, port, "token=" + cs(c, "password")}
+		if sni := getSNI(c); sni != "" {
+			parts = append(parts, "sni="+sni)
+		}
+		if alpn := joinAny(c["alpn"]); alpn != "" {
+			parts = append(parts, "alpn="+alpn)
+		}
+		if cb(c, "skip-cert-verify") {
+			parts = append(parts, "skip-cert-verify=true")
+		}
+		return head + strings.Join(parts, ", "), true
+
+	case "wireguard":
+		if flavor != flavorShadowrocket {
+			return "", false
+		}
+		parts := []string{"wireguard", server, port}
+		if priv := cs(c, "private-key"); priv != "" {
+			parts = append(parts, "private-key="+priv)
+		}
+		if pub := cs(c, "public-key"); pub != "" {
+			parts = append(parts, "public-key="+pub)
+		}
+		if ip := cs(c, "ip"); ip != "" {
+			parts = append(parts, "ip="+ip)
+		}
+		if ipv6 := cs(c, "ipv6"); ipv6 != "" {
+			parts = append(parts, "ipv6="+ipv6)
+		}
+		if psk := cs(c, "pre-shared-key"); psk != "" {
+			parts = append(parts, "preshared-key="+psk)
+		}
+		if mtu := ci(c, "mtu"); mtu > 0 {
+			parts = append(parts, "mtu="+strconv.Itoa(mtu))
+		}
+		if rsv := parseReserved(c["reserved"]); len(rsv) > 0 {
+			var rsvStrs []string
+			for _, r := range rsv {
+				rsvStrs = append(rsvStrs, strconv.Itoa(r))
+			}
+			parts = append(parts, "reserved="+strings.Join(rsvStrs, ","))
+		}
 		return head + strings.Join(parts, ", "), true
 
 	case "socks5", "socks":
@@ -242,6 +365,34 @@ func surgeNodeLine(flavor surgeFlavor, n *proxy.Proxy) (string, bool) {
 		if cb(c, "udp") {
 			parts = append(parts, "udp-relay=true")
 		}
+		if cb(c, "tfo") {
+			parts = append(parts, "tfo=true")
+		}
+		return head + strings.Join(parts, ", "), true
+
+	case "http":
+		proto := "http"
+		if cb(c, "tls") {
+			proto = "https"
+		}
+		parts := []string{proto, server, port}
+		if u := cs(c, "username"); u != "" {
+			parts = append(parts, "username="+u)
+		}
+		if pw := cs(c, "password"); pw != "" {
+			parts = append(parts, "password="+pw)
+		}
+		if cb(c, "tls") {
+			if sni := getSNI(c); sni != "" {
+				parts = append(parts, "sni="+sni)
+			}
+			if cb(c, "skip-cert-verify") {
+				parts = append(parts, "skip-cert-verify=true")
+			}
+		}
+		if cb(c, "tfo") {
+			parts = append(parts, "tfo=true")
+		}
 		return head + strings.Join(parts, ", "), true
 	}
 	return "", false
@@ -250,9 +401,9 @@ func surgeNodeLine(flavor surgeFlavor, n *proxy.Proxy) (string, bool) {
 // surgeTLSParts emits tls/sni/skip-cert-verify params common to vmess/vless.
 func surgeTLSParts(c map[string]any) []string {
 	var parts []string
-	if cb(c, "tls") {
+	if cb(c, "tls") || len(cmap(c, "reality-opts")) > 0 {
 		parts = append(parts, "tls=true")
-		if sni := cs(c, "servername"); sni != "" {
+		if sni := getSNI(c); sni != "" {
 			parts = append(parts, "sni="+sni)
 		}
 		if cb(c, "skip-cert-verify") {
@@ -295,6 +446,9 @@ func loonNodeLine(n *proxy.Proxy) (string, bool) {
 		if cb(c, "udp") {
 			parts = append(parts, "udp=true")
 		}
+		if cb(c, "tfo") {
+			parts = append(parts, "fast-open=true")
+		}
 		return head + strings.Join(parts, ","), true
 
 	case "vmess":
@@ -302,17 +456,23 @@ func loonNodeLine(n *proxy.Proxy) (string, bool) {
 		parts = append(parts, "transport="+firstNonEmptyStr(cs(c, "network"), "tcp"))
 		parts = append(parts, loonWSParts(c)...)
 		parts = append(parts, loonTLSParts(c)...)
+		if cb(c, "tfo") {
+			parts = append(parts, "fast-open=true")
+		}
 		return head + strings.Join(parts, ","), true
 
 	case "trojan":
 		parts := []string{"trojan", server, port, q(cs(c, "password"))}
-		if sni := cs(c, "sni"); sni != "" {
+		if sni := getSNI(c); sni != "" {
 			parts = append(parts, "tls-name="+sni)
 		}
 		parts = append(parts, "transport="+firstNonEmptyStr(cs(c, "network"), "tcp"))
 		parts = append(parts, loonWSParts(c)...)
 		if cb(c, "skip-cert-verify") {
 			parts = append(parts, "skip-cert-verify=true")
+		}
+		if cb(c, "tfo") {
+			parts = append(parts, "fast-open=true")
 		}
 		return head + strings.Join(parts, ","), true
 
@@ -321,18 +481,88 @@ func loonNodeLine(n *proxy.Proxy) (string, bool) {
 		parts = append(parts, "transport="+firstNonEmptyStr(cs(c, "network"), "tcp"))
 		parts = append(parts, loonWSParts(c)...)
 		parts = append(parts, loonTLSParts(c)...)
+		ro := cmap(c, "reality-opts")
+		if len(ro) > 0 {
+			if pbk := cs(ro, "public-key"); pbk != "" {
+				parts = append(parts, "public-key="+q(pbk))
+			}
+			if sid := cs(ro, "short-id"); sid != "" {
+				parts = append(parts, "short-id="+q(sid))
+			}
+		}
 		if flow := cs(c, "flow"); flow != "" {
 			parts = append(parts, "flow="+flow)
+		}
+		if cb(c, "tfo") {
+			parts = append(parts, "fast-open=true")
 		}
 		return head + strings.Join(parts, ","), true
 
 	case "hysteria2":
 		parts := []string{"Hysteria2", server, port, q(cs(c, "password"))}
-		if sni := cs(c, "sni"); sni != "" {
+		if sni := getSNI(c); sni != "" {
 			parts = append(parts, "sni="+sni)
 		}
 		if cb(c, "skip-cert-verify") {
 			parts = append(parts, "skip-cert-verify=true")
+		}
+		return head + strings.Join(parts, ","), true
+
+	case "hysteria":
+		parts := []string{"Hysteria", server, port}
+		if auth := cs(c, "auth-str"); auth != "" {
+			parts = append(parts, "auth="+q(auth))
+		}
+		if sni := getSNI(c); sni != "" {
+			parts = append(parts, "peer="+q(sni))
+		}
+		if up := cs(c, "up"); up != "" {
+			parts = append(parts, "upmbps="+up)
+		}
+		if down := cs(c, "down"); down != "" {
+			parts = append(parts, "downmbps="+down)
+		}
+		if cb(c, "skip-cert-verify") {
+			parts = append(parts, "skip-cert-verify=true")
+		}
+		if cb(c, "tfo") {
+			parts = append(parts, "fast-open=true")
+		}
+		return head + strings.Join(parts, ","), true
+
+	case "tuic":
+		parts := []string{"TUIC", server, port, q(cs(c, "uuid")), q(cs(c, "password"))}
+		if sni := getSNI(c); sni != "" {
+			parts = append(parts, "sni="+sni)
+		}
+		if alpn := joinAny(c["alpn"]); alpn != "" {
+			parts = append(parts, "alpn="+alpn)
+		}
+		if cb(c, "skip-cert-verify") {
+			parts = append(parts, "skip-cert-verify=true")
+		}
+		if cb(c, "tfo") {
+			parts = append(parts, "fast-open=true")
+		}
+		return head + strings.Join(parts, ","), true
+
+	case "wireguard":
+		parts := []string{"WireGuard", server, port, "private-key=" + q(cs(c, "private-key")), "public-key=" + q(cs(c, "public-key"))}
+		if ip := cs(c, "ip"); ip != "" {
+			parts = append(parts, "ip="+ip)
+		}
+		if psk := cs(c, "pre-shared-key"); psk != "" {
+			parts = append(parts, "preshared-key="+q(psk))
+		}
+		if mtu := ci(c, "mtu"); mtu > 0 {
+			parts = append(parts, "mtu="+strconv.Itoa(mtu))
+		}
+		if rsv := parseReserved(c["reserved"]); len(rsv) > 0 {
+			var rsvStrs []string
+			for _, r := range rsv {
+				rsvStrs = append(rsvStrs, strconv.Itoa(r))
+			}
+			parts = append(parts, "reserved="+strings.Join(rsvStrs, ","))
 		}
 		return head + strings.Join(parts, ","), true
 
@@ -345,6 +575,30 @@ func loonNodeLine(n *proxy.Proxy) (string, bool) {
 		}
 		if cb(c, "udp") {
 			parts = append(parts, "udp=true")
+		}
+		if cb(c, "tfo") {
+			parts = append(parts, "fast-open=true")
+		}
+		return head + strings.Join(parts, ","), true
+
+	case "http":
+		parts := []string{"http", server, port}
+		u := cs(c, "username")
+		pw := cs(c, "password")
+		if u != "" || pw != "" {
+			parts = append(parts, q(u), q(pw))
+		}
+		if cb(c, "tls") {
+			parts = append(parts, "over-tls=true")
+			if sni := getSNI(c); sni != "" {
+				parts = append(parts, "tls-name="+sni)
+			}
+			if cb(c, "skip-cert-verify") {
+				parts = append(parts, "skip-cert-verify=true")
+			}
+		}
+		if cb(c, "tfo") {
+			parts = append(parts, "fast-open=true")
 		}
 		return head + strings.Join(parts, ","), true
 	}
@@ -369,11 +623,11 @@ func loonWSParts(c map[string]any) []string {
 }
 
 func loonTLSParts(c map[string]any) []string {
-	if !cb(c, "tls") {
+	if !cb(c, "tls") && len(cmap(c, "reality-opts")) == 0 {
 		return []string{"over-tls=false"}
 	}
 	parts := []string{"over-tls=true"}
-	if sni := cs(c, "servername"); sni != "" {
+	if sni := getSNI(c); sni != "" {
 		parts = append(parts, "tls-name="+sni)
 	}
 	if cb(c, "skip-cert-verify") {

@@ -4,6 +4,10 @@
 package config
 
 import (
+	"errors"
+	"fmt"
+	"net/netip"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -22,14 +26,26 @@ type Fetch struct {
 	// (subscriptions + rulesets), keyed by URL. Default 300s when zero. Set to a
 	// negative value to disable caching.
 	CacheTTL time.Duration `yaml:"cache_ttl"`
+
+	// AllowPrivateIPs controls SSRF protection. By default (false), requests to
+	// private, loopback, multicast, or link-local IPs are blocked, and redirects
+	// to them are rejected.
+	AllowPrivateIPs bool `yaml:"allow_private_ips"`
+
+	// AllowPrivateCIDRs lists private/CGNAT prefixes that stay reachable while
+	// SSRF protection remains on for everything else. Accepts CIDRs or single
+	// IPs (e.g. "100.106.251.111/32" or "fd7a:115c:a1e0::/48"). Use this
+	// instead of allow_private_ips when only one internal host is needed.
+	AllowPrivateCIDRs []string `yaml:"allow_private_cidrs"`
 }
 
 // RateLimit configures per-client-IP rate limiting on the expensive /sub
 // endpoint. When Enabled is false the limiter is a no-op pass-through.
 type RateLimit struct {
-	Enabled           bool `yaml:"enabled"`
-	RequestsPerMinute int  `yaml:"requests_per_minute"`
-	Burst             int  `yaml:"burst"`
+	Enabled           bool     `yaml:"enabled"`
+	RequestsPerMinute int      `yaml:"requests_per_minute"`
+	Burst             int      `yaml:"burst"`
+	TrustedProxies    []string `yaml:"trusted_proxies"` // CIDRs or IPs of reverse proxies whose XFF/X-Real-IP are trusted
 }
 
 // Insert configures the insert_url feature: a fixed set of node URLs the server
@@ -43,10 +59,11 @@ type Insert struct {
 }
 
 type Config struct {
-	Listen    string    `yaml:"listen"`
-	Fetch     Fetch     `yaml:"fetch"`
-	RateLimit RateLimit `yaml:"ratelimit"`
-	Insert    Insert    `yaml:"insert"`
+	Listen         string    `yaml:"listen"`
+	APIAccessToken string    `yaml:"api_access_token"` // optional token protecting /sub and /flushcache
+	Fetch          Fetch     `yaml:"fetch"`
+	RateLimit      RateLimit `yaml:"ratelimit"`
+	Insert         Insert    `yaml:"insert"`
 
 	// DefaultConfigURL is the remote external INI config (the &config=
 	// groups/rules source) used when a /sub request omits &config=. URL only.
@@ -99,7 +116,92 @@ func Load(path string) (*Config, error) {
 	if cfg.RateLimit.Burst == 0 {
 		cfg.RateLimit.Burst = 10
 	}
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
 	return cfg, nil
+}
+
+// Validate checks for configuration errors and enforces fail-closed guarantees.
+func (c *Config) Validate() error {
+	if strings.TrimSpace(c.Listen) == "" {
+		return errors.New("config: listen address cannot be empty")
+	}
+	if c.Fetch.Timeout < 0 {
+		return errors.New("config: fetch.timeout cannot be negative")
+	}
+	for _, raw := range c.Fetch.AllowPrivateCIDRs {
+		p, ok := parseCIDROrIP(raw)
+		if !ok {
+			return fmt.Errorf("config: invalid fetch.allow_private_cidrs entry %q: must be a valid IP or CIDR", raw)
+		}
+		// Reject prefixes that include public address space: a typo like
+		// 0.0.0.0/0 would otherwise turn SSRF protection off by accident.
+		minBits := 8
+		if p.Addr().Is6() {
+			minBits = 16
+		}
+		if p.Bits() < minBits || !isSpecialAddr(p.Addr()) {
+			return fmt.Errorf("config: fetch.allow_private_cidrs entry %q must be a private/CGNAT/reserved range (/%d or narrower)", raw, minBits)
+		}
+	}
+	if c.RateLimit.RequestsPerMinute < 0 {
+		return errors.New("config: ratelimit.requests_per_minute cannot be negative")
+	}
+	if c.RateLimit.Burst < 0 {
+		return errors.New("config: ratelimit.burst cannot be negative")
+	}
+	for _, raw := range c.RateLimit.TrustedProxies {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" {
+			continue
+		}
+		if _, err := netip.ParsePrefix(trimmed); err != nil {
+			if _, err := netip.ParseAddr(trimmed); err != nil {
+				return fmt.Errorf("config: invalid trusted_proxies entry %q: must be valid IP or CIDR", raw)
+			}
+		}
+	}
+	if c.Fetch.Proxy != "" {
+		u, err := url.Parse(c.Fetch.Proxy)
+		if err != nil {
+			return fmt.Errorf("config: invalid fetch.proxy: %w", err)
+		}
+		scheme := strings.ToLower(u.Scheme)
+		if scheme != "http" && scheme != "https" && scheme != "socks5" && scheme != "socks5h" {
+			return fmt.Errorf("config: unsupported scheme %q for fetch.proxy (must be http, https, socks5, or socks5h)", scheme)
+		}
+	}
+	if c.Fetch.FlareSolverrURL != "" {
+		u, err := url.Parse(c.Fetch.FlareSolverrURL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+			return fmt.Errorf("config: invalid fetch.flaresolverr_url %q", c.Fetch.FlareSolverrURL)
+		}
+	}
+	if c.DefaultConfigURL != "" {
+		u, err := url.Parse(c.DefaultConfigURL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+			return fmt.Errorf("config: invalid default_config_url %q", c.DefaultConfigURL)
+		}
+	}
+	for _, raw := range c.Insert.URLs {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" {
+			return errors.New("config: insert.urls cannot contain empty entries")
+		}
+		u, err := url.Parse(trimmed)
+		if err != nil {
+			return fmt.Errorf("config: invalid insert.urls entry %q: %w", raw, err)
+		}
+		scheme := strings.ToLower(u.Scheme)
+		if scheme != "http" && scheme != "https" {
+			return fmt.Errorf("config: invalid insert.urls entry %q: must be http or https URL", raw)
+		}
+		if u.Host == "" {
+			return fmt.Errorf("config: invalid insert.urls entry %q: missing host", raw)
+		}
+	}
+	return nil
 }
 
 func applyEnv(cfg *Config) {
@@ -154,6 +256,32 @@ func applyEnv(cfg *Config) {
 			cfg.Insert.Enabled = b
 		}
 	}
+	if v := os.Getenv("SUBNG_API_ACCESS_TOKEN"); v != "" {
+		cfg.APIAccessToken = v
+	}
+	if v := os.Getenv("SUBNG_ALLOW_PRIVATE_IPS"); v != "" {
+		if b, err := parseBool(v); err == nil {
+			cfg.Fetch.AllowPrivateIPs = b
+		}
+	}
+	if v := os.Getenv("SUBNG_ALLOW_PRIVATE_CIDRS"); v != "" {
+		var cidrs []string
+		for _, p := range strings.Split(v, ",") {
+			if p = strings.TrimSpace(p); p != "" {
+				cidrs = append(cidrs, p)
+			}
+		}
+		cfg.Fetch.AllowPrivateCIDRs = cidrs
+	}
+	if v := os.Getenv("SUBNG_TRUSTED_PROXIES"); v != "" {
+		var proxies []string
+		for _, p := range strings.Split(v, ",") {
+			if p = strings.TrimSpace(p); p != "" {
+				proxies = append(proxies, p)
+			}
+		}
+		cfg.RateLimit.TrustedProxies = proxies
+	}
 	if v := strings.TrimSpace(os.Getenv("SUBNG_DEFAULT_CONFIG_URL")); v != "" {
 		cfg.DefaultConfigURL = v
 	}
@@ -169,4 +297,52 @@ func parseBool(v string) (bool, error) {
 		return false, nil
 	}
 	return strconv.ParseBool(v)
+}
+
+var (
+	cgnatPrefix    = netip.MustParsePrefix("100.64.0.0/10") // RFC 6598
+	reservedPrefix = netip.MustParsePrefix("240.0.0.0/4")   // reserved + broadcast
+)
+
+// isSpecialAddr reports whether addr is private, loopback, link-local,
+// multicast, unspecified, CGNAT, or reserved.
+func isSpecialAddr(addr netip.Addr) bool {
+	addr = addr.Unmap()
+	return addr.IsLoopback() ||
+		addr.IsPrivate() ||
+		addr.IsLinkLocalUnicast() ||
+		addr.IsLinkLocalMulticast() ||
+		addr.IsInterfaceLocalMulticast() ||
+		addr.IsMulticast() ||
+		addr.IsUnspecified() ||
+		cgnatPrefix.Contains(addr) ||
+		reservedPrefix.Contains(addr)
+}
+
+// parseCIDROrIP parses a CIDR or a single IP (as a host prefix).
+func parseCIDROrIP(raw string) (netip.Prefix, bool) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return netip.Prefix{}, false
+	}
+	if p, err := netip.ParsePrefix(trimmed); err == nil {
+		return p.Masked(), true
+	}
+	if a, err := netip.ParseAddr(trimmed); err == nil {
+		return netip.PrefixFrom(a, a.BitLen()), true
+	}
+	return netip.Prefix{}, false
+}
+
+// PrivateCIDRs returns the parsed allow_private_cidrs prefixes. Validate rejects
+// invalid entries at startup; this skips anything unparsable so a bad entry can
+// never fail open.
+func (f Fetch) PrivateCIDRs() []netip.Prefix {
+	out := make([]netip.Prefix, 0, len(f.AllowPrivateCIDRs))
+	for _, raw := range f.AllowPrivateCIDRs {
+		if p, ok := parseCIDROrIP(raw); ok {
+			out = append(out, p)
+		}
+	}
+	return out
 }

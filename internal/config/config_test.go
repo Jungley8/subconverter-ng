@@ -202,3 +202,141 @@ func TestCacheTTLFromFileAndEnv(t *testing.T) {
 		t.Errorf("cache_ttl from env = %v, want 45s", c.Fetch.CacheTTL)
 	}
 }
+
+func TestConfig_Validate(t *testing.T) {
+	// 1. Default config is valid
+	cfg := Default()
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("default config should be valid: %v", err)
+	}
+
+	// 2. Empty listen address
+	cfg.Listen = ""
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for empty listen address")
+	}
+	cfg.Listen = ":25500"
+
+	// 3. Negative timeout
+	cfg.Fetch.Timeout = -1
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for negative timeout")
+	}
+	cfg.Fetch.Timeout = 30 * time.Second
+
+	// 4. Negative rate limit
+	cfg.RateLimit.RequestsPerMinute = -1
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for negative RPM")
+	}
+	cfg.RateLimit.RequestsPerMinute = 30
+
+	// 5. Invalid trusted proxy
+	cfg.RateLimit.TrustedProxies = []string{"10.0.0.0/8", "not-an-ip-or-cidr"}
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for invalid trusted proxy")
+	}
+	cfg.RateLimit.TrustedProxies = []string{"10.0.0.0/8", "192.168.1.1"}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("valid trusted proxies failed: %v", err)
+	}
+
+	// 6. Invalid proxy scheme
+	cfg.Fetch.Proxy = "ftp://proxy.com"
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for ftp proxy scheme")
+	}
+	cfg.Fetch.Proxy = "socks5://proxy.com:1080"
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("socks5 proxy scheme should be valid: %v", err)
+	}
+
+	// 7. Invalid flaresolverr URL
+	cfg.Fetch.FlareSolverrURL = "ftp://flaresolverr:8191"
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for non-http flaresolverr url")
+	}
+	cfg.Fetch.FlareSolverrURL = "http://flaresolverr:8191/v1"
+
+	// 8. Invalid default config URL
+	cfg.DefaultConfigURL = "://bad"
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for bad default config url")
+	}
+	cfg.DefaultConfigURL = ""
+
+	// 9. Insert.URLs validation
+	cfg.Insert.URLs = []string{"https://example.com/sub", "http://example.org/sub"}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("valid insert URLs should pass: %v", err)
+	}
+
+	cfg.Insert.URLs = []string{""}
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for empty insert URL entry")
+	}
+
+	cfg.Insert.URLs = []string{"ftp://example.com/sub"}
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for non-http/https insert URL")
+	}
+
+	cfg.Insert.URLs = []string{"http:///no-host"}
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for insert URL without host")
+	}
+
+	cfg.Insert.URLs = []string{"://bad-url"}
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for unparseable insert URL")
+	}
+}
+
+func TestConfig_AllowPrivateCIDRs(t *testing.T) {
+	cases := []struct {
+		name    string
+		entries []string
+		wantErr bool
+	}{
+		{"tailscale range", []string{"100.64.0.0/10"}, false},
+		{"single cgnat ip", []string{"100.106.251.111"}, false},
+		{"rfc1918", []string{"192.168.1.0/24"}, false},
+		{"ipv6 ula", []string{"fd7a:115c:a1e0::/48"}, false},
+		{"loopback", []string{"127.0.0.1"}, false},
+		{"empty entry", []string{""}, true},
+		{"garbage", []string{"not-a-cidr"}, true},
+		{"public range", []string{"8.8.8.0/24"}, true},
+		{"catch-all", []string{"0.0.0.0/0"}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := Default()
+			cfg.Fetch.AllowPrivateCIDRs = tc.entries
+			err := cfg.Validate()
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("Validate() error = %v, wantErr %v", err, tc.wantErr)
+			}
+		})
+	}
+
+	// Parsing keeps only valid entries; a plain IP becomes a host prefix.
+	f := Fetch{AllowPrivateCIDRs: []string{"100.106.251.111", "fd7a:115c:a1e0::/48"}}
+	got := f.PrivateCIDRs()
+	if len(got) != 2 || got[0].String() != "100.106.251.111/32" || got[1].String() != "fd7a:115c:a1e0::/48" {
+		t.Fatalf("PrivateCIDRs() = %v", got)
+	}
+}
+
+func TestAllowPrivateCIDRsFromEnv(t *testing.T) {
+	t.Setenv("SUBNG_ALLOW_PRIVATE_CIDRS", "100.106.251.111/32, fd7a:115c:a1e0::/48")
+	c, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Fetch.AllowPrivateCIDRs) != 2 {
+		t.Fatalf("env allowlist not applied: %v", c.Fetch.AllowPrivateCIDRs)
+	}
+	if got := c.Fetch.PrivateCIDRs(); len(got) != 2 {
+		t.Fatalf("parsed allowlist = %v", got)
+	}
+}

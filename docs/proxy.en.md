@@ -27,6 +27,10 @@ Supported proxy protocols: `http://`, `https://`, `socks5://` (with optional cre
     egress; whereas standard `HTTP_PROXY` only affects the fetch itself. If you need both a proxy and the
     Cloudflare bypass, use `SUBNG_PROXY`.
 
+!!! warning "Network Reachability of Upstream Proxy (Publicly Accessible)"
+    The upstream proxy connection is initiated by the **subconverter-ng server process**.
+    If the service runs on a remote server or in a Docker container, the proxy address must be **reachable and publicly accessible from the server's network environment** (e.g., a public IP or domain with port). Do not specify the client computer's local `127.0.0.1`.
+
 > This upstream proxy is used for: fetching the subscription, fetching the `config=` external config, fetching the ruleset rule lists, and (if enabled) forwarding to FlareSolverr for the bypass — ensuring a consistent egress.
 
 ## 2. The User-Agent decides whether the provider serves nodes

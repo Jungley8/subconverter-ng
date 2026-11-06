@@ -1,15 +1,43 @@
 package config
 
 import (
+	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 )
 
-// RedactURL returns a display-safe form of a URL for logging. It masks the
-// password in any user:pass@ credential and replaces every query-parameter
-// value with "***" — subscription tokens, API keys and the like live in the
-// userinfo and query string. Values without a scheme are treated as opaque and
-// masked in the middle, so a stray secret never reaches the logs verbatim.
+var urlRegex = regexp.MustCompile(`[a-zA-Z][a-zA-Z0-9+.-]*://[^\s"'<>]+`)
+
+// RedactString finds any HTTP/HTTPS URLs embedded within s and redacts their secrets.
+func RedactString(s string) string {
+	return urlRegex.ReplaceAllStringFunc(s, func(raw string) string {
+		suffix := ""
+		for len(raw) > 0 {
+			last := raw[len(raw)-1]
+			if last == ':' || last == ',' || last == '.' || last == ';' || last == ')' || last == ']' {
+				suffix = string(last) + suffix
+				raw = raw[:len(raw)-1]
+			} else {
+				break
+			}
+		}
+		return RedactURL(raw) + suffix
+	})
+}
+
+// RedactError returns an error whose message has secrets and tokens in URLs redacted.
+func RedactError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return errors.New(RedactString(err.Error()))
+}
+
+// RedactURL returns a display-safe form of a URL for logging. It masks all
+// userinfo before '@', replaces every query-parameter value with "***",
+// and redacts vmess:// and ssr:// payloads. Values without a scheme are treated
+// as opaque and masked in the middle, so a stray secret never reaches the logs verbatim.
 //
 // It works on the raw string (not net/url) on purpose: round-tripping through
 // url.URL re-encodes the "***" mask into an unreadable %2A%2A%2A.
@@ -17,6 +45,13 @@ func RedactURL(raw string) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return ""
+	}
+	lower := strings.ToLower(raw)
+	if strings.HasPrefix(lower, "vmess://") {
+		return "vmess://***"
+	}
+	if strings.HasPrefix(lower, "ssr://") {
+		return "ssr://***"
 	}
 	if !strings.Contains(raw, "://") {
 		return maskMiddle(raw) // not a URL we can structurally parse
@@ -41,48 +76,57 @@ func RedactSubURL(raw string) string {
 	if raw == "" {
 		return ""
 	}
+	lower := strings.ToLower(raw)
+	if strings.HasPrefix(lower, "vmess://") {
+		return "vmess://***"
+	}
+	if strings.HasPrefix(lower, "ssr://") {
+		return "ssr://***"
+	}
 	if !strings.Contains(raw, "://") {
 		return maskMiddle(raw)
 	}
 	base := raw
-	if i := strings.IndexByte(raw, '?'); i >= 0 {
+	if i := strings.IndexAny(raw, "?#"); i >= 0 {
 		base = raw[:i]
 	}
 	base = redactUserinfo(base)
 	sep := strings.Index(base, "://")
 	rest := base[sep+3:]
 	if i := strings.IndexByte(rest, '/'); i >= 0 {
-		if rest[i:] == "/" { // bare trailing slash carries no secret
+		if rest[i:] == "/" && len(base) == len(raw) { // bare trailing slash without query/fragment carries no secret
 			return base[:sep+3] + rest[:i]
 		}
 		return base[:sep+3] + rest[:i] + "/***"
 	}
-	if len(base) < len(raw) { // had a query but no path
+	if len(base) < len(raw) { // had a query or fragment but no path
 		return base + "/***"
 	}
 	return base
 }
 
-// redactUserinfo masks the password in a scheme://user:pass@host... prefix,
-// leaving the username visible. The '@' must precede the path's first '/'.
+// redactUserinfo masks all credentials in a scheme://userinfo@host... prefix,
+// replacing whatever is before the last '@' in the authority component with '***'.
+// The authority component is terminated by the first '/', '?', or '#'.
 func redactUserinfo(base string) string {
 	sep := strings.Index(base, "://")
 	if sep < 0 {
 		return base
 	}
 	rest := base[sep+3:]
-	at := strings.IndexByte(rest, '@')
+	end := len(rest)
+	for i := 0; i < len(rest); i++ {
+		if rest[i] == '/' || rest[i] == '?' || rest[i] == '#' {
+			end = i
+			break
+		}
+	}
+	auth := rest[:end]
+	at := strings.LastIndexByte(auth, '@')
 	if at < 0 {
 		return base
 	}
-	if slash := strings.IndexByte(rest, '/'); slash >= 0 && slash < at {
-		return base // '@' lives in the path, not the userinfo
-	}
-	userinfo := rest[:at]
-	if colon := strings.IndexByte(userinfo, ':'); colon >= 0 {
-		userinfo = userinfo[:colon+1] + "***"
-	}
-	return base[:sep+3] + userinfo + rest[at:]
+	return base[:sep+3] + "***" + rest[at:]
 }
 
 // maskQuery replaces each query value with "***", preserving keys and order.
@@ -146,8 +190,21 @@ func (c *Config) Summary() string {
 		fmt.Fprintf(&b, "  fetch cache:    %s\n", c.Fetch.CacheTTL)
 	}
 
+	if c.APIAccessToken != "" {
+		b.WriteString("  api token:      configured\n")
+	}
+
+	if c.Fetch.AllowPrivateIPs {
+		b.WriteString("  private ips:    allowed (SSRF protection off)\n")
+	} else if len(c.Fetch.AllowPrivateCIDRs) > 0 {
+		fmt.Fprintf(&b, "  private cidrs:  %s (SSRF allowlist)\n", strings.Join(c.Fetch.AllowPrivateCIDRs, ", "))
+	}
+
 	if c.RateLimit.Enabled {
 		fmt.Fprintf(&b, "  rate limit:     %d/min, burst %d\n", c.RateLimit.RequestsPerMinute, c.RateLimit.Burst)
+		if len(c.RateLimit.TrustedProxies) > 0 {
+			fmt.Fprintf(&b, "  trusted proxies: %s\n", strings.Join(c.RateLimit.TrustedProxies, ", "))
+		}
 	} else {
 		b.WriteString("  rate limit:     disabled\n")
 	}

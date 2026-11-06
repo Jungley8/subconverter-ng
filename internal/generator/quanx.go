@@ -32,6 +32,20 @@ func GenerateQuanX(ctx context.Context, nodes []*proxy.Proxy, cfg *extconfig.Con
 		allNames = append(allNames, n.Name)
 	}
 
+	// list=true: emit only the [server_local] section
+	if opts.ListOnly {
+		var listB strings.Builder
+		listB.WriteString("[server_local]\n")
+		for _, n := range nodes {
+			if line, ok := quanxNodeLine(n); ok {
+				listB.WriteString(line)
+				listB.WriteByte('\n')
+			}
+		}
+		res.Output = []byte(listB.String())
+		return res, nil
+	}
+
 	groupNames := map[string]bool{}
 	for _, d := range cfg.ProxyGroups {
 		groupNames[d.Name] = true
@@ -104,24 +118,37 @@ func formatQuanXPolicy(g groupOut, emitted, groupNames map[string]bool) string {
 // quanxRuleKeyword maps a neutral rule type to its QuanX filter keyword.
 var quanxRuleKeyword = map[string]string{
 	"DOMAIN": "host", "DOMAIN-SUFFIX": "host-suffix", "DOMAIN-KEYWORD": "host-keyword",
-	"IP-CIDR": "ip-cidr", "IP-CIDR6": "ip6-cidr", "GEOIP": "geoip", "USER-AGENT": "user-agent",
+	"IP-CIDR": "ip-cidr", "IP-CIDR6": "ip6-cidr", "IP6-CIDR": "ip6-cidr",
+	"GEOIP": "geoip", "USER-AGENT": "user-agent",
+	"DST-PORT": "dest-port", "SRC-PORT": "src-port",
 }
 
 // formatQuanXRule renders a neutral rule as a QuanX filter line. ok is false for
 // rule types QuanX has no keyword for.
 func formatQuanXRule(r Rule) (string, bool) {
-	if r.IsMatch() {
-		return "final, " + r.Group, true
+	group := r.Group
+	switch group {
+	case "DIRECT":
+		group = "direct"
+	case "REJECT", "REJECT-DROP":
+		group = "reject"
 	}
-	kw, ok := quanxRuleKeyword[strings.ToUpper(r.Type)]
+	if r.IsMatch() {
+		return "final, " + group, true
+	}
+	canon := normalizeRuleType(r.Type)
+	kw, ok := quanxRuleKeyword[canon]
 	if !ok {
 		return "", false
+	}
+	if kw == "ip-cidr" && strings.Contains(r.Value, ":") {
+		kw = "ip6-cidr"
 	}
 	val := r.Value
 	if kw == "geoip" {
 		val = strings.ToLower(val)
 	}
-	s := kw + ", " + val + ", " + r.Group
+	s := kw + ", " + val + ", " + group
 	if r.Flag != "" {
 		s += ", " + r.Flag
 	}
@@ -148,30 +175,48 @@ func quanxNodeLine(n *proxy.Proxy) (string, bool) {
 		if cb(c, "udp") {
 			parts = append(parts, "udp-relay=true")
 		}
+		if cb(c, "tfo") {
+			parts = append(parts, "fast-open=true")
+		}
 		parts = append(parts, tag)
 		return strings.Join(parts, ", "), true
 
 	case "vmess":
 		parts := []string{"vmess=" + addr, "method=" + quanxVmessMethod(cs(c, "cipher")), "password=" + cs(c, "uuid")}
-		parts = append(parts, quanxObfsParts(c, cs(c, "servername"))...)
+		parts = append(parts, quanxObfsParts(c, getSNI(c))...)
 		if cb(c, "udp") {
 			parts = append(parts, "udp-relay=true")
+		}
+		if cb(c, "tfo") {
+			parts = append(parts, "fast-open=true")
 		}
 		parts = append(parts, tag)
 		return strings.Join(parts, ", "), true
 
 	case "vless":
 		parts := []string{"vless=" + addr, "method=none", "password=" + cs(c, "uuid")}
-		parts = append(parts, quanxObfsParts(c, cs(c, "servername"))...)
+		parts = append(parts, quanxObfsParts(c, getSNI(c))...)
+		ro := cmap(c, "reality-opts")
+		if len(ro) > 0 {
+			if pbk := cs(ro, "public-key"); pbk != "" {
+				parts = append(parts, "public-key="+pbk)
+			}
+			if sid := cs(ro, "short-id"); sid != "" {
+				parts = append(parts, "short-id="+sid)
+			}
+		}
 		if flow := cs(c, "flow"); flow != "" {
 			parts = append(parts, "flow="+flow)
+		}
+		if cb(c, "tfo") {
+			parts = append(parts, "fast-open=true")
 		}
 		parts = append(parts, tag)
 		return strings.Join(parts, ", "), true
 
 	case "trojan":
 		parts := []string{"trojan=" + addr, "password=" + cs(c, "password"), "over-tls=true"}
-		if sni := cs(c, "sni"); sni != "" {
+		if sni := getSNI(c); sni != "" {
 			parts = append(parts, "tls-host="+sni)
 		}
 		parts = append(parts, "tls-verification="+boolStr(!cb(c, "skip-cert-verify")))
@@ -187,6 +232,9 @@ func quanxNodeLine(n *proxy.Proxy) (string, bool) {
 				}
 			}
 		}
+		if cb(c, "tfo") {
+			parts = append(parts, "fast-open=true")
+		}
 		parts = append(parts, tag)
 		return strings.Join(parts, ", "), true
 
@@ -201,6 +249,30 @@ func quanxNodeLine(n *proxy.Proxy) (string, bool) {
 		if cb(c, "udp") {
 			parts = append(parts, "udp-relay=true")
 		}
+		if cb(c, "tfo") {
+			parts = append(parts, "fast-open=true")
+		}
+		parts = append(parts, tag)
+		return strings.Join(parts, ", "), true
+
+	case "http":
+		parts := []string{"http=" + addr}
+		if u := cs(c, "username"); u != "" {
+			parts = append(parts, "username="+u)
+		}
+		if pw := cs(c, "password"); pw != "" {
+			parts = append(parts, "password="+pw)
+		}
+		if cb(c, "tls") {
+			parts = append(parts, "over-tls=true")
+			if sni := getSNI(c); sni != "" {
+				parts = append(parts, "tls-host="+sni)
+			}
+			parts = append(parts, "tls-verification="+boolStr(!cb(c, "skip-cert-verify")))
+		}
+		if cb(c, "tfo") {
+			parts = append(parts, "fast-open=true")
+		}
 		parts = append(parts, tag)
 		return strings.Join(parts, ", "), true
 	}
@@ -210,7 +282,7 @@ func quanxNodeLine(n *proxy.Proxy) (string, bool) {
 // quanxObfs/TLS parts shared by vmess/vless: choose obfs (ws/wss/over-tls) and
 // emit tls-host / tls-verification.
 func quanxObfsParts(c map[string]any, sni string) []string {
-	tls := cb(c, "tls")
+	tls := cb(c, "tls") || len(cmap(c, "reality-opts")) > 0
 	ws := cs(c, "network") == "ws"
 	var parts []string
 	switch {

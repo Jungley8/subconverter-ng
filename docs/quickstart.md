@@ -29,6 +29,9 @@ http://127.0.0.1:25500/sub?target=clash&url=<订阅URL编码>&config=<规则URL�
 
 支持的全部参数见 [URL 参数](url-params.md)。
 
+!!! tip "内置 Web 界面"
+    服务启动后，用浏览器打开 `http://127.0.0.1:25500/` 即可可视化生成配置并管理订阅库。详见 [Web 界面](web.md)。
+
 ## 方式二：CLI 单次转换
 
 适合本地生成一份配置文件，或在脚本里用：
@@ -55,6 +58,7 @@ subconverter-ng convert \
 | `--fdn` | 过滤 Clash.Meta 不支持的节点 |
 | `--list` | 仅输出节点列表 |
 | `--append-type` | 节点名前加 `[类型]` |
+| `--exclude-protocol` | 手动排除指定协议（如 `hysteria2,tuic`） |
 | `--expand` | `=false` 时输出 rule-providers |
 | `--emoji` `--add-emoji` `--remove-emoji` | emoji 增删 |
 
@@ -65,6 +69,7 @@ subconverter-ng convert \
 - `ruleset=` —— 远程规则列表，以及 `[]GEOIP,CN`、`[]FINAL` 等内联规则
 - `custom_proxy_group=` —— backtick 分隔的分组（`select` / `url-test` / 正则筛选 / `[]` 组引用）
 - `exclude_remarks=` / `include_remarks=` —— 节点名过滤
+- `exclude_protocol=` —— 排除指定协议（如 `hysteria2,tuic`）
 - `enable_rule_generator` / `overwrite_original_rules`
 - `clash_rule_base=` —— 自定义 Clash 基础模板
 
@@ -72,6 +77,7 @@ subconverter-ng convert \
 
 ## 下一步
 
+- 可视化操作与订阅管理 → [Web 界面](web.md)
 - 机场访问受限 → [上游代理与 UA](proxy.md)
 - 机场套了 Cloudflare → [绕过 Cloudflare](cloudflare.md)
 - 生产部署 → [Docker 部署](docker.md)

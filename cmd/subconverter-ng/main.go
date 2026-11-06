@@ -10,11 +10,16 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/Jungley8/subconverter-ng/internal/config"
@@ -73,7 +78,9 @@ func cmdServe(args []string) {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	cfgPath := fs.String("config", "", "path to app config YAML (optional)")
 	listen := fs.String("listen", "", "listen address (overrides config), e.g. :25500")
-	fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		fatal("parse flags: %v", err)
+	}
 
 	cfg, err := config.Load(*cfgPath)
 	if err != nil {
@@ -82,20 +89,103 @@ func cmdServe(args []string) {
 	if *listen != "" {
 		cfg.Listen = *listen
 	}
+	if err := cfg.Validate(); err != nil {
+		fatal("invalid config: %v", err)
+	}
 
 	srv := newHTTPServer(cfg)
 	fmt.Printf("subconverter-ng %s\n", version)
 	fmt.Print(cfg.Summary()) // effective config, secrets redacted
-	fmt.Printf("listening on %s\n", cfg.Listen)
-	if err := srv.ListenAndServe(); err != nil {
+	slog.Info("starting server", "addr", cfg.Listen, "version", version)
+
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+
+	serverErr := make(chan error, 1)
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serverErr <- err
+		}
+	}()
+
+	select {
+	case err := <-serverErr:
 		fatal("server: %v", err)
+	case sig := <-stop:
+		slog.Info("shutting down server", "signal", sig.String())
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(ctx); err != nil {
+			slog.Error("server shutdown error", "error", err)
+		} else {
+			slog.Info("server stopped gracefully")
+		}
 	}
+}
+
+// cliFetcher wraps a remote Fetcher to support reading local files and stdin ('-') for CLI commands.
+type cliFetcher struct {
+	remote    convert.Fetcher
+	stdinData []byte
+	stdinRead bool
+}
+
+var _ convert.Fetcher = (*cliFetcher)(nil)
+var _ convert.MetaFetcher = (*cliFetcher)(nil)
+
+func newCLIFetcher(remote convert.Fetcher) *cliFetcher {
+	return &cliFetcher{remote: remote}
+}
+
+func (f *cliFetcher) Get(ctx context.Context, target string) ([]byte, error) {
+	data, _, err := f.GetWithMeta(ctx, target)
+	return data, err
+}
+
+func (f *cliFetcher) GetWithMeta(ctx context.Context, target string) ([]byte, http.Header, error) {
+	target = strings.TrimSpace(target)
+	if target == "-" {
+		if !f.stdinRead {
+			data, err := io.ReadAll(os.Stdin)
+			if err != nil {
+				return nil, nil, fmt.Errorf("read stdin: %w", err)
+			}
+			f.stdinData = data
+			f.stdinRead = true
+		}
+		return f.stdinData, nil, nil
+	}
+
+	if strings.HasPrefix(target, "file://") {
+		path := strings.TrimPrefix(target, "file://")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, nil, fmt.Errorf("read file %s: %w", path, err)
+		}
+		return data, nil, nil
+	}
+
+	// If target is not a URL, treat it as a local file path
+	isURL := strings.HasPrefix(strings.ToLower(target), "http://") || strings.HasPrefix(strings.ToLower(target), "https://")
+	if !isURL {
+		data, err := os.ReadFile(target)
+		if err != nil {
+			return nil, nil, fmt.Errorf("read file %s: %w", target, err)
+		}
+		return data, nil, nil
+	}
+
+	if mf, ok := f.remote.(convert.MetaFetcher); ok {
+		return mf.GetWithMeta(ctx, target)
+	}
+	body, err := f.remote.Get(ctx, target)
+	return body, nil, err
 }
 
 func cmdConvert(args []string) {
 	fs := flag.NewFlagSet("convert", flag.ExitOnError)
-	url := fs.String("url", "", "subscription URL(s), '|'-separated (required)")
-	cfgURL := fs.String("config", "", "external INI config URL")
+	url := fs.String("url", "", "subscription URL(s), file path, or '-' for stdin, '|'-separated (required)")
+	cfgURL := fs.String("config", "", "external INI config URL, file path, or '-' for stdin")
 	template := fs.String("template", "", "render into a sing-box template: built-in name (momo) or http(s) URL")
 	target := fs.String("target", "clash", "output target: clash|singbox|surge|shadowrocket|quanx|loon|v2ray")
 	out := fs.String("o", "", "output file (default: stdout)")
@@ -122,9 +212,20 @@ func cmdConvert(args []string) {
 	excludeRe := fs.String("exclude", "", "drop nodes whose name matches this regex (overrides config exclude_remarks)")
 	provider := fs.Bool("provider", false, "clash proxy-provider mode: subscriptions become mihomo proxy-providers (client fetches nodes itself)")
 	providerInterval := fs.Int("interval", 0, "proxy-provider update interval in seconds (0=default 86400, provider mode only)")
+	var excludeProtocols stringsFlag
+	fs.Var(&excludeProtocols, "exclude-protocol", "exclude nodes by protocol or type (e.g. hysteria2, tuic)")
+	fs.Var(&excludeProtocols, "exclude-protocols", "alias for --exclude-protocol")
+	fs.Var(&excludeProtocols, "exclude-type", "alias for --exclude-protocol")
+	fs.Var(&excludeProtocols, "exclude-types", "alias for --exclude-protocol")
+	fs.Var(&excludeProtocols, "filter-protocol", "alias for --exclude-protocol")
+	fs.Var(&excludeProtocols, "filter-protocols", "alias for --exclude-protocol")
+	fs.Var(&excludeProtocols, "filter-type", "alias for --exclude-protocol")
+	fs.Var(&excludeProtocols, "filter-types", "alias for --exclude-protocol")
 	timeout := fs.Duration("timeout", 30*time.Second, "per-fetch timeout")
 	cacheTTL := fs.Duration("cache-ttl", 0, "TTL for the in-memory fetch cache (0=default 300s, negative=disabled)")
-	fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		fatal("parse flags: %v", err)
+	}
 
 	if *url == "" {
 		fatal("--url is required")
@@ -170,7 +271,7 @@ func cmdConvert(args []string) {
 	if err != nil {
 		fatal("%v", err)
 	}
-	client, err := fetch.New(fetch.Options{
+	remoteClient, err := fetch.New(fetch.Options{
 		UserAgent:       resolvedUA,
 		Proxy:           *proxy,
 		FlareSolverrURL: *flaresolverr,
@@ -178,8 +279,10 @@ func cmdConvert(args []string) {
 		CacheTTL:        *cacheTTL,
 	})
 	if err != nil {
-		fatal("fetch client: %v", err)
+		fatal("fetch client: %v", config.RedactError(err))
 	}
+
+	client := newCLIFetcher(remoteClient)
 
 	req := convert.Request{
 		Target:        *target,
@@ -196,6 +299,7 @@ func cmdConvert(args []string) {
 			AppendType:       *appendType,
 			ListOnly:         *list,
 			Tailscale:        *tailscale,
+			ExcludeProtocols: generator.ParseProtocols(excludeProtocols...),
 		},
 		Emoji:       triFromString(*emoji),
 		AddEmoji:    triFromString(*addEmoji),
@@ -216,10 +320,10 @@ func cmdConvert(args []string) {
 	defer cancel()
 	data, diag, err := convert.Run(ctx, client, req)
 	if err != nil {
-		fatal("convert: %v", err)
+		fatal("convert: %v", config.RedactError(err))
 	}
-	fmt.Fprintf(os.Stderr, "ok: %d nodes, %d unparsed lines, %d dup, %d deprecated, %d filtered (remarks), %d nodes unsupported by target, %d empty groups, %d rules dropped (unsupported type)\n",
-		diag.NodeCount, len(diag.SkippedLines), diag.Duplicates, diag.Deprecated, diag.Filtered, len(diag.SkippedNodes), len(diag.EmptyGroups), len(diag.SkippedRules))
+	fmt.Fprintf(os.Stderr, "ok: %d nodes, %d unparsed lines, %d dup, %d deprecated, %d filtered (remarks), %d excluded by protocol, %d nodes unsupported by target, %d empty groups, %d rules dropped (unsupported type)\n",
+		diag.NodeCount, len(diag.SkippedLines), diag.Duplicates, diag.Deprecated, diag.Filtered, diag.ExcludedProtocols, len(diag.SkippedNodes), len(diag.EmptyGroups), len(diag.SkippedRules))
 	for _, r := range diag.SkippedRules {
 		fmt.Fprintf(os.Stderr, "  dropped rule (unsupported type): %s\n", r)
 	}
@@ -228,7 +332,9 @@ func cmdConvert(args []string) {
 	}
 
 	if *out == "" {
-		os.Stdout.Write(data)
+		if _, err := os.Stdout.Write(data); err != nil {
+			fatal("write stdout: %v", err)
+		}
 		return
 	}
 	if err := os.WriteFile(*out, data, 0o644); err != nil {
@@ -282,4 +388,15 @@ func splitPipe(raw string) []string {
 func fatal(format string, a ...any) {
 	fmt.Fprintf(os.Stderr, "error: "+format+"\n", a...)
 	os.Exit(1)
+}
+
+type stringsFlag []string
+
+func (s *stringsFlag) String() string {
+	return strings.Join(*s, ",")
+}
+
+func (s *stringsFlag) Set(val string) error {
+	*s = append(*s, val)
+	return nil
 }

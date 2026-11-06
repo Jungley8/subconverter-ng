@@ -13,6 +13,7 @@
 - **Drop-in compatible API** — `/sub?target=clash&url=...&config=...`, so existing clients and bookmarks keep working without changes
 - **Aligned with Clash.Meta / mihomo** — new protocols available from day one
 - **The fetch layer is a first-class citizen** — built-in upstream proxy, custom User-Agent, and automatic bypass of the Cloudflare 5-second challenge
+- **Built-in Web UI & Subscription Manager** — Visual config builder and local management for multiple subscriptions (see [Web UI](web.en.md))
 
 ## Supported protocols
 

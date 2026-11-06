@@ -11,7 +11,7 @@ Query parameters for `GET /sub`, kept as compatible as possible with [tindy2013/
 | `clash` | `clash.meta` `clashr` | Clash.Meta / mihomo YAML | `text/yaml` |
 | `singbox` | `sing-box` | sing-box JSON | `application/json` |
 | `surge` | | Surge `.conf` (with `[Proxy]`/`[Proxy Group]`/`[Rule]`) | `text/plain` |
-| `shadowrocket` | `shadow-rocket` | Surge-style managed conf (importable by Shadowrocket) | `text/plain` |
+| `shadowrocket` | `shadow-rocket` | Surge-style managed conf (imported via Shadowrocket's "Config" tab; use clash for home screen subscription) | `text/plain` |
 | `quanx` | `quantumultx` `quantumult-x` | Quantumult X resource config | `text/plain` |
 | `loon` | | Loon `.conf` | `text/plain` |
 | `v2ray` | `mixed` `v2rayn` | base64 node subscription (ss/vmess/vless/trojan/hysteria2/tuic share links) | `text/plain` |
@@ -33,12 +33,13 @@ Query parameters for `GET /sub`, kept as compatible as possible with [tindy2013/
 | `dedup` | Remove duplicate nodes: nodes with identical connection fields (type/address/port/credentials/transport) keep only the first | :material-check: |
 | `append_type` | Prefix node names with `[type]` (e.g. `[SS] HK 01`) | :material-check: |
 | `tailscale` | Prepend Tailscale DIRECT rules (`100.64.0.0/10` and `fd7a:115c:a1e0::/48` with `no-resolve`) to the very beginning of the rules list | :material-check: |
+| `exclude_protocol` | Exclude nodes by protocol or type (e.g. `hy2,tuic`; aliases: `exclude_protocols`, `exclude_types`, `filter_type`) | :material-check: |
 | `emoji` | Shortcut: `true` = strip old emoji then add flags by rule; `false` = strip emoji and add none. Equivalent to `add_emoji=<value>` plus `remove_emoji=true` | :material-check: |
 | `add_emoji` | Whether to prepend flag emoji to node names by rule (default `true`) | :material-check: |
 | `remove_emoji` | Whether to first remove existing emoji in node names (default `true`) | :material-check: |
 | `filename` | Set the download filename (`Content-Disposition`) | :material-check: |
 | `interval` | Client subscription auto-update interval (hours, default 24, `Profile-Update-Interval` header) | :material-check: |
-| `proxy` | Upstream proxy for **this request**, overriding the global config (extension param) | :material-check: |
+| `proxy` | Upstream proxy for this request; connection initiated by server, must be publicly reachable from server (extension parameter) | :material-check: |
 | `nocache` | When `1`, bypass this request's TTL cache and force a refetch | :material-check: |
 | `flushcache` | When `1`, clear the entire shared cache before handling this request (there is also a `GET /flushcache` endpoint) | :material-check: |
 

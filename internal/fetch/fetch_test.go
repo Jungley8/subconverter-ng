@@ -2,10 +2,15 @@ package fetch
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestNew_Defaults(t *testing.T) {
@@ -31,7 +36,10 @@ func TestNew_FallsBackToEnvProxy(t *testing.T) {
 	}
 
 	// And an explicit proxy overrides it with a fixed URL.
-	c2, _ := New(Options{Proxy: "http://127.0.0.1:7890"})
+	c2, err := New(Options{Proxy: "http://127.0.0.1:7890", TrustedProxy: "http://127.0.0.1:7890"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	tr2 := c2.http.Transport.(*http.Transport)
 	req, _ := http.NewRequest(http.MethodGet, "http://example.com", nil)
 	u, err := tr2.Proxy(req)
@@ -51,11 +59,11 @@ func TestGet_OKAndUserAgent(t *testing.T) {
 		if r.Header.Get("User-Agent") != defaultUA {
 			t.Errorf("UA = %q, want %q", r.Header.Get("User-Agent"), defaultUA)
 		}
-		w.Write([]byte("hello-body"))
+		_, _ = w.Write([]byte("hello-body"))
 	}))
 	defer srv.Close()
 
-	c, _ := New(Options{})
+	c, _ := New(Options{AllowPrivateIPs: true})
 	body, err := c.Get(context.Background(), srv.URL)
 	if err != nil {
 		t.Fatal(err)
@@ -70,11 +78,11 @@ func TestGet_Non200FailsClosed(t *testing.T) {
 	// as an error rather than a successful fetch of garbage.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		w.Write([]byte("404 page not found"))
+		_, _ = w.Write([]byte("404 page not found"))
 	}))
 	defer srv.Close()
 
-	c, _ := New(Options{})
+	c, _ := New(Options{AllowPrivateIPs: true})
 	if _, err := c.Get(context.Background(), srv.URL); err == nil {
 		t.Fatal("expected error for 404")
 	} else if !strings.Contains(err.Error(), "unexpected status 404") {
@@ -87,11 +95,11 @@ func TestGet_Non200ServerErrorFailsClosed(t *testing.T) {
 	// parsed as a subscription or config.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("internal error"))
+		_, _ = w.Write([]byte("internal error"))
 	}))
 	defer srv.Close()
 
-	c, _ := New(Options{})
+	c, _ := New(Options{AllowPrivateIPs: true})
 	if _, err := c.Get(context.Background(), srv.URL); err == nil {
 		t.Fatal("expected error for 500")
 	} else if !strings.Contains(err.Error(), "unexpected status 500") {
@@ -118,22 +126,22 @@ func TestGet_CloudflareSolvedViaFlareSolverr(t *testing.T) {
 	// Origin returns the CF interstitial until a cf_clearance cookie is present.
 	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.Header.Get("Cookie"), "cf_clearance=token123") {
-			w.Write([]byte("REAL-SUBSCRIPTION"))
+			_, _ = w.Write([]byte("REAL-SUBSCRIPTION"))
 			return
 		}
 		w.WriteHeader(http.StatusServiceUnavailable)
-		w.Write([]byte("<title>Just a moment...</title>"))
+		_, _ = w.Write([]byte("<title>Just a moment...</title>"))
 	}))
 	defer origin.Close()
 
 	// FlareSolverr stub returns the clearance cookie + a UA.
 	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"status":"ok","solution":{"userAgent":"fs-ua","cookies":[{"name":"cf_clearance","value":"token123"}]}}`))
+		_, _ = w.Write([]byte(`{"status":"ok","solution":{"userAgent":"fs-ua","cookies":[{"name":"cf_clearance","value":"token123"}]}}`))
 	}))
 	defer fs.Close()
 
-	c, _ := New(Options{FlareSolverrURL: fs.URL})
+	c, _ := New(Options{FlareSolverrURL: fs.URL, AllowPrivateIPs: true})
 	body, err := c.Get(context.Background(), origin.URL)
 	if err != nil {
 		t.Fatal(err)
@@ -146,11 +154,11 @@ func TestGet_CloudflareSolvedViaFlareSolverr(t *testing.T) {
 func TestGet_CloudflareNoSolverrErrors(t *testing.T) {
 	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
-		w.Write([]byte("Attention Required! | Cloudflare"))
+		_, _ = w.Write([]byte("Attention Required! | Cloudflare"))
 	}))
 	defer origin.Close()
 
-	c, _ := New(Options{})
+	c, _ := New(Options{AllowPrivateIPs: true})
 	_, err := c.Get(context.Background(), origin.URL)
 	if err == nil || !strings.Contains(err.Error(), "Cloudflare") {
 		t.Errorf("expected Cloudflare error, got %v", err)
@@ -160,16 +168,213 @@ func TestGet_CloudflareNoSolverrErrors(t *testing.T) {
 func TestGet_FlareSolverrFailure(t *testing.T) {
 	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		w.Write([]byte("Just a moment..."))
+		_, _ = w.Write([]byte("Just a moment..."))
 	}))
 	defer origin.Close()
 	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"status":"error","message":"boom"}`))
+		_, _ = w.Write([]byte(`{"status":"error","message":"boom"}`))
 	}))
 	defer fs.Close()
 
-	c, _ := New(Options{FlareSolverrURL: fs.URL})
+	c, _ := New(Options{FlareSolverrURL: fs.URL, AllowPrivateIPs: true})
 	if _, err := c.Get(context.Background(), origin.URL); err == nil {
 		t.Error("expected solve failure error")
+	}
+}
+
+func TestSSRF_DefenseBlocksPrivateAndLoopback(t *testing.T) {
+	c, err := New(Options{}) // AllowPrivateIPs: false by default
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+
+	targets := []string{
+		"http://127.0.0.1:8080/sub",
+		"http://localhost:8080/sub",
+		"http://sub.localhost:8080/sub",
+		"http://internal.local:8080/sub",
+		"http://0.0.0.1:8080/sub",
+		"http://255.255.255.255:8080/sub",
+		"http://10.0.0.1:8080/sub",
+		"http://192.168.1.1:8080/sub",
+		"http://172.16.0.1:8080/sub",
+		"http://169.254.169.254/latest/meta-data",
+		"http://[::1]:8080/sub",
+		"ftp://example.com/test",
+	}
+
+	for _, target := range targets {
+		_, err := c.Get(ctx, target)
+		if err == nil {
+			t.Errorf("expected SSRF block for %s, but got nil error", target)
+		}
+	}
+}
+
+func TestSSRF_RedirectBlocked(t *testing.T) {
+	// 1. Direct unit test of safeCheckRedirect func
+	check := safeCheckRedirect(false, nil)
+	via := []*http.Request{{}}
+
+	blockedRedirects := []string{
+		"http://127.0.0.1:80/secret",
+		"http://localhost:80/secret",
+		"http://sub.localhost:80/secret",
+		"http://10.0.0.1:80/secret",
+		"http://192.168.1.1:80/secret",
+		"http://169.254.169.254/latest",
+		"http://[::1]:80/secret",
+		"ftp://example.com/file",
+	}
+
+	for _, target := range blockedRedirects {
+		req, err := http.NewRequest(http.MethodGet, target, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := check(req, via); err == nil {
+			t.Errorf("expected redirect to %s to be blocked, got nil", target)
+		} else if !errors.Is(err, ErrBlockedRedirect) {
+			t.Errorf("redirect to %s error = %v, want %v", target, err, ErrBlockedRedirect)
+		}
+	}
+
+	// 2. Integration test via http.Client with custom transport allowing initial hop
+	var redirectHandlerCalled atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		redirectHandlerCalled.Store(true)
+		http.Redirect(w, r, "http://127.0.0.1:9999/secret", http.StatusFound)
+	}))
+	defer srv.Close()
+
+	httpClient := &http.Client{
+		CheckRedirect: safeCheckRedirect(false, nil),
+	}
+	req, _ := http.NewRequest(http.MethodGet, srv.URL, nil)
+	_, err := httpClient.Do(req)
+	if err == nil {
+		t.Fatal("expected SSRF redirect error, got nil")
+	}
+	if !redirectHandlerCalled.Load() {
+		t.Fatal("expected mock server to be invoked before redirect")
+	}
+	if !strings.Contains(err.Error(), "redirect to private/loopback address blocked") {
+		t.Errorf("error = %q, expected redirect blocked mention", err)
+	}
+}
+
+func TestSSRF_UntrustedProxyBlocked(t *testing.T) {
+	// Attempt to configure untrusted private proxy when AllowPrivateIPs is false
+	_, err := New(Options{
+		Proxy:           "http://127.0.0.1:8080",
+		AllowPrivateIPs: false,
+	})
+	if err == nil {
+		t.Fatal("expected error for untrusted loopback proxy")
+	}
+
+	// Operator's explicitly trusted proxy is allowed
+	_, err = New(Options{
+		Proxy:           "http://127.0.0.1:8080",
+		TrustedProxy:    "http://127.0.0.1:8080",
+		AllowPrivateIPs: false,
+	})
+	if err != nil {
+		t.Fatalf("trusted proxy should be allowed: %v", err)
+	}
+}
+
+func TestSingleFlight_CollapsesConcurrentRequests(t *testing.T) {
+	var requestCount atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount.Add(1)
+		time.Sleep(50 * time.Millisecond) // simulate work
+		_, _ = w.Write([]byte("singleflight-result"))
+	}))
+	defer srv.Close()
+
+	c, _ := New(Options{AllowPrivateIPs: true, CacheTTL: -1}) // disable cache to isolate singleflight
+
+	concurrency := 8
+	var wg sync.WaitGroup
+	wg.Add(concurrency)
+
+	for i := 0; i < concurrency; i++ {
+		go func() {
+			defer wg.Done()
+			body, err := c.Get(context.Background(), srv.URL)
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+				return
+			}
+			if string(body) != "singleflight-result" {
+				t.Errorf("unexpected body: %q", string(body))
+			}
+		}()
+	}
+	wg.Wait()
+
+	if got := requestCount.Load(); got != 1 {
+		t.Errorf("singleflight requestCount = %d, want 1", got)
+	}
+}
+
+func TestFetchDirect_BodySizeLimit(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		chunk := make([]byte, 1<<20) // 1MB chunk
+		for i := 0; i < 12; i++ {    // write 12MB total
+			_, _ = w.Write(chunk)
+		}
+	}))
+	defer srv.Close()
+
+	c, err := New(Options{AllowPrivateIPs: true, CacheTTL: -1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := c.Get(context.Background(), srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(body) != 10<<20 {
+		t.Fatalf("expected body capped at 10MB (%d bytes), got %d", 10<<20, len(body))
+	}
+}
+
+func TestSSRF_AllowPrivateCIDR(t *testing.T) {
+	allow := []netip.Prefix{
+		netip.MustParsePrefix("100.106.251.111/32"),
+		netip.MustParsePrefix("fd7a:115c:a1e0::/48"),
+	}
+
+	// Allowlisted private targets pass URL validation; other private ones stay blocked.
+	for _, target := range []string{
+		"http://100.106.251.111:45865/sub",
+		"http://[fd7a:115c:a1e0::1]:8080/sub",
+	} {
+		if err := validateTargetURL(target, false, allow); err != nil {
+			t.Errorf("allowlisted target %s blocked: %v", target, err)
+		}
+	}
+	if err := validateTargetURL("http://100.106.251.112:45865/sub", false, allow); !errors.Is(err, ErrBlockedIP) {
+		t.Errorf("non-allowlisted private IP error = %v, want ErrBlockedIP", err)
+	}
+
+	// Redirects to allowlisted private IPs are permitted.
+	check := safeCheckRedirect(false, allow)
+	req, _ := http.NewRequest(http.MethodGet, "http://100.106.251.111:45865/next", nil)
+	via := []*http.Request{{}}
+	if err := check(req, via); err != nil {
+		t.Errorf("redirect to allowlisted IP blocked: %v", err)
+	}
+	req, _ = http.NewRequest(http.MethodGet, "http://127.0.0.1:80/secret", nil)
+	if err := check(req, via); !errors.Is(err, ErrBlockedRedirect) {
+		t.Errorf("redirect to unlisted loopback error = %v, want ErrBlockedRedirect", err)
+	}
+
+	// AllowPrivateIPs still disables the defense globally.
+	if err := validateTargetURL("http://10.0.0.1:80/x", true, nil); err != nil {
+		t.Errorf("allowPrivate=true blocked: %v", err)
 	}
 }

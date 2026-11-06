@@ -30,6 +30,9 @@ func parseHysteria1(uri string) (*proxy.Proxy, error) {
 	if auth == "" {
 		auth = q.Get("auth_str")
 	}
+	if auth == "" && u.User != nil {
+		auth = u.User.Username()
+	}
 	p.Set("auth-str", auth)
 
 	p.Set("up", q.Get("upmbps"))

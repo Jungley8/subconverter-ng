@@ -94,6 +94,10 @@ type Options struct {
 	// exclude-filter, so the client keeps filtering newly pulled nodes.
 	ProviderInclude string
 	ProviderExclude string
+
+	// ExcludeProtocols drops nodes matching any of these protocol names or
+	// aliases (e.g. "hysteria2", "tuic", "vless"). Maps to &exclude_protocol=...
+	ExcludeProtocols []string
 }
 
 // RenameRule is a compiled rename= entry: a regex pattern and its replacement.
@@ -170,6 +174,7 @@ type Result struct {
 	Duplicates        int      // nodes removed by dedup
 	DeprecatedDropped int      // nodes removed by filter-deprecated (fdn)
 	Filtered          int      // nodes removed by include/exclude remarks filters
+	ExcludedProtocols int      // nodes removed by exclude_protocol
 }
 
 // Content types per target family.
@@ -312,6 +317,9 @@ func unescapeUnicode(b []byte) []byte {
 // filterNodes drops nodes whose name matches any exclude_remarks regex, and —
 // when include_remarks is set — keeps only those matching at least one.
 func filterNodes(nodes []*proxy.Proxy, cfg *extconfig.Config) []*proxy.Proxy {
+	if cfg == nil {
+		return nodes
+	}
 	out := nodes[:0:0]
 	for _, n := range nodes {
 		if matchesAny(cfg.ExcludeRemarks, n.Name) {

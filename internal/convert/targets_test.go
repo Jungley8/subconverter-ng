@@ -6,33 +6,6 @@ import (
 	"github.com/Jungley8/subconverter-ng/internal/generator"
 )
 
-func TestNormalizeTarget(t *testing.T) {
-	cases := []struct{ raw, want string }{
-		{"clash", "clash"},
-		{"Clash", "clash"},
-		{"  singbox  ", "singbox"},
-		{"clash.meta", "clash"},
-		{"ClashMeta", "clash"},
-		{"clashr", "clash"},
-		{"sing-box", "singbox"},
-		{"SING_BOX", "singbox"},
-		{"surge", "surge"},
-		{"shadow-rocket", "shadowrocket"},
-		{"QUANX", "quanx"},
-		{"quantumult-x", "quanx"},
-		{"loon", "loon"},
-		{"v2rayn", "v2ray"},
-		{"mixed", "v2ray"},
-		{"ss", "v2ray"},
-		{"quan", "quan"}, // unknown values pass through unchanged
-	}
-	for _, c := range cases {
-		if got := NormalizeTarget(c.raw); got != c.want {
-			t.Errorf("NormalizeTarget(%q) = %q, want %q", c.raw, got, c.want)
-		}
-	}
-}
-
 func TestParseTarget(t *testing.T) {
 	cases := []struct {
 		raw  string

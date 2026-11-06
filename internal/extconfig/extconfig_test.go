@@ -15,6 +15,11 @@ custom_proxy_group=too-few-fields
 exclude_remarks=(到期|过期)
 exclude_remarks=[invalid(regex
 include_remarks=(HK|US)
+exclude_protocol=hy2,tuic
+exclude_protocols=wireguard
+exclude_type=vless
+filter_protocol=trojan
+filter_type=socks5
 enable_rule_generator=true
 overwrite_original_rules=true
 clash_rule_base=https://example.com/base.yml
@@ -68,6 +73,10 @@ func TestParse(t *testing.T) {
 	}
 	if len(cfg.RenameRules) != 2 || cfg.RenameRules[0] != "美国@US" || cfg.RenameRules[1] != `\[(.+?)\]@\1` {
 		t.Errorf("rename rules parsed wrong: %v", cfg.RenameRules)
+	}
+	if len(cfg.ExcludeProtocols) != 5 || cfg.ExcludeProtocols[0] != "hy2,tuic" || cfg.ExcludeProtocols[1] != "wireguard" ||
+		cfg.ExcludeProtocols[2] != "vless" || cfg.ExcludeProtocols[3] != "trojan" || cfg.ExcludeProtocols[4] != "socks5" {
+		t.Errorf("exclude protocols parsed wrong: %v", cfg.ExcludeProtocols)
 	}
 }
 

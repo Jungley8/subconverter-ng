@@ -32,6 +32,15 @@ func TestParseHysteria1(t *testing.T) {
 	if p.Name != "HY1" {
 		t.Errorf("name = %v", p.Name)
 	}
+
+	// test auth in userinfo
+	pUserinfo, err := parseHysteria1("hysteria://userauth@h.example.com:8443#HYUser")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pUserinfo.Clash["auth-str"] != "userauth" {
+		t.Errorf("userinfo auth-str = %v, want userauth", pUserinfo.Clash["auth-str"])
+	}
 }
 
 func TestParseSSR(t *testing.T) {

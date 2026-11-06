@@ -22,7 +22,7 @@ import (
 // ErrNoNodes is returned when a subscription fetched successfully but yielded no
 // usable nodes. It signals a subscription-content problem (empty sub, all lines
 // unparseable) rather than a gateway/fetch failure, so callers can respond with
-// a readable hint instead of a 502. Test with errors.Is.
+// a readable hint instead of a generic upstream-failure response. Test with errors.Is.
 var ErrNoNodes = errors.New("no usable nodes parsed from subscription(s)")
 
 // Fetcher is the subset of fetch.Client convert needs (kept as an interface for
@@ -113,14 +113,15 @@ func CompileRemarks(spec string) ([]*regexp.Regexp, error) {
 
 // Diagnostics captures non-fatal information about a conversion.
 type Diagnostics struct {
-	NodeCount    int
-	SkippedLines []string // subscription lines that did not parse into a node
-	EmptyGroups  []string // proxy-groups that matched no nodes (filled with DIRECT)
-	SkippedRules []string // ruleset entries dropped for an unsupported rule type
-	SkippedNodes []string // nodes the chosen target cannot render
-	Duplicates   int      // nodes removed by dedup (&dedup=true)
-	Deprecated   int      // nodes removed by filter-deprecated (&fdn=true)
-	Filtered     int      // nodes removed by include/exclude remarks filters
+	NodeCount         int
+	SkippedLines      []string // subscription lines that did not parse into a node
+	EmptyGroups       []string // proxy-groups that matched no nodes (filled with DIRECT)
+	SkippedRules      []string // ruleset entries dropped for an unsupported rule type
+	SkippedNodes      []string // nodes the chosen target cannot render
+	Duplicates        int      // nodes removed by dedup (&dedup=true)
+	Deprecated        int      // nodes removed by filter-deprecated (&fdn=true)
+	Filtered          int      // nodes removed by include/exclude remarks filters
+	ExcludedProtocols int      // nodes removed by protocol exclusion (&exclude_protocol=...)
 
 	// ContentType is the HTTP Content-Type the rendered output should be served
 	// with (varies by target: YAML for clash, JSON for sing-box, etc.).
@@ -285,6 +286,7 @@ func diagnosticsFor(result *generator.Result, skipped []string, userinfo string)
 		Duplicates:           result.Duplicates,
 		Deprecated:           result.DeprecatedDropped,
 		Filtered:             result.Filtered,
+		ExcludedProtocols:    result.ExcludedProtocols,
 		ContentType:          result.ContentType,
 		SubscriptionUserinfo: userinfo,
 	}
