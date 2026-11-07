@@ -221,6 +221,39 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 	if target == "" {
 		target = "clash"
 	}
+	// &template= renders a full sing-box config, so it pins the target. An
+	// explicitly conflicting target= is a user error — fail closed with a 400
+	// instead of silently overriding (CLI behaves the same way).
+	template := strings.TrimSpace(q.Get("template"))
+	if template != "" {
+		if explicit := q.Get("target"); explicit != "" && explicit != "singbox" && !strings.HasPrefix(explicit, "singbox/") {
+			http.Error(w, fmt.Sprintf("target=%s conflicts with template= (template output is always sing-box); drop the target param or use singbox", explicit), http.StatusBadRequest)
+			return
+		}
+		target = convert.TargetSingbox
+	}
+	// Early target validation: reject unknown names and malformed versions
+	// (e.g. "singbox/abc") before any fetch work happens.
+	name, ver, err := convert.ParseTarget(target)
+	if err != nil {
+		http.Error(w, "invalid target: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// &source=<preset> selects the fetch User-Agent from a named client preset
+	// (clash.meta, v2ray, singbox, ...), useful when the upstream subscription
+	// serves different content per client UA. Explicit &ua= still wins.
+	src := strings.TrimSpace(q.Get("source"))
+	var presetUA string
+	if src != "" {
+		ua, ok := fetch.UAPreset(src)
+		if !ok {
+			http.Error(w, fmt.Sprintf("unsupported source %q (supported: %s)", src, strings.Join(fetch.UAPresetNames(), ", ")), http.StatusBadRequest)
+			return
+		}
+		presetUA = ua
+	}
+
 	rawURL := q.Get("url")
 	if rawURL == "" {
 		http.Error(w, "missing required parameter: url", http.StatusBadRequest)
@@ -238,7 +271,12 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 	noCache := boolParam(q.Get("nocache"), false)
 
 	// Build a fetch client, allowing a per-request &proxy= override of the
-	// configured upstream proxy.
+	// configured upstream proxy. The shared cache is injected so cached
+	// ruleset/subscription fetches persist across requests (keyed by UA+URL;
+	// per-request proxy differences are intentionally ignored).
+	// UA precedence: explicit &ua= > &source= preset > configured user_agent.
+	// An empty result keeps current behaviour: fetch.New fills in its default.
+	resolvedUA := firstNonEmpty(strings.TrimSpace(q.Get("ua")), presetUA, s.cfg.Fetch.UserAgent)
 	userProxy := q.Get("proxy")
 	if userProxy != "" && !s.cfg.Fetch.AllowPrivateIPs {
 		if err := fetch.ValidateProxyURL(userProxy, false, s.cfg.Fetch.PrivateCIDRs()); err != nil {
@@ -248,7 +286,7 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 	}
 
 	opts := fetch.Options{
-		UserAgent:         s.cfg.Fetch.UserAgent,
+		UserAgent:         resolvedUA,
 		Proxy:             firstNonEmpty(userProxy, s.cfg.Fetch.Proxy),
 		TrustedProxy:      s.cfg.Fetch.Proxy,
 		FlareSolverrURL:   s.cfg.Fetch.FlareSolverrURL,
@@ -277,10 +315,55 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 		insertURLs = s.cfg.Insert.URLs
 	}
 
+	// &include= / &exclude= (aliases include_remarks / exclude_remarks):
+	// per-request node-name regex filters. When present they override the
+	// external config's include_remarks / exclude_remarks. The spec is ONE
+	// regex — alternation stays inside it, e.g. (?i)(弃用)|(到期)|(官网).
+	includeRe, err := convert.CompileRemarks(firstNonEmpty(q.Get("include"), q.Get("include_remarks")))
+	if err != nil {
+		writeUserError(w, err)
+		return
+	}
+	excludeRe, err := convert.CompileRemarks(firstNonEmpty(q.Get("exclude"), q.Get("exclude_remarks")))
+	if err != nil {
+		writeUserError(w, err)
+		return
+	}
+
+	// &provider=true (target=clash only): emit proxy-providers instead of
+	// inlined proxies. Fail closed on conflicting params instead of silently
+	// overriding: template= renders sing-box JSON, and an explicitly non-clash
+	// target= cannot carry providers.
+	provider := boolParam(q.Get("provider"), false)
+	if provider {
+		if template != "" {
+			http.Error(w, "provider=true conflicts with template= (template output is always sing-box)", http.StatusBadRequest)
+			return
+		}
+		if explicit := q.Get("target"); explicit != "" && explicit != "clash" && !strings.HasPrefix(explicit, "clash/") {
+			http.Error(w, fmt.Sprintf("provider=true is only available with target=clash (got target=%s)", explicit), http.StatusBadRequest)
+			return
+		}
+		target = convert.TargetClash
+	}
+	// &interval=: proxy-provider update interval in seconds (provider mode only).
+	providerInterval := 0
+	if provider {
+		if v := q.Get("interval"); v != "" {
+			n, err := strconv.Atoi(v)
+			if err != nil || n <= 0 {
+				http.Error(w, fmt.Sprintf("invalid interval %q: want a positive integer of seconds", v), http.StatusBadRequest)
+				return
+			}
+			providerInterval = n
+		}
+	}
+
 	req := convert.Request{
 		Target:        target,
 		SubURLs:       splitURLs(rawURL),
 		ConfigURL:     firstNonEmpty(q.Get("config"), s.cfg.DefaultConfigURL),
+		Template:      template,
 		InsertURLs:    insertURLs,
 		InsertPrepend: s.cfg.Insert.Prepend,
 		Gen: generator.Options{
@@ -303,6 +386,15 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 		AddEmoji:    boolTri(q.Get("add_emoji")),
 		RemoveEmoji: boolTri(q.Get("remove_emoji")),
 		NoCache:     noCache,
+
+		// Per-request remarks filters (&include= / &exclude=).
+		IncludeRemarks: includeRe,
+		ExcludeRemarks: excludeRe,
+
+		// Provider mode (&provider=true) + provider fetch params.
+		Provider:         provider,
+		ProviderInterval: providerInterval,
+		UserAgent:        resolvedUA,
 	}
 
 	out, diag, err := convert.Run(r.Context(), client, req)
@@ -311,17 +403,30 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 		writeUserError(w, err)
 		return
 	}
+	// Log the canonical target name, with the major.minor version when the
+	// client asked for one (e.g. "singbox/1.3").
+	display := name
+	if ver != nil {
+		display = fmt.Sprintf("%s/%d.%d", name, ver.Major, ver.Minor)
+	}
 	slog.Info("converted subscription",
-		"target", convert.NormalizeTarget(target),
+		"target", display,
 		"nodes", diag.NodeCount,
 		"unparsed_lines", len(diag.SkippedLines),
 		"duplicates", diag.Duplicates,
 		"deprecated", diag.Deprecated,
+		"filtered_remarks", diag.Filtered,
 		"excluded_protocols", diag.ExcludedProtocols,
 		"unsupported_nodes", len(diag.SkippedNodes),
 		"empty_groups", len(diag.EmptyGroups),
 		"dropped_rules", len(diag.SkippedRules),
 	)
+	if len(diag.SkippedRules) > 0 {
+		slog.Info("dropped rules (unsupported type)", "rules", strings.Join(diag.SkippedRules, ", "))
+	}
+	if len(diag.SkippedNodes) > 0 {
+		slog.Info("nodes unsupported by target", "target", display, "nodes", strings.Join(diag.SkippedNodes, ", "))
+	}
 
 	// Content-Type varies by target (YAML for clash, JSON for sing-box, plain
 	// text for surge/quanx/loon/v2ray). The generator reports the right one.

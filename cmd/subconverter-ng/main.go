@@ -186,11 +186,13 @@ func cmdConvert(args []string) {
 	fs := flag.NewFlagSet("convert", flag.ExitOnError)
 	url := fs.String("url", "", "subscription URL(s), file path, or '-' for stdin, '|'-separated (required)")
 	cfgURL := fs.String("config", "", "external INI config URL, file path, or '-' for stdin")
+	template := fs.String("template", "", "render into a sing-box template: built-in name (momo) or http(s) URL")
 	target := fs.String("target", "clash", "output target: clash|singbox|surge|shadowrocket|quanx|loon|v2ray")
 	out := fs.String("o", "", "output file (default: stdout)")
 	proxy := fs.String("proxy", "", "upstream proxy URL (http/socks5)")
 	flaresolverr := fs.String("flaresolverr", "", "FlareSolverr endpoint, e.g. http://127.0.0.1:8191/v1")
 	ua := fs.String("ua", "", "User-Agent for fetches")
+	source := fs.String("source", "", "source format preset for fetch UA: clash.meta|v2ray|singbox|surge|shadowrocket|quanx|loon")
 	sortNodes := fs.Bool("sort", false, "sort nodes by name")
 	udp := fs.Bool("udp", false, "force udp on all nodes")
 	tfo := fs.Bool("tfo", false, "enable tcp-fast-open")
@@ -206,6 +208,10 @@ func cmdConvert(args []string) {
 	tailscale := fs.Bool("tailscale", false, "prepend Tailscale DIRECT rules (100.64.0.0/10, fd7a:115c:a1e0::/48)")
 	insert := fs.String("insert", "", "insert_url: extra node source URL(s), '|'-separated, merged into the output")
 	insertPrepend := fs.Bool("insert-prepend", true, "place inserted nodes before subscription nodes")
+	includeRe := fs.String("include", "", "keep only nodes whose name matches this regex (overrides config include_remarks)")
+	excludeRe := fs.String("exclude", "", "drop nodes whose name matches this regex (overrides config exclude_remarks)")
+	provider := fs.Bool("provider", false, "clash proxy-provider mode: subscriptions become mihomo proxy-providers (client fetches nodes itself)")
+	providerInterval := fs.Int("interval", 0, "proxy-provider update interval in seconds (0=default 86400, provider mode only)")
 	var excludeProtocols stringsFlag
 	fs.Var(&excludeProtocols, "exclude-protocol", "exclude nodes by protocol or type (e.g. hysteria2, tuic)")
 	fs.Var(&excludeProtocols, "exclude-protocols", "alias for --exclude-protocol")
@@ -225,8 +231,48 @@ func cmdConvert(args []string) {
 		fatal("--url is required")
 	}
 
+	// --template always renders sing-box JSON. A conflicting --target given
+	// explicitly is a user error (matches the server's 400 behavior); when
+	// --target was left at its default it is silently pinned to singbox.
+	if *template != "" && *target != "singbox" {
+		explicitTarget := false
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name == "target" {
+				explicitTarget = true
+			}
+		})
+		if explicitTarget {
+			fatal("--target %s conflicts with --template (template output is always sing-box); drop --target or use singbox", *target)
+		}
+		*target = "singbox"
+	}
+
+	// --provider turns target=clash into proxy-provider output. Conflicts fail
+	// closed like the server does; a default --target is pinned to clash.
+	if *provider {
+		if *template != "" {
+			fatal("--provider conflicts with --template (template output is always sing-box)")
+		}
+		if *target != "clash" {
+			explicitTarget := false
+			fs.Visit(func(f *flag.Flag) {
+				if f.Name == "target" {
+					explicitTarget = true
+				}
+			})
+			if explicitTarget {
+				fatal("--provider is only available with target=clash (got --target %s)", *target)
+			}
+			*target = "clash"
+		}
+	}
+
+	resolvedUA, err := resolveUserAgent(*ua, *source)
+	if err != nil {
+		fatal("%v", err)
+	}
 	remoteClient, err := fetch.New(fetch.Options{
-		UserAgent:       *ua,
+		UserAgent:       resolvedUA,
 		Proxy:           *proxy,
 		FlareSolverrURL: *flaresolverr,
 		Timeout:         *timeout,
@@ -242,6 +288,7 @@ func cmdConvert(args []string) {
 		Target:        *target,
 		SubURLs:       splitPipe(*url),
 		ConfigURL:     *cfgURL,
+		Template:      *template,
 		InsertURLs:    splitPipe(*insert),
 		InsertPrepend: *insertPrepend,
 		Gen: generator.Options{
@@ -257,6 +304,16 @@ func cmdConvert(args []string) {
 		Emoji:       triFromString(*emoji),
 		AddEmoji:    triFromString(*addEmoji),
 		RemoveEmoji: triFromString(*removeEmoji),
+
+		Provider:         *provider,
+		ProviderInterval: *providerInterval,
+		UserAgent:        resolvedUA,
+	}
+	if req.IncludeRemarks, err = convert.CompileRemarks(*includeRe); err != nil {
+		fatal("%v", err)
+	}
+	if req.ExcludeRemarks, err = convert.CompileRemarks(*excludeRe); err != nil {
+		fatal("%v", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
@@ -265,8 +322,8 @@ func cmdConvert(args []string) {
 	if err != nil {
 		fatal("convert: %v", config.RedactError(err))
 	}
-	fmt.Fprintf(os.Stderr, "ok: %d nodes, %d unparsed lines, %d dup, %d deprecated, %d excluded by protocol, %d nodes unsupported by target, %d empty groups, %d rules dropped (unsupported type)\n",
-		diag.NodeCount, len(diag.SkippedLines), diag.Duplicates, diag.Deprecated, diag.ExcludedProtocols, len(diag.SkippedNodes), len(diag.EmptyGroups), len(diag.SkippedRules))
+	fmt.Fprintf(os.Stderr, "ok: %d nodes, %d unparsed lines, %d dup, %d deprecated, %d filtered (remarks), %d excluded by protocol, %d nodes unsupported by target, %d empty groups, %d rules dropped (unsupported type)\n",
+		diag.NodeCount, len(diag.SkippedLines), diag.Duplicates, diag.Deprecated, diag.Filtered, diag.ExcludedProtocols, len(diag.SkippedNodes), len(diag.EmptyGroups), len(diag.SkippedRules))
 	for _, r := range diag.SkippedRules {
 		fmt.Fprintf(os.Stderr, "  dropped rule (unsupported type): %s\n", r)
 	}
@@ -284,6 +341,25 @@ func cmdConvert(args []string) {
 		fatal("write %s: %v", *out, err)
 	}
 	fmt.Fprintf(os.Stderr, "wrote %s\n", *out)
+}
+
+// resolveUserAgent applies the UA precedence: explicit --ua wins over the
+// --source preset; both empty leaves the UA unset so fetch.New fills in its
+// built-in default. An unknown source preset is an error.
+func resolveUserAgent(ua, source string) (string, error) {
+	ua = strings.TrimSpace(ua)
+	source = strings.TrimSpace(source)
+	if ua != "" {
+		return ua, nil
+	}
+	if source != "" {
+		u, ok := fetch.UAPreset(source)
+		if !ok {
+			return "", fmt.Errorf("unsupported source %q (supported: %s)", source, strings.Join(fetch.UAPresetNames(), ", "))
+		}
+		return u, nil
+	}
+	return "", nil
 }
 
 // triFromString parses an optional bool flag into a tribool (nil when empty).

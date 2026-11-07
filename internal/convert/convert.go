@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -51,7 +52,21 @@ type Request struct {
 	Target    string   // currently only "clash"
 	SubURLs   []string // subscription URLs (the &url= param, split on |)
 	ConfigURL string   // external INI config (the &config= param)
-	Gen       generator.Options
+
+	// Template, when non-empty, renders the nodes into a full sing-box JSON
+	// template (a built-in name such as "momo", or an http(s) URL) instead of
+	// generating a bare config. See generator.GenerateSingboxTemplate.
+	Template string
+	Gen      generator.Options
+
+	// Provider switches target=clash to proxy-provider output (&provider=true):
+	// http(s) subscription URLs become mihomo proxy-providers the client
+	// refreshes itself; only share-link entries are parsed and inlined locally.
+	// ProviderInterval is the providers' update interval in seconds (0 = 86400).
+	// UserAgent is the UA the providers should fetch with (&ua= / &source=).
+	Provider         bool
+	ProviderInterval int
+	UserAgent        string
 
 	// Emoji intent from URL params, as tribools (nil = unspecified). Emoji is
 	// the subconverter shortcut: when set it drives add_emoji and forces
@@ -71,6 +86,29 @@ type Request struct {
 	// InsertPrepend places these nodes before the subscription nodes when true.
 	InsertURLs    []string
 	InsertPrepend bool
+
+	// IncludeRemarks / ExcludeRemarks are per-request node-name filters (the
+	// &include= / &exclude= URL params, or CLI --include / --exclude). When set
+	// they OVERRIDE the external config's include_remarks / exclude_remarks,
+	// matching original subconverter semantics. Use CompileRemarks to build them.
+	IncludeRemarks []*regexp.Regexp
+	ExcludeRemarks []*regexp.Regexp
+}
+
+// CompileRemarks turns one include/exclude spec into a single compiled regex.
+// An empty spec yields nil (no filtering). The spec is matched as ONE regex:
+// alternation belongs inside it, e.g. "(?i)(弃用)|(到期)" — no splitting on "|",
+// which would break regexes whose groups contain alternation.
+func CompileRemarks(spec string) ([]*regexp.Regexp, error) {
+	spec = strings.TrimSpace(spec)
+	if spec == "" {
+		return nil, nil
+	}
+	re, err := regexp.Compile(spec)
+	if err != nil {
+		return nil, fmt.Errorf("invalid remarks regex %q: %w", spec, err)
+	}
+	return []*regexp.Regexp{re}, nil
 }
 
 // Diagnostics captures non-fatal information about a conversion.
@@ -82,6 +120,7 @@ type Diagnostics struct {
 	SkippedNodes      []string // nodes the chosen target cannot render
 	Duplicates        int      // nodes removed by dedup (&dedup=true)
 	Deprecated        int      // nodes removed by filter-deprecated (&fdn=true)
+	Filtered          int      // nodes removed by include/exclude remarks filters
 	ExcludedProtocols int      // nodes removed by protocol exclusion (&exclude_protocol=...)
 
 	// ContentType is the HTTP Content-Type the rendered output should be served
@@ -96,12 +135,77 @@ type Diagnostics struct {
 
 // Run performs the conversion and returns the rendered config bytes.
 func Run(ctx context.Context, f Fetcher, req Request) ([]byte, *Diagnostics, error) {
-	target := NormalizeTarget(req.Target)
-	if !supportedTargets[target] {
-		return nil, nil, fmt.Errorf("unsupported target %q (supported: %s)", req.Target, supportedList())
+	name, ver, err := ParseTarget(req.Target)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !supportedTargets[name] {
+		return nil, nil, fmt.Errorf("unsupported target %q (supported: %s)", describeTarget(name, ver), supportedList())
 	}
 	if len(req.SubURLs) == 0 {
 		return nil, nil, fmt.Errorf("no subscription url provided")
+	}
+
+	var cfg *extconfig.Config
+	if req.ConfigURL != "" {
+		data, err := f.Get(ctx, req.ConfigURL)
+		if err != nil {
+			return nil, nil, fmt.Errorf("fetch external config: %w", err)
+		}
+		cfg = extconfig.Parse(data)
+	} else {
+		cfg = &extconfig.Config{EnableRuleGenerator: true}
+	}
+
+	// Provider mode (&provider=true): delegate node fetching to the mihomo
+	// client. The server never touches the subscription payloads — each http(s)
+	// url= entry becomes a proxy-provider; share-link entries are parsed and
+	// inlined as local nodes.
+	if req.Provider {
+		if name != "clash" {
+			return nil, nil, fmt.Errorf("provider mode is only available with target=clash (got %s)", describeTarget(name, ver))
+		}
+		var subs, links []string
+		for _, u := range req.SubURLs {
+			if parser.IsShareLink(u) {
+				links = append(links, u)
+			} else {
+				subs = append(subs, u)
+			}
+		}
+		if len(subs) == 0 {
+			return nil, nil, fmt.Errorf("provider mode needs at least one http(s) subscription url")
+		}
+		var localNodes []*proxy.Proxy
+		var skipped []string
+		for _, l := range links {
+			ns, sk, err := parser.Parse([]byte(l))
+			if err != nil {
+				return nil, nil, fmt.Errorf("parse local node link: %w", err)
+			}
+			localNodes = append(localNodes, ns...)
+			skipped = append(skipped, sk...)
+		}
+		gen := req.Gen
+		gen.TargetVersion = ver
+		gen.ProviderMode = true
+		gen.ProviderURLs = subs
+		gen.ProviderUA = req.UserAgent
+		gen.ProviderInterval = req.ProviderInterval
+		if gen.ProviderInterval <= 0 {
+			gen.ProviderInterval = 86400
+		}
+		if len(req.IncludeRemarks) > 0 {
+			gen.ProviderInclude = req.IncludeRemarks[0].String()
+		}
+		if len(req.ExcludeRemarks) > 0 {
+			gen.ProviderExclude = req.ExcludeRemarks[0].String()
+		}
+		result, err := generator.GenerateClashProvider(ctx, localNodes, cfg, f, gen)
+		if err != nil {
+			return nil, nil, err
+		}
+		return result.Output, diagnosticsFor(result, skipped, ""), nil
 	}
 
 	nodes, skipped, userinfo, err := fetchAndParseAll(ctx, f, req.SubURLs)
@@ -131,19 +235,17 @@ func Run(ctx context.Context, f Fetcher, req Request) ([]byte, *Diagnostics, err
 		return nil, nil, fmt.Errorf("%w; %d lines skipped%s", ErrNoNodes, len(skipped), skippedHint(skipped))
 	}
 
-	var cfg *extconfig.Config
-	if req.ConfigURL != "" {
-		data, err := f.Get(ctx, req.ConfigURL)
-		if err != nil {
-			return nil, nil, fmt.Errorf("fetch external config: %w", err)
-		}
-		cfg = extconfig.Parse(data)
-	} else {
-		cfg = &extconfig.Config{EnableRuleGenerator: true}
-	}
-
 	gen := req.Gen
+	gen.TargetVersion = ver
 	gen.RenameRules = generator.CompileRenameRules(cfg.RenameRules)
+	// Per-request &include= / &exclude= override the external config's
+	// include_remarks / exclude_remarks (original subconverter semantics).
+	if req.IncludeRemarks != nil {
+		cfg.IncludeRemarks = req.IncludeRemarks
+	}
+	if req.ExcludeRemarks != nil {
+		cfg.ExcludeRemarks = req.ExcludeRemarks
+	}
 	gen.RemoveEmoji, gen.AddEmoji = resolveEmoji(cfg, req)
 	if gen.AddEmoji {
 		if len(cfg.EmojiRules) > 0 {
@@ -153,11 +255,29 @@ func Run(ctx context.Context, f Fetcher, req Request) ([]byte, *Diagnostics, err
 		}
 	}
 
-	result, err := render(ctx, target, nodes, cfg, f, gen)
+	if req.Template != "" {
+		tmpl, err := resolveTemplate(ctx, f, req.Template)
+		if err != nil {
+			return nil, nil, err
+		}
+		result, err := generator.GenerateSingboxTemplate(ctx, nodes, cfg, tmpl, gen)
+		if err != nil {
+			return nil, nil, err
+		}
+		return result.Output, diagnosticsFor(result, skipped, userinfo), nil
+	}
+
+	result, err := render(ctx, name, nodes, cfg, f, gen)
 	if err != nil {
 		return nil, nil, err
 	}
-	return result.Output, &Diagnostics{
+	return result.Output, diagnosticsFor(result, skipped, userinfo), nil
+}
+
+// diagnosticsFor assembles the Diagnostics returned alongside a rendered config,
+// shared by the regular and template render paths.
+func diagnosticsFor(result *generator.Result, skipped []string, userinfo string) *Diagnostics {
+	return &Diagnostics{
 		NodeCount:            result.NodeCount,
 		SkippedLines:         skipped,
 		EmptyGroups:          result.EmptyGroups,
@@ -165,10 +285,24 @@ func Run(ctx context.Context, f Fetcher, req Request) ([]byte, *Diagnostics, err
 		SkippedNodes:         result.SkippedNodes,
 		Duplicates:           result.Duplicates,
 		Deprecated:           result.DeprecatedDropped,
+		Filtered:             result.Filtered,
 		ExcludedProtocols:    result.ExcludedProtocols,
 		ContentType:          result.ContentType,
 		SubscriptionUserinfo: userinfo,
-	}, nil
+	}
+}
+
+// resolveTemplate loads the &template= value: an http(s) URL is fetched, any
+// other value must name a built-in template (e.g. "momo").
+func resolveTemplate(ctx context.Context, f Fetcher, spec string) ([]byte, error) {
+	spec = strings.TrimSpace(spec)
+	if strings.HasPrefix(spec, "http://") || strings.HasPrefix(spec, "https://") {
+		return f.Get(ctx, spec)
+	}
+	if b, ok := generator.BuiltinTemplate(spec); ok {
+		return b, nil
+	}
+	return nil, fmt.Errorf("unknown template %q (built-in: %s)", spec, strings.Join(generator.BuiltinTemplateNames(), ", "))
 }
 
 // resolveEmoji decides remove/add emoji flags using subconverter's precedence:

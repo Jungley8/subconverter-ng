@@ -234,6 +234,35 @@ func TestExpandInlineRule(t *testing.T) {
 	}
 }
 
+func TestParseInlineRuleParams(t *testing.T) {
+	// Parameterised geo/IP types: value is the second field, known trailing
+	// parameters land in Flag, junk tokens (legacy "policy" markers) are dropped.
+	cases := []struct {
+		body  string
+		group string
+		want  Rule
+	}{
+		{"GEOIP,CN", "G", Rule{Type: "GEOIP", Value: "CN", Group: "G"}},
+		{"GEOIP,PRIVATE,policy,no-resolve", "G", Rule{Type: "GEOIP", Value: "PRIVATE", Group: "G", Flag: "no-resolve"}},
+		{"GEOIP,CN,no-resolve", "G", Rule{Type: "GEOIP", Value: "CN", Group: "G", Flag: "no-resolve"}},
+		{"IP-CIDR,1.2.3.0/24,no-resolve,src", "G", Rule{Type: "IP-CIDR", Value: "1.2.3.0/24", Group: "G", Flag: "no-resolve,src"}},
+		{"DST-PORT,443", "G", Rule{Type: "DST-PORT", Value: "443", Group: "G"}},
+		// Non-parameterised types keep the legacy verbatim body as Value.
+		{"DOMAIN-SUFFIX,a,b", "G", Rule{Type: "DOMAIN-SUFFIX", Value: "a,b", Group: "G"}},
+	}
+	for _, c := range cases {
+		got, ok := parseInlineRule(c.body, c.group)
+		if !ok || got != c.want {
+			t.Errorf("parseInlineRule(%q) = %+v,%v, want %+v", c.body, got, ok, c.want)
+		}
+	}
+	// The clash line re-emits the parameter after the group.
+	r, _ := parseInlineRule("GEOIP,PRIVATE,policy,no-resolve", "G")
+	if line, ok := formatClashRule(r); !ok || line != "GEOIP,PRIVATE,G,no-resolve" {
+		t.Errorf("formatClashRule = %q,%v, want GEOIP,PRIVATE,G,no-resolve", line, ok)
+	}
+}
+
 func TestGenerateClash_DefaultBase(t *testing.T) {
 	cfg := &extconfig.Config{
 		EnableRuleGenerator: true,
