@@ -18,6 +18,7 @@
 
 - ✅ **接口兼容**：`/sub?target=clash&url=...&config=...`，老客户端无需改动。
 - ✅ **全协议支持**：Shadowsocks、ShadowsocksR、VMess、VLESS（含 Reality / XTLS-Vision）、Trojan、Hysteria（v1/v2）、TUIC v5、AnyTLS、SOCKS5、**WireGuard**。
+- ✅ **全格式订阅源解析**：自动识别并解析 Clash YAML、sing-box JSON、Surge conf 以及 Base64 分享链接列表，原生兼容 Hiddify 等 sing-box 客户端订阅。
 - ✅ **内置 Web 界面与订阅管理**：单个二进制内嵌，浏览器访问根路径即可使用。提供可视化订阅转换、节点参数勾选、本地订阅库管理（到期时间预警、流量重置日、月均开销折算、批量一键转换、JSON 备份恢复），数据仅保存在浏览器本地，保护隐私安全。
 - ✅ **多输出 target**：`clash`（Clash.Meta / mihomo）、`singbox`、`surge`、`shadowrocket`、`quanx`、`loon`、`v2ray`/`mixed`。
 - ✅ **安全与纵深防御**：物理连接层防御 SSRF 与 DNS Rebinding（可选 `allow_private_cidrs` 精确放行自有内网）；日志与响应中机场 Token 强制脱敏（Token Redaction）；转换失败严格返回 HTTP 424/422，杜绝返回 200 导致客户端有效配置被覆写（防订阅投毒），且错误正文不会被 Cloudflare 等反向代理的 5xx 页面遮挡。

@@ -18,6 +18,7 @@
 
 - ✅ **Drop-in compatibility**: `/sub?target=clash&url=...&config=...` keeps existing client setups working.
 - ✅ **Full modern protocol support**: Shadowsocks, ShadowsocksR, VMess, VLESS (Reality / XTLS-Vision), Trojan, Hysteria (v1/v2), TUIC v5, AnyTLS, SOCKS5, **WireGuard**.
+- ✅ **Full subscription source parsing**: auto-detects and decodes Clash YAML, sing-box JSON, Surge conf, and Base64 share-link lists; natively compatible with Hiddify and other sing-box based subscriptions.
 - ✅ **Built-in Web UI & Subscription Manager**: Bundled into the binary. Open the root URL to generate configs visually and manage subscriptions locally (expiry countdown, traffic reset day, monthly expense estimate, batch conversion, JSON backup/restore). Data stays in local storage.
 - ✅ **Multiple output targets**: `clash` (Clash.Meta / mihomo), `singbox`, `surge`, `shadowrocket`, `quanx`, `loon`, `v2ray`/`mixed`.
 - ✅ **Zero-trust security defense**: Network-level SSRF defense with DNS rebinding protection (`allow_private_cidrs` can allow specific internal hosts). Mandatory credential redaction in logs and responses. Strict HTTP 424/422 responses on conversion failures to prevent client config poisoning, and the error body survives reverse proxies such as Cloudflare that replace 5xx pages.
