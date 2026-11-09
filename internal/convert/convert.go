@@ -63,7 +63,7 @@ type Request struct {
 	// http(s) subscription URLs become mihomo proxy-providers the client
 	// refreshes itself; only share-link entries are parsed and inlined locally.
 	// ProviderInterval is the providers' update interval in seconds (0 = 86400).
-	// UserAgent is the UA the providers should fetch with (&ua= / &source=).
+	// UserAgent is the UA the providers should fetch with (&ua=).
 	Provider         bool
 	ProviderInterval int
 	UserAgent        string
@@ -293,7 +293,8 @@ func diagnosticsFor(result *generator.Result, skipped []string, userinfo string)
 }
 
 // resolveTemplate loads the &template= value: an http(s) URL is fetched, any
-// other value must name a built-in template (e.g. "momo").
+// other value must name a built-in template read from the templates/ directory
+// (e.g. "momo" -> templates/momo.json).
 func resolveTemplate(ctx context.Context, f Fetcher, spec string) ([]byte, error) {
 	spec = strings.TrimSpace(spec)
 	if strings.HasPrefix(spec, "http://") || strings.HasPrefix(spec, "https://") {
@@ -301,6 +302,9 @@ func resolveTemplate(ctx context.Context, f Fetcher, spec string) ([]byte, error
 	}
 	if b, ok := generator.BuiltinTemplate(spec); ok {
 		return b, nil
+	}
+	if generator.IsBuiltinTemplate(spec) {
+		return nil, fmt.Errorf("built-in template %q not found on disk (expected under templates/); mount or restore the file, or use an http(s) URL", spec)
 	}
 	return nil, fmt.Errorf("unknown template %q (built-in: %s)", spec, strings.Join(generator.BuiltinTemplateNames(), ", "))
 }
