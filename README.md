@@ -28,8 +28,8 @@
 - ✅ **规则集与外部配置**：解析 subconverter INI 外部配置（`ruleset=` / `custom_proxy_group=` / `exclude_remarks` / `clash_rule_base`），兼容 ACL4SSR 规则与 rule-providers 模式（`expand=false`）。
 - ✅ **两种工作形态**：HTTP 服务守护进程 + CLI 单次离线转换，单静态二进制。
 - ✅ **软路由多架构支持**：提供 Linux、macOS、Windows 以及 OpenWrt 路由器（MIPS / MIPSLE / ARMv7）预编译包。
-- ✅ **按请求指定订阅源格式与 UA**：`&source=` 预设 / `&ua=` 自定义覆盖抓取 UA；`target` 支持 `name/版本`（如 `singbox/1.3`，按版本门控剔除老内核不支持的协议节点，并切换现代 schema 输出）。
-- ✅ **sing-box 模板渲染**：`&template=momo`（OpenWrt Momo 全套入站）或任意 http(s) JSON 模板。
+- ✅ **按请求指定抓取 UA**：`&ua=` 自定义覆盖抓取 UA（Web UI 提供 UA 预设下拉自动回填）；`target` 支持 `name/版本`（如 `singbox/1.3`，按版本门控剔除老内核不支持的协议节点，并切换现代 schema 输出）。
+- ✅ **sing-box 模板渲染**：`&template=momo`（OpenWrt Momo 全套入站）或任意 http(s) JSON 模板；内置模板存于 `templates/` 目录，可热更新或 Docker 挂载替换（不打包进二进制）。
 - ✅ **节点名过滤**：`&include=` / `&exclude=` 正则过滤（provider 模式下映射为客户端 `filter` / `exclude-filter` 持续过滤）。
 - ✅ **Clash proxy-provider 输出**：`&provider=true` 生成 `proxy-providers` 骨架，客户端自行拉取与更新节点。
 
@@ -115,8 +115,7 @@ docker compose up -d
 | `filename` `interval` | 下载文件名 / 客户端自动更新间隔 |
 | `nocache` `flushcache` | 绕过 / 清空缓存 |
 | `proxy` | 本次请求的上游代理 |
-| `source` | 指定订阅源格式预设，映射抓取 UA（扩展参数） |
-| `ua` | 按请求覆盖抓取 UA（扩展参数） |
+| `ua` | 按请求覆盖抓取 UA（扩展参数；Web UI 提供 UA 预设下拉自动回填） |
 
 ## 解决访问限制
 

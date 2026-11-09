@@ -240,20 +240,6 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// &source=<preset> selects the fetch User-Agent from a named client preset
-	// (clash.meta, v2ray, singbox, ...), useful when the upstream subscription
-	// serves different content per client UA. Explicit &ua= still wins.
-	src := strings.TrimSpace(q.Get("source"))
-	var presetUA string
-	if src != "" {
-		ua, ok := fetch.UAPreset(src)
-		if !ok {
-			http.Error(w, fmt.Sprintf("unsupported source %q (supported: %s)", src, strings.Join(fetch.UAPresetNames(), ", ")), http.StatusBadRequest)
-			return
-		}
-		presetUA = ua
-	}
-
 	rawURL := q.Get("url")
 	if rawURL == "" {
 		http.Error(w, "missing required parameter: url", http.StatusBadRequest)
@@ -274,9 +260,9 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 	// configured upstream proxy. The shared cache is injected so cached
 	// ruleset/subscription fetches persist across requests (keyed by UA+URL;
 	// per-request proxy differences are intentionally ignored).
-	// UA precedence: explicit &ua= > &source= preset > configured user_agent.
-	// An empty result keeps current behaviour: fetch.New fills in its default.
-	resolvedUA := firstNonEmpty(strings.TrimSpace(q.Get("ua")), presetUA, s.cfg.Fetch.UserAgent)
+	// UA precedence: explicit &ua= > configured user_agent. An empty result
+	// keeps current behaviour: fetch.New fills in its default.
+	resolvedUA := firstNonEmpty(strings.TrimSpace(q.Get("ua")), s.cfg.Fetch.UserAgent)
 	userProxy := q.Get("proxy")
 	if userProxy != "" && !s.cfg.Fetch.AllowPrivateIPs {
 		if err := fetch.ValidateProxyURL(userProxy, false, s.cfg.Fetch.PrivateCIDRs()); err != nil {

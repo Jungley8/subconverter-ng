@@ -186,13 +186,12 @@ func cmdConvert(args []string) {
 	fs := flag.NewFlagSet("convert", flag.ExitOnError)
 	url := fs.String("url", "", "subscription URL(s), file path, or '-' for stdin, '|'-separated (required)")
 	cfgURL := fs.String("config", "", "external INI config URL, file path, or '-' for stdin")
-	template := fs.String("template", "", "render into a sing-box template: built-in name (momo) or http(s) URL")
+	template := fs.String("template", "", "render into a sing-box template: built-in name (momo, read from templates/) or http(s) URL")
 	target := fs.String("target", "clash", "output target: clash|singbox|surge|shadowrocket|quanx|loon|v2ray")
 	out := fs.String("o", "", "output file (default: stdout)")
 	proxy := fs.String("proxy", "", "upstream proxy URL (http/socks5)")
 	flaresolverr := fs.String("flaresolverr", "", "FlareSolverr endpoint, e.g. http://127.0.0.1:8191/v1")
 	ua := fs.String("ua", "", "User-Agent for fetches")
-	source := fs.String("source", "", "source format preset for fetch UA: clash.meta|v2ray|singbox|surge|shadowrocket|quanx|loon")
 	sortNodes := fs.Bool("sort", false, "sort nodes by name")
 	udp := fs.Bool("udp", false, "force udp on all nodes")
 	tfo := fs.Bool("tfo", false, "enable tcp-fast-open")
@@ -267,10 +266,7 @@ func cmdConvert(args []string) {
 		}
 	}
 
-	resolvedUA, err := resolveUserAgent(*ua, *source)
-	if err != nil {
-		fatal("%v", err)
-	}
+	resolvedUA := strings.TrimSpace(*ua)
 	remoteClient, err := fetch.New(fetch.Options{
 		UserAgent:       resolvedUA,
 		Proxy:           *proxy,
@@ -341,25 +337,6 @@ func cmdConvert(args []string) {
 		fatal("write %s: %v", *out, err)
 	}
 	fmt.Fprintf(os.Stderr, "wrote %s\n", *out)
-}
-
-// resolveUserAgent applies the UA precedence: explicit --ua wins over the
-// --source preset; both empty leaves the UA unset so fetch.New fills in its
-// built-in default. An unknown source preset is an error.
-func resolveUserAgent(ua, source string) (string, error) {
-	ua = strings.TrimSpace(ua)
-	source = strings.TrimSpace(source)
-	if ua != "" {
-		return ua, nil
-	}
-	if source != "" {
-		u, ok := fetch.UAPreset(source)
-		if !ok {
-			return "", fmt.Errorf("unsupported source %q (supported: %s)", source, strings.Join(fetch.UAPresetNames(), ", "))
-		}
-		return u, nil
-	}
-	return "", nil
 }
 
 // triFromString parses an optional bool flag into a tribool (nil when empty).

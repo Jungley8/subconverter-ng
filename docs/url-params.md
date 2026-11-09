@@ -75,29 +75,9 @@ sing-box 协议能力表（best-effort，依据 sing-box 官方 release notes）
 | `filename` | 设置下载文件名（`Content-Disposition`） | :material-check: |
 | `interval` | 客户端订阅自动更新间隔（小时，默认 24，`Profile-Update-Interval` 头） | :material-check: |
 | `proxy` | **本次请求**的上游代理，由服务端发起连接，需服务端公网可达（扩展参数） | :material-check: |
-| `source` | 按请求指定订阅源格式预设，映射对应抓取 UA（扩展参数，见下方「source 预设」） | :material-check: |
-| `ua` | 按请求覆盖抓取 UA，对本次请求的全部远程抓取（订阅 / 规则 / 外部配置）生效（扩展参数） | :material-check: |
+| `ua` | 按请求覆盖抓取 UA，对本次请求的全部远程抓取（订阅 / 规则 / 外部配置）生效（扩展参数；Web UI 提供 UA 预设下拉自动回填） | :material-check: |
 | `nocache` | `1` 时绕过本次请求的 TTL 缓存，强制重新抓取 | :material-check: |
 | `flushcache` | `1` 时先清空整个共享缓存再处理本次请求（另有 `GET /flushcache` 端点） | :material-check: |
-
-## source 预设（订阅源格式）
-
-`&source=<预设>`（扩展参数）按请求指定订阅源格式，映射为对应客户端的抓取 UA（无需手记 UA 字符串）。未知预设返回 400 并列出支持值。
-
-| 预设 | 映射 UA |
-|---|---|
-| `clash.meta` / `clash` / `mihomo` | `clash.meta/1.18.0 mihomo/1.18.0` |
-| `v2ray` / `v2rayn` | `v2rayN/6.45` |
-| `singbox` / `sing-box` | `sing-box/1.3.0` |
-| `surge` | `Surge/5.9.0` |
-| `shadowrocket` | `Shadowrocket/2.2.50` |
-| `quanx` | `Quantumult X/1.0.30` |
-| `loon` | `Loon/3.2.4` |
-
-!!! warning "⚠️ 可解析性"
-    只有返回 **Clash YAML 或 base64 分享链接**的预设（`clash.meta`、`v2ray`，以及部分面板对其它 UA
-    也返回兼容载荷）当前可被本工具解析；`singbox` / `surge` / `quanx` / `loon` 等原始格式订阅本工具
-    暂不能解析，此类预设仅供面板返回兼容载荷时使用。
 
 ## 节点处理参数（部分 target 有效）
 
@@ -124,7 +104,7 @@ sing-box 协议能力表（best-effort，依据 sing-box 官方 release notes）
 拉取订阅并更新节点（分组/规则保持服务端模板编排）。
 
 - 每个 http(s) 的 `url=` 条目 → 一个 `sub-N` provider；`ss://` 等分享链接条目仍被解析为本地内联节点
-- `&ua=` / `&source=` → provider 的 `header.User-Agent`；`&include=` / `&exclude=` → `filter` / `exclude-filter`（对客户端新拉取的节点持续生效）；`&udp` / `&scv` → `override`
+- `&ua=` → provider 的 `header.User-Agent`；`&include=` / `&exclude=` → `filter` / `exclude-filter`（对客户端新拉取的节点持续生效）；`&udp` / `&scv` → `override`
 - 分组：INI `custom_proxy_group` 的 `[]字面量` 保持 `proxies:` 成员；**正则选择器映射为组级 `filter` + `use:`**（mihomo 原生能力，region 分组照常工作）；无外部配置时生成「🚀 节点选择 / ♻️ 自动选择」最小分组
 - **不适用**：emoji、rename、fdn、dedup 等服务端节点处理不作用于 provider 载荷（客户端看到机场原始节点）；协议版本门控同理
 - 与 `template=` 或非 clash 的显式 `target=` 同用会返回 400

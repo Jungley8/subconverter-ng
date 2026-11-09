@@ -82,7 +82,7 @@ type Options struct {
 	ProviderURLs []string
 
 	// ProviderUA, when non-empty, is emitted as the providers' custom
-	// User-Agent header (from &ua= / &source=).
+	// User-Agent header (from &ua=).
 	ProviderUA string
 
 	// ProviderInterval is the providers' update interval in seconds

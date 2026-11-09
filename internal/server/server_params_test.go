@@ -61,18 +61,6 @@ func TestSanitizeFilename(t *testing.T) {
 	}
 }
 
-func TestHandleSub_UnsupportedSource(t *testing.T) {
-	h := New(testConfig()).Handler()
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sub?target=clash&url=x&source=foo", nil))
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400, body=%s", rec.Code, rec.Body.String())
-	}
-	if body := rec.Body.String(); !strings.Contains(body, "supported") {
-		t.Errorf("body missing supported presets: %q", body)
-	}
-}
-
 func TestHandleSub_InvalidTargetVersion(t *testing.T) {
 	h := New(testConfig()).Handler()
 	rec := httptest.NewRecorder()
@@ -85,10 +73,10 @@ func TestHandleSub_InvalidTargetVersion(t *testing.T) {
 	}
 }
 
-// TestHandleSub_UAPriority verifies the fetch User-Agent precedence:
-// explicit &ua= > &source= preset > configured user_agent. Each case uses its
-// own upstream path so the shared fetch cache never serves one case's response
-// to another.
+// TestHandleSub_UAPriority verifies the fetch User-Agent precedence: explicit
+// &ua= beats the fetch client's built-in default (testConfig leaves
+// fetch.user_agent unset). Each case uses its own upstream path so the shared
+// fetch cache never serves one case's response to another.
 func TestHandleSub_UAPriority(t *testing.T) {
 	gotUA := map[string]string{}
 	sub := b64("ss://" + b64("aes-256-gcm:pw") + "@1.1.1.1:8388#HK")
@@ -98,9 +86,9 @@ func TestHandleSub_UAPriority(t *testing.T) {
 		gotUA[r.URL.Path] = r.Header.Get("User-Agent")
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/sub.txt"):
-			w.Write([]byte(sub))
+			_, _ = w.Write([]byte(sub))
 		case strings.HasSuffix(r.URL.Path, "/config.init"):
-			w.Write([]byte(ini))
+			_, _ = w.Write([]byte(ini))
 		default:
 			http.NotFound(w, r)
 		}
@@ -119,21 +107,15 @@ func TestHandleSub_UAPriority(t *testing.T) {
 	}
 	cfg := url.QueryEscape(air.URL + "/c/config.init")
 
-	// &source= maps the preset to its UA.
-	do("&source=clash.meta&url=" + url.QueryEscape(air.URL+"/s1/sub.txt") + "&config=" + cfg)
-	if ua := gotUA["/s1/sub.txt"]; ua != "clash.meta/1.18.0 mihomo/1.18.0" {
-		t.Errorf("source=clash.meta: upstream UA = %q, want clash.meta/1.18.0 mihomo/1.18.0", ua)
-	}
-
-	// A preset distinct from the built-in default proves the preset is applied.
-	do("&source=v2ray&url=" + url.QueryEscape(air.URL+"/s2/sub.txt") + "&config=" + cfg)
-	if ua := gotUA["/s2/sub.txt"]; ua != "v2rayN/6.45" {
-		t.Errorf("source=v2ray: upstream UA = %q, want v2rayN/6.45", ua)
-	}
-
-	// Explicit &ua= wins over &source=.
-	do("&ua=MyCustomUA/1.0&source=clash.meta&url=" + url.QueryEscape(air.URL+"/s3/sub.txt") + "&config=" + cfg)
+	// Explicit &ua= wins over everything.
+	do("&ua=MyCustomUA/1.0&url=" + url.QueryEscape(air.URL+"/s3/sub.txt") + "&config=" + cfg)
 	if ua := gotUA["/s3/sub.txt"]; ua != "MyCustomUA/1.0" {
 		t.Errorf("ua override: upstream UA = %q, want MyCustomUA/1.0", ua)
+	}
+
+	// Without &ua= the fetch client's built-in default is used.
+	do("&url=" + url.QueryEscape(air.URL+"/s1/sub.txt") + "&config=" + cfg)
+	if ua := gotUA["/s1/sub.txt"]; ua != "clash.meta/1.18.0 mihomo/1.18.0" {
+		t.Errorf("default UA: upstream UA = %q, want clash.meta/1.18.0 mihomo/1.18.0", ua)
 	}
 }

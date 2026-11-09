@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -11,6 +13,15 @@ import (
 	"github.com/Jungley8/subconverter-ng/internal/parser"
 	"github.com/Jungley8/subconverter-ng/internal/proxy"
 )
+
+// repoTemplateDir points templateDir at the repository's templates/ directory
+// (tests run inside the package directory). The caller must restore it.
+func repoTemplateDir(t *testing.T) {
+	t.Helper()
+	old := templateDir
+	templateDir = filepath.Join("..", "..", "templates")
+	t.Cleanup(func() { templateDir = old })
+}
 
 const miniTemplate = `{
   "inbounds": [{"type": "mixed", "tag": "mixed-in", "listen_port": 2080}],
@@ -128,6 +139,7 @@ func TestGenerateSingboxTemplate_EmptyNotesFallsBackToDirect(t *testing.T) {
 }
 
 func TestGenerateSingboxTemplate_BuiltinMomo(t *testing.T) {
+	repoTemplateDir(t)
 	tmpl, ok := BuiltinTemplate("momo")
 	if !ok {
 		t.Fatal("builtin momo template missing")
@@ -204,6 +216,29 @@ func TestGenerateSingboxTemplate_DollarInUserDataIsLiteral(t *testing.T) {
 	}
 	if strings.Contains(out, "{{ Nodes }}") {
 		t.Errorf("placeholder expanded into user data:\n%s", out)
+	}
+}
+
+func TestBuiltinTemplate_ReadsFromDisk(t *testing.T) {
+	old := templateDir
+	templateDir = t.TempDir()
+	t.Cleanup(func() { templateDir = old })
+
+	// Unknown names are rejected without touching the disk.
+	if b, ok := BuiltinTemplate("../momo"); ok {
+		t.Errorf(`BuiltinTemplate("../momo") = (%d bytes, true), want not found`, len(b))
+	}
+	// A known name whose file is missing is a miss, not an error.
+	if b, ok := BuiltinTemplate("momo"); ok {
+		t.Errorf("BuiltinTemplate(momo) with no file on disk = (%d bytes, true), want not found", len(b))
+	}
+	// Writing templates/momo.json into templateDir makes the lookup succeed.
+	if err := os.WriteFile(filepath.Join(templateDir, "momo.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b, ok := BuiltinTemplate(" MOMO ") // names are case-insensitive, trimmed
+	if !ok || string(b) != "{}" {
+		t.Errorf("BuiltinTemplate(momo) = (%q, %v), want ({}, true)", b, ok)
 	}
 }
 

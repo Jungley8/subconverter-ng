@@ -2,9 +2,10 @@ package generator
 
 import (
 	"context"
-	"embed"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -13,22 +14,45 @@ import (
 	"github.com/Jungley8/subconverter-ng/internal/proxy"
 )
 
-//go:embed templates/momo.json
-var templateFS embed.FS
+// templateDir is the on-disk directory searched for built-in templates,
+// relative to the working directory. Templates are deliberately NOT embedded
+// in the binary: the conversion engine stays client-agnostic and deployers can
+// update or mount template files freely (e.g. Docker
+// `-v ./templates:/app/templates:ro`).
+var templateDir = "templates"
 
-// builtinTemplates maps a &template= value to an embedded sing-box template.
+// builtinTemplates maps a &template= value to a file inside templateDir.
 // Add an entry (and the file under templates/) to publish a new variant.
 var builtinTemplates = map[string]string{
-	"momo": "templates/momo.json",
+	"momo": "momo.json",
 }
 
-// BuiltinTemplate returns the embedded template bytes for a &template= name.
+// IsBuiltinTemplate reports whether name is a known &template= name. It does
+// not check whether the file exists on disk.
+func IsBuiltinTemplate(name string) bool {
+	_, ok := builtinTemplates[strings.ToLower(strings.TrimSpace(name))]
+	return ok
+}
+
+// BuiltinTemplate returns the template bytes for a &template= name, read from
+// templateDir. Fail-closed: the resolved path is validated to stay inside
+// templateDir, so a crafted name can never escape the directory.
 func BuiltinTemplate(name string) ([]byte, bool) {
-	path, ok := builtinTemplates[strings.ToLower(strings.TrimSpace(name))]
+	file, ok := builtinTemplates[strings.ToLower(strings.TrimSpace(name))]
 	if !ok {
 		return nil, false
 	}
-	b, err := templateFS.ReadFile(path)
+	// The file name comes from builtinTemplates, but validate it anyway
+	// (defence in depth): only a bare file name may pass — no separators, no
+	// "..", no absolute paths.
+	if file == "" || file != filepath.Base(file) || strings.Contains(file, "..") {
+		return nil, false
+	}
+	p := filepath.Join(templateDir, file)
+	if !strings.HasPrefix(p, templateDir+string(filepath.Separator)) {
+		return nil, false
+	}
+	b, err := os.ReadFile(p)
 	if err != nil {
 		return nil, false
 	}
