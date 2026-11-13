@@ -22,13 +22,8 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${VERSION}"
 # ---- runtime stage ----
 FROM alpine:3.21
 RUN apk add --no-cache ca-certificates && adduser -D -u 10001 app
-# Fixed working directory so built-in sing-box templates are found under
-# ./templates (mount with: -v ./templates:/app/templates:ro).
 WORKDIR /app
 USER app
 COPY --from=build /out/subconverter-ng /usr/local/bin/subconverter-ng
-# Ship the default sing-box templates so &template=momo works out of the box;
-# a bind mount over /app/templates overrides them.
-COPY --chown=app:app templates /app/templates
 EXPOSE 25500
 ENTRYPOINT ["subconverter-ng", "serve", "--listen", ":25500"]

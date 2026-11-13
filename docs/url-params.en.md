@@ -64,7 +64,7 @@ The declared version also selects the sing-box config schema (from the official 
 | `insert` | Whether to merge the server-side `insert_url` nodes; overrides the config default (see below) | :material-check: |
 | `include` | **Node-name allowlist regex**: keep only nodes whose name matches (alias `include_remarks`). Overrides the external INI `include_remarks`; an empty value does not override. The spec is a single regex; put multiple alternatives inside it (for example `(?i)(HK\|JP)`) | :material-check: |
 | `exclude` | **Node-name blocklist regex**: drop nodes whose name matches (alias `exclude_remarks`). Overrides the external INI `exclude_remarks`; an empty value does not override. Example: `(?i)(expired)\|(traffic)\|(website)` | :material-check: |
-| `template` | Render a **full config** into a built-in or remote sing-box template. `momo` is the router momo template (inbounds, DNS/fake-ip, rule_set, split routing included); nodes and `NotesName` groups are injected. Pins target to `singbox` (extension parameter) | :material-check: |
+| `template` | Render a **full config** into a remote sing-box JSON template. The value is an http(s) URL; nodes and `NotesName` groups are injected. Pins target to `singbox` (extension parameter) | :material-check: |
 | `sort` | Sort by node name | :material-check: |
 | `dedup` | Remove duplicate nodes: nodes with identical connection fields (type/address/port/credentials/transport) keep only the first | :material-check: |
 | `append_type` | Prefix node names with `[type]` (e.g. `[SS] HK 01`) | :material-check: |

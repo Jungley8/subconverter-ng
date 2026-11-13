@@ -186,7 +186,7 @@ func cmdConvert(args []string) {
 	fs := flag.NewFlagSet("convert", flag.ExitOnError)
 	url := fs.String("url", "", "subscription URL(s), file path, or '-' for stdin, '|'-separated (required)")
 	cfgURL := fs.String("config", "", "external INI config URL, file path, or '-' for stdin")
-	template := fs.String("template", "", "render into a sing-box template: built-in name (momo, read from templates/) or http(s) URL")
+	template := fs.String("template", "", "render into a sing-box JSON template fetched over http(s)")
 	target := fs.String("target", "clash", "output target: clash|singbox|surge|shadowrocket|quanx|loon|v2ray")
 	out := fs.String("o", "", "output file (default: stdout)")
 	proxy := fs.String("proxy", "", "upstream proxy URL (http/socks5)")

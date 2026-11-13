@@ -806,3 +806,19 @@ func TestRun_SingboxAndSurgeSubscriptionSources(t *testing.T) {
 		t.Errorf("singbox output missing Surge-Node: %s", string(out2))
 	}
 }
+
+// TestResolveTemplateURLOnly pins the template contract: the value must be an
+// http(s) URL. Built-in names were removed, so a bare name fails closed.
+func TestResolveTemplateURLOnly(t *testing.T) {
+	f := fakeFetcher{"://example.com/t.json": []byte(`{"outbounds":[]}`)}
+	if _, err := resolveTemplate(context.Background(), f, "momo"); err == nil || !strings.Contains(err.Error(), "http(s) URL") {
+		t.Errorf("resolveTemplate(momo) err = %v, want an http(s) URL error", err)
+	}
+	if _, err := resolveTemplate(context.Background(), f, "  "); err == nil {
+		t.Error("empty template must be an error")
+	}
+	b, err := resolveTemplate(context.Background(), f, "https://example.com/t.json")
+	if err != nil || string(b) != `{"outbounds":[]}` {
+		t.Errorf("resolveTemplate(url) = %q, %v, want the fetched template", b, err)
+	}
+}

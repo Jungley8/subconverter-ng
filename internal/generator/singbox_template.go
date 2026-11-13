@@ -4,70 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 
 	"github.com/Jungley8/subconverter-ng/internal/extconfig"
 	"github.com/Jungley8/subconverter-ng/internal/proxy"
 )
-
-// templateDir is the on-disk directory searched for built-in templates,
-// relative to the working directory. Templates are deliberately NOT embedded
-// in the binary: the conversion engine stays client-agnostic and deployers can
-// update or mount template files freely (e.g. Docker
-// `-v ./templates:/app/templates:ro`).
-var templateDir = "templates"
-
-// builtinTemplates maps a &template= value to a file inside templateDir.
-// Add an entry (and the file under templates/) to publish a new variant.
-var builtinTemplates = map[string]string{
-	"momo": "momo.json",
-}
-
-// IsBuiltinTemplate reports whether name is a known &template= name. It does
-// not check whether the file exists on disk.
-func IsBuiltinTemplate(name string) bool {
-	_, ok := builtinTemplates[strings.ToLower(strings.TrimSpace(name))]
-	return ok
-}
-
-// BuiltinTemplate returns the template bytes for a &template= name, read from
-// templateDir. Fail-closed: the resolved path is validated to stay inside
-// templateDir, so a crafted name can never escape the directory.
-func BuiltinTemplate(name string) ([]byte, bool) {
-	file, ok := builtinTemplates[strings.ToLower(strings.TrimSpace(name))]
-	if !ok {
-		return nil, false
-	}
-	// The file name comes from builtinTemplates, but validate it anyway
-	// (defence in depth): only a bare file name may pass — no separators, no
-	// "..", no absolute paths.
-	if file == "" || file != filepath.Base(file) || strings.Contains(file, "..") {
-		return nil, false
-	}
-	p := filepath.Join(templateDir, file)
-	if !strings.HasPrefix(p, templateDir+string(filepath.Separator)) {
-		return nil, false
-	}
-	b, err := os.ReadFile(p)
-	if err != nil {
-		return nil, false
-	}
-	return b, true
-}
-
-// BuiltinTemplateNames lists the &template= names, sorted for error messages.
-func BuiltinTemplateNames() []string {
-	names := make([]string, 0, len(builtinTemplates))
-	for n := range builtinTemplates {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	return names
-}
 
 // nodesPlaceholder matches Liquid Formula's {{ Nodes }} injection point.
 var nodesPlaceholder = regexp.MustCompile(`\{\{\s*Nodes\s*\}\}`)
@@ -82,8 +24,7 @@ var notesNamePlaceholder = regexp.MustCompile(`\{\{\s*"([^"]*)"\s*\|\s*NotesName
 const notesFallback = `"➜ Direct"`
 
 // GenerateSingboxTemplate injects converted nodes into a full sing-box JSON
-// template, expanding the two Liquid Formula placeholders the momo template
-// uses: {{ Nodes }} (node outbounds) and {{ "<regex>" | NotesName }} (quoted
+// template, expanding the two Liquid Formula placeholders such templates use: {{ Nodes }} (node outbounds) and {{ "<regex>" | NotesName }} (quoted
 // node names matching the regex). Everything else — inbounds, DNS/fake-ip,
 // rule_set references and route rules — comes from the template verbatim, so
 // the output is a complete config a router-side client can consume directly.

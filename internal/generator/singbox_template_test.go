@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -13,15 +11,6 @@ import (
 	"github.com/Jungley8/subconverter-ng/internal/parser"
 	"github.com/Jungley8/subconverter-ng/internal/proxy"
 )
-
-// repoTemplateDir points templateDir at the repository's templates/ directory
-// (tests run inside the package directory). The caller must restore it.
-func repoTemplateDir(t *testing.T) {
-	t.Helper()
-	old := templateDir
-	templateDir = filepath.Join("..", "..", "templates")
-	t.Cleanup(func() { templateDir = old })
-}
 
 const miniTemplate = `{
   "inbounds": [{"type": "mixed", "tag": "mixed-in", "listen_port": 2080}],
@@ -138,62 +127,6 @@ func TestGenerateSingboxTemplate_EmptyNotesFallsBackToDirect(t *testing.T) {
 	t.Fatal("日本 group missing")
 }
 
-func TestGenerateSingboxTemplate_BuiltinMomo(t *testing.T) {
-	repoTemplateDir(t)
-	tmpl, ok := BuiltinTemplate("momo")
-	if !ok {
-		t.Fatal("builtin momo template missing")
-	}
-	nodes, _, err := parseLinks(
-		"ss://"+b64("aes-256-gcm:pass")+"@1.2.3.4:8388#香港 01",
-		"ss://"+b64("aes-256-gcm:pass")+"@5.6.7.8:8388#日本 01",
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	res, err := GenerateSingboxTemplate(context.Background(), nodes, &extconfig.Config{EnableRuleGenerator: true}, tmpl, Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var doc struct {
-		Inbounds []struct {
-			Tag string `json:"tag"`
-		} `json:"inbounds"`
-		Outbounds []struct {
-			Tag       string   `json:"tag"`
-			Outbounds []string `json:"outbounds"`
-		} `json:"outbounds"`
-		Route struct {
-			Final string `json:"final"`
-		} `json:"route"`
-	}
-	if err := json.Unmarshal(res.Output, &doc); err != nil {
-		t.Fatalf("invalid JSON: %v", err)
-	}
-	tags := map[string]bool{}
-	for _, ib := range doc.Inbounds {
-		tags[ib.Tag] = true
-	}
-	for _, want := range []string{"dns-in", "tun-in"} {
-		if !tags[want] {
-			t.Errorf("inbound %q missing (momo self-check would fail)", want)
-		}
-	}
-	members := map[string][]string{}
-	for _, ob := range doc.Outbounds {
-		members[ob.Tag] = ob.Outbounds
-	}
-	if len(members["🚀 手动切换"]) != 2 {
-		t.Errorf("手动切换 members = %v", members["🚀 手动切换"])
-	}
-	if len(members["🇭🇰 香港节点"]) != 1 || members["🇭🇰 香港节点"][0] != "香港 01" {
-		t.Errorf("香港节点 members = %v", members["🇭🇰 香港节点"])
-	}
-	if doc.Route.Final == "" {
-		t.Error("route.final missing")
-	}
-}
-
 func TestGenerateSingboxTemplate_DollarInUserDataIsLiteral(t *testing.T) {
 	// "$" in passwords/node names must survive rendering: ReplaceAllString
 	// would expand "$0" to the matched placeholder and "$1" to "".
@@ -216,29 +149,6 @@ func TestGenerateSingboxTemplate_DollarInUserDataIsLiteral(t *testing.T) {
 	}
 	if strings.Contains(out, "{{ Nodes }}") {
 		t.Errorf("placeholder expanded into user data:\n%s", out)
-	}
-}
-
-func TestBuiltinTemplate_ReadsFromDisk(t *testing.T) {
-	old := templateDir
-	templateDir = t.TempDir()
-	t.Cleanup(func() { templateDir = old })
-
-	// Unknown names are rejected without touching the disk.
-	if b, ok := BuiltinTemplate("../momo"); ok {
-		t.Errorf(`BuiltinTemplate("../momo") = (%d bytes, true), want not found`, len(b))
-	}
-	// A known name whose file is missing is a miss, not an error.
-	if b, ok := BuiltinTemplate("momo"); ok {
-		t.Errorf("BuiltinTemplate(momo) with no file on disk = (%d bytes, true), want not found", len(b))
-	}
-	// Writing templates/momo.json into templateDir makes the lookup succeed.
-	if err := os.WriteFile(filepath.Join(templateDir, "momo.json"), []byte("{}"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	b, ok := BuiltinTemplate(" MOMO ") // names are case-insensitive, trimmed
-	if !ok || string(b) != "{}" {
-		t.Errorf("BuiltinTemplate(momo) = (%q, %v), want ({}, true)", b, ok)
 	}
 }
 

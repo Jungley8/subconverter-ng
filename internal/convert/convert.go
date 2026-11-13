@@ -53,9 +53,9 @@ type Request struct {
 	SubURLs   []string // subscription URLs (the &url= param, split on |)
 	ConfigURL string   // external INI config (the &config= param)
 
-	// Template, when non-empty, renders the nodes into a full sing-box JSON
-	// template (a built-in name such as "momo", or an http(s) URL) instead of
-	// generating a bare config. See generator.GenerateSingboxTemplate.
+	// Template, when non-empty, is an http(s) URL to a sing-box JSON template.
+	// The nodes are rendered into that template instead of a bare config.
+	// See generator.GenerateSingboxTemplate.
 	Template string
 	Gen      generator.Options
 
@@ -292,21 +292,14 @@ func diagnosticsFor(result *generator.Result, skipped []string, userinfo string)
 	}
 }
 
-// resolveTemplate loads the &template= value: an http(s) URL is fetched, any
-// other value must name a built-in template read from the templates/ directory
-// (e.g. "momo" -> templates/momo.json).
+// resolveTemplate loads the &template= value. It must be an http(s) URL that
+// returns a sing-box JSON template; there is no built-in template name.
 func resolveTemplate(ctx context.Context, f Fetcher, spec string) ([]byte, error) {
 	spec = strings.TrimSpace(spec)
-	if strings.HasPrefix(spec, "http://") || strings.HasPrefix(spec, "https://") {
-		return f.Get(ctx, spec)
+	if !strings.HasPrefix(spec, "http://") && !strings.HasPrefix(spec, "https://") {
+		return nil, fmt.Errorf("template %q must be an http(s) URL to a sing-box JSON template", spec)
 	}
-	if b, ok := generator.BuiltinTemplate(spec); ok {
-		return b, nil
-	}
-	if generator.IsBuiltinTemplate(spec) {
-		return nil, fmt.Errorf("built-in template %q not found on disk (expected under templates/); mount or restore the file, or use an http(s) URL", spec)
-	}
-	return nil, fmt.Errorf("unknown template %q (built-in: %s)", spec, strings.Join(generator.BuiltinTemplateNames(), ", "))
+	return f.Get(ctx, spec)
 }
 
 // resolveEmoji decides remove/add emoji flags using subconverter's precedence:

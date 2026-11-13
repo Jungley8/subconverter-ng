@@ -29,7 +29,7 @@
 - ✅ **两种工作形态**：HTTP 服务守护进程 + CLI 单次离线转换，单静态二进制。
 - ✅ **软路由多架构支持**：提供 Linux、macOS、Windows 以及 OpenWrt 路由器（MIPS / MIPSLE / ARMv7）预编译包。
 - ✅ **按请求指定抓取 UA**：`&ua=` 自定义覆盖抓取 UA（Web UI 提供 UA 预设下拉自动回填）；`target` 支持 `name/版本`（如 `singbox/1.3`，按版本门控剔除老内核不支持的协议节点，并切换现代 schema 输出）。
-- ✅ **sing-box 模板渲染**：`&template=momo`（OpenWrt Momo 全套入站）或任意 http(s) JSON 模板；内置模板存于 `templates/` 目录，可热更新或 Docker 挂载替换（不打包进二进制）。
+- ✅ **sing-box 模板渲染**：`&template=<http(s) URL>` 指向一份 sing-box JSON 模板，节点与 `NotesName` 分组自动注入，输出完整配置。
 - ✅ **节点名过滤**：`&include=` / `&exclude=` 正则过滤（provider 模式下映射为客户端 `filter` / `exclude-filter` 持续过滤）。
 - ✅ **Clash proxy-provider 输出**：`&provider=true` 生成 `proxy-providers` 骨架，客户端自行拉取与更新节点。
 
