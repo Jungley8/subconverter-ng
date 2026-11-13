@@ -51,7 +51,7 @@ sing-box 协议能力表（best-effort，依据 sing-box 官方 release notes）
     `direct` 出站从未弃用，所有版本均保留；`rule_set` 引用不写 `download_detour`（1.14 已弃用）。
 
 !!! note "rule_set 映射细节"
-    `GEOIP` 规则仅支持两字母国家码（SagerNet/sing-geoip 只发布国家码类目）；`GEOIP,PRIVATE/LAN` 映射为内置规则项 `ip_is_private: true`，其余非国家码类目（如 `GEOIP,TWITTER`）会被跳过并在诊断中报告，避免生成 404 的 rule_set 导致内核启动失败。`GEOSITE` 类目与 sing-geosite 仓库一一对应，上游已更名的类目自动映射（`google-cn` → `google@cn`）。GEOIP/IP-CIDR 等规则尾参（`no-resolve`、`src`）会被剥离保留，其它未知尾参（如旧式 `policy` 标记）会被丢弃。
+    `GEOIP` 规则仅支持两字母国家码（SagerNet/sing-geoip 只发布国家码类目）；`GEOIP,PRIVATE/LAN` 映射为内置规则项 `ip_is_private: true`，其余非国家码类目（如 `GEOIP,TWITTER`）会被跳过并在诊断中报告，避免生成 404 的 rule_set 导致内核启动失败。`GEOSITE` 类目与 sing-geosite 仓库一一对应，上游已更名的类目自动映射（`google-cn` → `google@cn`）。规则按 `TYPE,VALUE[,FLAG]` 解析：第三个字段作为尾参（如 `no-resolve`），`AND` / `OR` / `NOT` 中逗号后的余下部分整体作为值。多于三个字段、或值为空的行无法安全渲染，会被跳过并记入诊断（例如旧式 `GEOIP,PRIVATE,policy,no-resolve`），不会截断成错误规则。
 
 ## 通用参数（对所有 target 有效）
 
