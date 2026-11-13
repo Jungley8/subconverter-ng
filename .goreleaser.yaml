@@ -55,6 +55,9 @@ archives:
       - LICENSE
       - config.example.yaml
       - docker-compose.yml
+      # &template=momo reads templates/ from disk at run time (templates are
+      # deliberately not embedded in the binary), so releases must ship them.
+      - templates
 
 checksum:
   name_template: checksums.txt

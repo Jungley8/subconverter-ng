@@ -119,3 +119,74 @@ func TestHandleSub_UAPriority(t *testing.T) {
 		t.Errorf("default UA: upstream UA = %q, want clash.meta/1.18.0 mihomo/1.18.0", ua)
 	}
 }
+
+// TestHandleSub_ProviderIntervalParam pins the provider refresh interval to
+// &provider_interval=. &interval= keeps its subconverter meaning (hours, the
+// Profile-Update-Interval header) and must not reach the providers: reusing it
+// would refresh every few seconds and hammer the upstream.
+func TestHandleSub_ProviderIntervalParam(t *testing.T) {
+	sub := b64("ss://" + b64("aes-256-gcm:pw") + "@1.1.1.1:8388#HK")
+	ini := "[custom]\nruleset=🐟 Final,[]FINAL\ncustom_proxy_group=🚀 Select`select`.*`\nenable_rule_generator=true\n"
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/sub.txt"):
+			_, _ = w.Write([]byte(sub))
+		case strings.HasSuffix(r.URL.Path, "/config.init"):
+			_, _ = w.Write([]byte(ini))
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	air := httptest.NewServer(mux)
+	defer air.Close()
+
+	h := New(testConfig()).Handler()
+	provider := func(extra string) (map[string]any, *httptest.ResponseRecorder) {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, paramURL(air, "&provider=true"+extra), nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+		}
+		var doc map[string]any
+		if err := yaml.Unmarshal(rec.Body.Bytes(), &doc); err != nil {
+			t.Fatal(err)
+		}
+		return doc, rec
+	}
+	sub1 := func(doc map[string]any) map[string]any {
+		t.Helper()
+		providers, ok := doc["proxy-providers"].(map[string]any)
+		if !ok {
+			t.Fatalf("proxy-providers missing: %v", doc)
+		}
+		p, ok := providers["sub-1"].(map[string]any)
+		if !ok {
+			t.Fatalf("sub-1 provider missing: %v", providers)
+		}
+		return p
+	}
+
+	doc, _ := provider("&provider_interval=60")
+	if iv := sub1(doc)["interval"]; iv != 60 {
+		t.Errorf("provider interval = %v, want 60", iv)
+	}
+
+	// &interval=12 is the client subscription interval (hours); it must leave
+	// the provider at the default and still set the response header.
+	doc, rec := provider("&interval=12")
+	if iv := sub1(doc)["interval"]; iv != 86400 {
+		t.Errorf("provider interval = %v, want default 86400 when only &interval= is set", iv)
+	}
+	if iv := rec.Header().Get("Profile-Update-Interval"); iv != "12" {
+		t.Errorf("Profile-Update-Interval = %q, want 12", iv)
+	}
+
+	// A non-positive provider interval fails closed.
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, paramURL(air, "&provider=true&provider_interval=0"), nil))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400 for provider_interval=0", rec.Code)
+	}
+}

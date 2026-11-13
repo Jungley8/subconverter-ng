@@ -332,13 +332,16 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 		}
 		target = convert.TargetClash
 	}
-	// &interval=: proxy-provider update interval in seconds (provider mode only).
+	// &provider_interval=: proxy-provider update interval in seconds (provider
+	// mode only). Deliberately not &interval=: that one already means the
+	// client subscription interval in hours (Profile-Update-Interval), and
+	// reusing it here would silently refresh providers every few seconds.
 	providerInterval := 0
 	if provider {
-		if v := q.Get("interval"); v != "" {
+		if v := q.Get("provider_interval"); v != "" {
 			n, err := strconv.Atoi(v)
 			if err != nil || n <= 0 {
-				http.Error(w, fmt.Sprintf("invalid interval %q: want a positive integer of seconds", v), http.StatusBadRequest)
+				http.Error(w, fmt.Sprintf("invalid provider_interval %q: want a positive integer of seconds", v), http.StatusBadRequest)
 				return
 			}
 			providerInterval = n

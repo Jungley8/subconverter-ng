@@ -210,7 +210,7 @@ func cmdConvert(args []string) {
 	includeRe := fs.String("include", "", "keep only nodes whose name matches this regex (overrides config include_remarks)")
 	excludeRe := fs.String("exclude", "", "drop nodes whose name matches this regex (overrides config exclude_remarks)")
 	provider := fs.Bool("provider", false, "clash proxy-provider mode: subscriptions become mihomo proxy-providers (client fetches nodes itself)")
-	providerInterval := fs.Int("interval", 0, "proxy-provider update interval in seconds (0=default 86400, provider mode only)")
+	providerInterval := fs.Int("provider-interval", 0, "proxy-provider update interval in seconds (0=default 86400, provider mode only)")
 	var excludeProtocols stringsFlag
 	fs.Var(&excludeProtocols, "exclude-protocol", "exclude nodes by protocol or type (e.g. hysteria2, tuic)")
 	fs.Var(&excludeProtocols, "exclude-protocols", "alias for --exclude-protocol")

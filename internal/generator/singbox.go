@@ -141,11 +141,6 @@ func GenerateSingbox(ctx context.Context, nodes []*proxy.Proxy, cfg *extconfig.C
 	for _, r := range neutral {
 		if r.IsMatch() {
 			final = singboxOutboundRef(r.Group, emitted, groupNames)
-			if schema != nil && schema.actions && final == "block" {
-				// A REJECT final cannot reference the removed block outbound;
-				// degrade to direct so the config still loads.
-				final = "direct"
-			}
 			continue
 		}
 		if rule, ok := singboxRouteRule(r, emitted, groupNames, schema, collector); ok {
@@ -155,6 +150,15 @@ func GenerateSingbox(ctx context.Context, nodes []*proxy.Proxy, cfg *extconfig.C
 		}
 	}
 	res.SkippedRules = skippedRules
+
+	// A REJECT/REJECT-DROP FINAL maps to the block outbound, which does not
+	// exist under the action schema. Emit a catch-all reject rule instead: it
+	// sits after every translated rule, exactly where route.final applies, so
+	// unmatched traffic is still rejected rather than silently going direct.
+	if schema != nil && schema.actions && final == "block" {
+		routeRules = append(routeRules, map[string]any{"action": "reject"})
+		final = "direct"
+	}
 
 	dnsServers := []map[string]any{
 		{"tag": "remote", "address": "tls://8.8.8.8"},

@@ -95,12 +95,12 @@ sing-box 协议能力表（best-effort，依据 sing-box 官方 release notes）
 | `list` | 仅输出节点列表（`proxies:`），不含分组与规则 | :material-check: |
 | `expand` | `true`（默认）把规则内联进配置；`false` 改为输出 `rule-providers` 引用远程规则 | :material-check: |
 | `provider` | proxy-provider 模式：输出 `proxy-providers` 骨架，客户端自行拉取/更新节点（见下） | :material-check: |
-| `interval` | provider 更新间隔（秒），默认 86400；仅 provider 模式消费 | :material-check: |
+| `provider_interval` | provider 更新间隔（秒），默认 86400；仅 `provider=true` 时消费。不要与 `interval`（小时，客户端订阅间隔）混用 | :material-check: |
 
 ### Provider 模式（`&provider=true`）
 
 与原版 subconverter 的 `clash.proxy-provider` 模板思路一致：转换器不再抓取/内联节点，
-而是生成含 `proxy-providers` 的 Clash.Meta 骨架，由 mihomo 客户端按 `interval` 自行
+而是生成含 `proxy-providers` 的 Clash.Meta 骨架，由 mihomo 客户端按 `provider_interval` 自行
 拉取订阅并更新节点（分组/规则保持服务端模板编排）。
 
 - 每个 http(s) 的 `url=` 条目 → 一个 `sub-N` provider；`ss://` 等分享链接条目仍被解析为本地内联节点
@@ -111,6 +111,7 @@ sing-box 协议能力表（best-effort，依据 sing-box 官方 release notes）
 
 !!! note "其它 target 的规则处理"
     surge 系 / quanx / sing-box 统一把规则**展开为内联规则**（远程规则集会被抓取并逐条转换为目标语法）；
+    例外：sing-box 声明版本 ≥ 1.12 时，`GEOIP` / `GEOSITE` 保留为远程 `rule_set` 引用，由客户端自行下载。
     目标格式不支持的规则类型（如 Surge 无 `GEOSITE`/`IP-SUFFIX`）会被丢弃并记入日志。v2ray base64 订阅**不含规则**，由客户端自行管理。
 
 ## insert_url（节点插入）

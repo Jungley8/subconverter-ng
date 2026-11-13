@@ -486,6 +486,73 @@ func TestGenerateSingboxSchemaSwitch(t *testing.T) {
 	}
 }
 
+// TestGenerateSingboxFinalReject pins the FINAL,REJECT translation. Under the
+// action schema there is no block outbound to point route.final at, so the
+// catch-all must become a reject action rule; degrading to final=direct would
+// route unmatched traffic direct (fail open).
+func TestGenerateSingboxFinalReject(t *testing.T) {
+	mk := proxy.New("ss", "SS", "ss.example.com", 443)
+	mk.Clash["cipher"] = "aes-256-gcm"
+	mk.Clash["password"] = "pass"
+	cfg := &extconfig.Config{
+		EnableRuleGenerator: true,
+		ProxyGroups: []extconfig.ProxyGroup{
+			{Name: "Proxy", Type: "select", Selectors: []string{".*"}},
+		},
+		Rulesets: []extconfig.Ruleset{
+			{Group: "REJECT", Inline: "FINAL"},
+		},
+	}
+	type doc struct {
+		Route struct {
+			Rules []map[string]any `json:"rules"`
+			Final string           `json:"final"`
+		} `json:"route"`
+	}
+	render := func(t *testing.T, ver *Version) doc {
+		t.Helper()
+		res, err := GenerateSingbox(context.Background(), []*proxy.Proxy{mk}, cfg, fakeFetcher{}, Options{TargetVersion: ver})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var d doc
+		if err := json.Unmarshal(res.Output, &d); err != nil {
+			t.Fatalf("invalid JSON: %v", err)
+		}
+		return d
+	}
+
+	// Legacy (no declared version): FINAL,REJECT still points at the block
+	// outbound, so no extra rule is needed.
+	legacy := render(t, nil)
+	if legacy.Route.Final != "block" {
+		t.Errorf("legacy route.final = %q, want block", legacy.Route.Final)
+	}
+	last := legacy.Route.Rules[len(legacy.Route.Rules)-1]
+	if last["action"] == "reject" {
+		t.Errorf("legacy output must not add a catch-all reject rule: %+v", legacy.Route.Rules)
+	}
+
+	// Action schema (>= 1.11): the last rule is a catch-all reject, and final
+	// names an existing outbound so the config still loads.
+	for _, ver := range []*Version{{Major: 1, Minor: 11}, {Major: 1, Minor: 13}} {
+		d := render(t, ver)
+		if d.Route.Final != "direct" {
+			t.Errorf("singbox %d.%d route.final = %q, want direct", ver.Major, ver.Minor, d.Route.Final)
+		}
+		if len(d.Route.Rules) == 0 {
+			t.Fatalf("singbox %d.%d has no route rules", ver.Major, ver.Minor)
+		}
+		last := d.Route.Rules[len(d.Route.Rules)-1]
+		if last["action"] != "reject" {
+			t.Errorf("singbox %d.%d must end with a catch-all reject rule, got %+v", ver.Major, ver.Minor, last)
+		}
+		if _, ok := last["outbound"]; ok {
+			t.Errorf("catch-all reject must not carry an outbound: %+v", last)
+		}
+	}
+}
+
 func TestGenerateSingbox_Enhancements(t *testing.T) {
 	links := []string{
 		"wireguard://privkey@wg.example.com:51820?publickey=pubkey&address=10.0.0.2&presharedkey=psk&mtu=1420&reserved=1,2,3#WG",
