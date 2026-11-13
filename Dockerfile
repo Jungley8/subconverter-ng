@@ -6,6 +6,12 @@ FROM golang:1.27-alpine AS build
 # --build-arg VERSION=$(git describe --tags --always --dirty).
 # Defaults to "dev" so plain `docker build` still works.
 ARG VERSION=dev
+# Module proxy for `go mod download`/`go build`. Defaults to the official Go
+# proxy so GitHub Actions and overseas `docker build` runs stay fast. Developers
+# behind mainland-China networks can override with
+# --build-arg GOPROXY=https://goproxy.cn,direct.
+ARG GOPROXY=https://proxy.golang.org,direct
+ENV GOPROXY=${GOPROXY}
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -16,6 +22,7 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${VERSION}"
 # ---- runtime stage ----
 FROM alpine:3.21
 RUN apk add --no-cache ca-certificates && adduser -D -u 10001 app
+WORKDIR /app
 USER app
 COPY --from=build /out/subconverter-ng /usr/local/bin/subconverter-ng
 EXPOSE 25500

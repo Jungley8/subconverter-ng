@@ -28,6 +28,12 @@
 - ✅ **规则集与外部配置**：解析 subconverter INI 外部配置（`ruleset=` / `custom_proxy_group=` / `exclude_remarks` / `clash_rule_base`），兼容 ACL4SSR 规则与 rule-providers 模式（`expand=false`）。
 - ✅ **两种工作形态**：HTTP 服务守护进程 + CLI 单次离线转换，单静态二进制。
 - ✅ **软路由多架构支持**：提供 Linux、macOS、Windows 以及 OpenWrt 路由器（MIPS / MIPSLE / ARMv7）预编译包。
+- ✅ **按请求指定抓取 UA**：`&ua=` 自定义覆盖抓取 UA（Web UI 提供 UA 预设下拉自动回填）；`target` 支持 `name/版本`（如 `singbox/1.3`，按版本门控剔除老内核不支持的协议节点，并切换现代 schema 输出）。
+- ✅ **sing-box 模板渲染**：`&template=<http(s) URL>` 指向一份 sing-box JSON 模板，节点与 `NotesName` 分组自动注入，输出完整配置。
+- ✅ **节点名过滤**：`&include=` / `&exclude=` 正则过滤（provider 模式下映射为客户端 `filter` / `exclude-filter` 持续过滤）。
+- ✅ **Clash proxy-provider 输出**：`&provider=true` 生成 `proxy-providers` 骨架，客户端自行拉取与更新节点。
+
+> 内核解析以 Clash.Meta 字段为中介，再渲染到各 target；目标格式不支持的协议 / 规则会被跳过并记入日志。
 
 ## 快速开始
 
@@ -92,7 +98,7 @@ docker compose up -d
 
 | 参数 | 说明 |
 |---|---|
-| `target` | 输出目标：`clash` / `singbox` / `surge` / `shadowrocket` / `quanx` / `loon` / `v2ray` |
+| `target` | 输出目标：`clash` / `singbox` / `surge` / `shadowrocket` / `quanx` / `loon` / `v2ray`，支持 `name/版本`（如 `singbox/1.3`） |
 | `url` | 订阅链接，多个用 `\|` 分隔（必填）；也可直接粘贴节点链接（`vless://` 等） |
 | `config` | 外部 INI 配置 URL 或本地路径 |
 | `insert` | 是否合并服务端 `insert_url` 节点（覆盖配置默认） |
@@ -108,7 +114,8 @@ docker compose up -d
 | `udp` `tfo` `scv` | 节点特性开关（部分 target 支持） |
 | `filename` `interval` | 下载文件名 / 客户端自动更新间隔 |
 | `nocache` `flushcache` | 绕过 / 清空缓存 |
-| `proxy` | 本次请求使用的上游代理 |
+| `proxy` | 本次请求的上游代理 |
+| `ua` | 按请求覆盖抓取 UA（扩展参数；Web UI 提供 UA 预设下拉自动回填） |
 
 ## 解决访问限制
 

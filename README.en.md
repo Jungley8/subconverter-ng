@@ -28,6 +28,12 @@
 - ✅ **Rulesets & external configs**: Parses subconverter INI external configs (`ruleset=` / `custom_proxy_group=` / `clash_rule_base`), compatible with ACL4SSR and `expand=false` rule-providers.
 - ✅ **Dual operation modes**: HTTP service daemon and one-shot offline CLI converter.
 - ✅ **Cross-platform router builds**: Pre-built binaries for Linux, macOS, Windows, and OpenWrt routers (MIPS, MIPSLE, ARMv7).
+- ✅ **Per-request fetch UA**: `&ua=` overrides the fetch User-Agent (the Web UI has a UA preset dropdown). `target` accepts `name/version` (for example `singbox/1.3`). The version drops protocols the declared kernel cannot render and switches to the modern schema.
+- ✅ **sing-box template rendering**: `&template=<http(s) URL>` points at a sing-box JSON template. Nodes and `NotesName` groups are injected, and the output is a full config.
+- ✅ **Node-name filtering**: `&include=` / `&exclude=` regex filters. Provider mode maps them to the client's `filter` / `exclude-filter`.
+- ✅ **Clash proxy-provider output**: `&provider=true` emits a `proxy-providers` skeleton. The client fetches and refreshes nodes by itself.
+
+> The kernel parses through Clash.Meta fields, then renders to each target. Protocols and rules the target format does not support are skipped and logged.
 
 ## Quick Start
 

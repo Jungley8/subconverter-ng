@@ -49,6 +49,15 @@ export SUBNG_USER_AGENT="clash-verge/v1.6.0"
 subconverter-ng convert --url '<subscription>' --ua "ClashforWindows/0.20.39"
 ```
 
+### Per-request override (`&ua=`)
+
+A `/sub` request can override the fetch User-Agent for that request:
+
+- **`&ua=<string>`**: sets the UA directly. It applies to **all remote fetches** of this request (subscription / rules / external config).
+- The Web UI "UA preset" dropdown (clash.meta / v2ray / singbox / surge / shadowrocket / quanx / loon) fills the `ua` field with the matching UA. You do not need to remember the UA string.
+
+Precedence: **`&ua=` > the `fetch.user_agent` config (the `SUBNG_USER_AGENT` environment variable does the same) > the built-in default `clash.meta/1.18.0 mihomo/1.18.0`**.
+
 ## Troubleshooting
 
 - **Subscription parses to 0 nodes**: check the UA first. Run `curl -A "<your UA>" '<subscription>' | base64 -d | head` to see what the provider actually returns.

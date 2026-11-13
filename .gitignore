@@ -11,5 +11,9 @@ dist/
 .omo/
 /site/
 
-# local build output at repo root (use `make build` -> bin/ instead)
-subconverter-ng
+# local build output at repo root (use `make build` -> bin/ instead).
+# Anchored with "/" so it does NOT match cmd/subconverter-ng/.
+/subconverter-ng
+
+# local scratch space (test artifacts, commit-message drafts)
+/temp/

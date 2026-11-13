@@ -65,6 +65,36 @@ type Options struct {
 	// Maps to &tailscale=true.
 	Tailscale bool
 
+	// TargetVersion is the optional client version parsed from a "name/version"
+	// target spec (e.g. "singbox/1.3"); nil means no version was declared, in
+	// which case generators behave exactly as before. The sing-box generator
+	// uses it to gate protocols the client cannot render.
+	TargetVersion *Version
+
+	// ProviderMode switches the clash generator to proxy-provider output: the
+	// subscription URLs become mihomo proxy-providers (the client fetches node
+	// updates itself) instead of inlined proxies. Only share-link url= entries
+	// are still rendered inline. Maps to &provider=true (target=clash only).
+	ProviderMode bool
+
+	// ProviderURLs are the http(s) subscription URLs exposed as proxy-providers
+	// (one "sub-N" entry each). Set only when ProviderMode is true.
+	ProviderURLs []string
+
+	// ProviderUA, when non-empty, is emitted as the providers' custom
+	// User-Agent header (from &ua=).
+	ProviderUA string
+
+	// ProviderInterval is the providers' update interval in seconds
+	// (&interval=, default 86400).
+	ProviderInterval int
+
+	// ProviderInclude / ProviderExclude are the per-request remarks regexes
+	// (&include= / &exclude=) mapped onto the providers' filter /
+	// exclude-filter, so the client keeps filtering newly pulled nodes.
+	ProviderInclude string
+	ProviderExclude string
+
 	// ExcludeProtocols drops nodes matching any of these protocol names or
 	// aliases (e.g. "hysteria2", "tuic", "vless"). Maps to &exclude_protocol=...
 	ExcludeProtocols []string
@@ -110,7 +140,9 @@ func CompileRenameRules(raw []string) []RenameRule {
 type groupOut struct {
 	Name      string   `yaml:"name"`
 	Type      string   `yaml:"type"`
-	Proxies   []string `yaml:"proxies"`
+	Proxies   []string `yaml:"proxies,omitempty"`
+	Use       []string `yaml:"use,omitempty"`
+	Filter    string   `yaml:"filter,omitempty"`
 	URL       string   `yaml:"url,omitempty"`
 	Interval  int      `yaml:"interval,omitempty"`
 	Timeout   int      `yaml:"timeout,omitempty"`
@@ -124,7 +156,8 @@ type clashOut struct {
 	LogLevel           string           `yaml:"log-level"`
 	ExternalController string           `yaml:"external-controller"`
 	DNS                map[string]any   `yaml:"dns"`
-	Proxies            []map[string]any `yaml:"proxies"`
+	Proxies            []map[string]any `yaml:"proxies,omitempty"`
+	ProxyProviders     map[string]any   `yaml:"proxy-providers,omitempty"`
 	ProxyGroups        []groupOut       `yaml:"proxy-groups"`
 	RuleProviders      map[string]any   `yaml:"rule-providers,omitempty"`
 	Rules              []string         `yaml:"rules"`
@@ -140,6 +173,7 @@ type Result struct {
 	SkippedNodes      []string // nodes a target cannot render (name + reason)
 	Duplicates        int      // nodes removed by dedup
 	DeprecatedDropped int      // nodes removed by filter-deprecated (fdn)
+	Filtered          int      // nodes removed by include/exclude remarks filters
 	ExcludedProtocols int      // nodes removed by exclude_protocol
 }
 

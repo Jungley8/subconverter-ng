@@ -23,6 +23,22 @@ import (
 	"github.com/Jungley8/subconverter-ng/internal/proxy"
 )
 
+// Version is a parsed client version from a "name/version" target spec
+// (e.g. "singbox/1.3.11" -> {1, 13, 11}).
+type Version struct {
+	Major, Minor, Patch int
+}
+
+// AtLeast reports whether v's (Major, Minor) pair is lexicographically >=
+// (major, minor); Patch does not participate. A nil *Version means "no version
+// declared" and callers skip the comparison entirely.
+func (v *Version) AtLeast(major, minor int) bool {
+	if v.Major != major {
+		return v.Major > major
+	}
+	return v.Minor >= minor
+}
+
 func sanitizeNodeName(name string) string {
 	name = strings.ReplaceAll(name, "\r", "")
 	name = strings.ReplaceAll(name, "\n", " ")
@@ -60,7 +76,9 @@ func prepareNodes(nodes []*proxy.Proxy, cfg *extconfig.Config, opts Options, res
 		res.ExcludedProtocols = dropped
 	}
 
+	before := len(nodes)
 	nodes = filterNodes(nodes, cfg)
+	res.Filtered = before - len(nodes)
 	if opts.FilterDeprecated {
 		var dropped int
 		nodes, dropped = filterDeprecated(nodes)

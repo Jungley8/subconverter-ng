@@ -47,6 +47,15 @@ export SUBNG_USER_AGENT="clash-verge/v1.6.0"
 subconverter-ng convert --url '<订阅>' --ua "ClashforWindows/0.20.39"
 ```
 
+### 按请求覆盖（`&ua=`）
+
+`/sub` 请求还可用扩展参数按请求覆盖抓取 UA：
+
+- **`&ua=<字符串>`**：直接指定 UA，对本次请求的**全部远程抓取**（订阅 / 规则 / 外部配置）生效。
+- Web UI 的「UA 预设」下拉（clash.meta / v2ray / singbox / surge / shadowrocket / quanx / loon）选中后自动把对应 UA 回填进 `ua` 输入框，无需手记 UA 字符串。
+
+优先级：**`&ua=` > `fetch.user_agent` 配置（环境变量 `SUBNG_USER_AGENT` 同效） > 内置默认 `clash.meta/1.18.0 mihomo/1.18.0`**。
+
 ## 排错
 
 - **订阅解析出 0 个节点**：先确认 UA。用 `curl -A "<你的UA>" '<订阅>' | base64 -d | head` 看机场到底返回了什么。
