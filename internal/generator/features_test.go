@@ -976,3 +976,19 @@ func TestInlineLogicalRule_KeepsValueIntact(t *testing.T) {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
+
+// A body that is not TYPE,VALUE[,FLAG]-shaped must be reported as skipped, not
+// emitted as a broken line that makes mihomo reject the whole config.
+func TestInlineRule_RejectsMalformedBodies(t *testing.T) {
+	for _, body := range []string{
+		"GEOIP",                    // no value
+		",CN",                      // no type
+		"GEOIP,,no-resolve",        // empty value
+		"GEOIP,CN,",                // empty flag
+		"DOMAIN,x,no-resolve,more", // stray fourth field
+	} {
+		if got, ok := expandInlineRule(body, "G"); ok {
+			t.Errorf("%q accepted as %q", body, got)
+		}
+	}
+}
