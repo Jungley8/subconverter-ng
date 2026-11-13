@@ -235,20 +235,20 @@ func TestExpandInlineRule(t *testing.T) {
 }
 
 func TestParseInlineRuleParams(t *testing.T) {
-	// Parameterised geo/IP types: value is the second field, known trailing
-	// parameters land in Flag, junk tokens (legacy "policy" markers) are dropped.
+	// TYPE,VALUE[,FLAG]: the value is the second field and a third field is the
+	// flag. Anything past the flag, or a missing value, is not rule-shaped.
 	cases := []struct {
 		body  string
 		group string
 		want  Rule
 	}{
 		{"GEOIP,CN", "G", Rule{Type: "GEOIP", Value: "CN", Group: "G"}},
-		{"GEOIP,PRIVATE,policy,no-resolve", "G", Rule{Type: "GEOIP", Value: "PRIVATE", Group: "G", Flag: "no-resolve"}},
+		{"GEOIP,PRIVATE,no-resolve", "G", Rule{Type: "GEOIP", Value: "PRIVATE", Group: "G", Flag: "no-resolve"}},
 		{"GEOIP,CN,no-resolve", "G", Rule{Type: "GEOIP", Value: "CN", Group: "G", Flag: "no-resolve"}},
-		{"IP-CIDR,1.2.3.0/24,no-resolve,src", "G", Rule{Type: "IP-CIDR", Value: "1.2.3.0/24", Group: "G", Flag: "no-resolve,src"}},
+		{"IP-CIDR,1.2.3.0/24,no-resolve", "G", Rule{Type: "IP-CIDR", Value: "1.2.3.0/24", Group: "G", Flag: "no-resolve"}},
 		{"DST-PORT,443", "G", Rule{Type: "DST-PORT", Value: "443", Group: "G"}},
-		// Non-parameterised types keep the legacy verbatim body as Value.
-		{"DOMAIN-SUFFIX,a,b", "G", Rule{Type: "DOMAIN-SUFFIX", Value: "a,b", Group: "G"}},
+		// Logical matchers keep their comma-filled remainder as the value.
+		{"AND,((DOMAIN,a),(NETWORK,udp))", "G", Rule{Type: "AND", Value: "((DOMAIN,a),(NETWORK,udp))", Group: "G"}},
 	}
 	for _, c := range cases {
 		got, ok := parseInlineRule(c.body, c.group)
@@ -256,8 +256,13 @@ func TestParseInlineRuleParams(t *testing.T) {
 			t.Errorf("parseInlineRule(%q) = %+v,%v, want %+v", c.body, got, ok, c.want)
 		}
 	}
+	for _, body := range []string{"GEOIP,PRIVATE,policy,no-resolve", "IP-CIDR,1.2.3.0/24,no-resolve,src", "DOMAIN-SUFFIX,"} {
+		if r, ok := parseInlineRule(body, "G"); ok {
+			t.Errorf("parseInlineRule(%q) = %+v, want rejected", body, r)
+		}
+	}
 	// The clash line re-emits the parameter after the group.
-	r, _ := parseInlineRule("GEOIP,PRIVATE,policy,no-resolve", "G")
+	r, _ := parseInlineRule("GEOIP,PRIVATE,no-resolve", "G")
 	if line, ok := formatClashRule(r); !ok || line != "GEOIP,PRIVATE,G,no-resolve" {
 		t.Errorf("formatClashRule = %q,%v, want GEOIP,PRIVATE,G,no-resolve", line, ok)
 	}

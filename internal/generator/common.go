@@ -354,54 +354,50 @@ func collectRules(ctx context.Context, cfg *extconfig.Config, f Fetcher, opts Op
 	return append(tsRules, rules...), skipped
 }
 
-// ruleParamTypes are rule types whose inline bodies may carry trailing
-// parameters after the value (e.g. []GEOIP,CN,no-resolve). Values of these
-// types never contain commas, so extra tokens are parameters, not value.
-var ruleParamTypes = map[string]bool{
-	"GEOIP": true, "SRC-GEOIP": true,
-	"IP-CIDR": true, "IP-CIDR6": true, "SRC-IP-CIDR": true,
-	"IP-SUFFIX": true, "SRC-IP-SUFFIX": true, "IP-ASN": true, "SRC-IP-ASN": true,
-	"SRC-PORT": true, "DST-PORT": true,
-}
+// logicalRuleTypes are the only matchers whose Value legally contains commas
+// (AND,((DOMAIN,a),(NETWORK,udp))), so their remainder must not be split.
+var logicalRuleTypes = map[string]bool{"AND": true, "OR": true, "NOT": true}
 
-// ruleParams are the trailing parameters Clash/mihomo accepts on IP/geo/port
-// rules. Anything else (legacy "policy" markers, typos) is dropped so configs
-// from hand-edited rulesets still load.
-var ruleParams = map[string]bool{"no-resolve": true, "src": true}
-
-// parseInlineRule turns a []inline body into a neutral Rule. Types are kept
-// verbatim (target-neutral); ok is false only when the body is not rule-shaped
-// (a lone token that is neither FINAL nor MATCH).
+// parseRuleBody parses one rule body in TYPE,VALUE[,FLAG] form. Both the inline
+// ([]GEOIP,CN,no-resolve) and remote (.list) paths go through here so the two
+// cannot drift. ok is false when the body is not rule-shaped.
 //
-//	FINAL      -> {Type: MATCH}
-//	GEOIP,CN   -> {Type: GEOIP, Value: CN}
-//	DOMAIN,x   -> {Type: DOMAIN, Value: x}
-//
-// For parameterised rule types the value is the second field and trailing
-// parameters land in Flag; for every other type the body after the first comma
-// is kept verbatim as Value, matching the legacy behaviour.
-func parseInlineRule(body, group string) (Rule, bool) {
-	if strings.EqualFold(body, "FINAL") || strings.EqualFold(body, "MATCH") {
+//	FINAL                  -> {Type: MATCH}
+//	GEOIP,CN               -> {Type: GEOIP, Value: CN}
+//	GEOIP,CN,no-resolve    -> {Type: GEOIP, Value: CN, Flag: no-resolve}
+//	AND,((DOMAIN,a),(..))  -> {Type: AND, Value: ((DOMAIN,a),(..))}
+func parseRuleBody(line, group string) (Rule, bool) {
+	if strings.EqualFold(line, "FINAL") || strings.EqualFold(line, "MATCH") {
 		return Rule{Type: "MATCH", Group: group}, true
 	}
-	typ, val, found := strings.Cut(body, ",")
-	if !found {
+	fields := strings.Split(line, ",")
+	for i := range fields {
+		fields[i] = strings.TrimSpace(fields[i])
+	}
+	typ := fields[0]
+	if typ == "" || len(fields) < 2 {
 		return Rule{}, false
 	}
-	if ruleParamTypes[strings.ToUpper(strings.TrimSpace(typ))] {
-		fields := strings.Split(val, ",")
-		val = strings.TrimSpace(fields[0])
-		var params []string
-		for _, f := range fields[1:] {
-			if p := strings.ToLower(strings.TrimSpace(f)); ruleParams[p] {
-				params = append(params, p)
-			}
-		}
-		if len(params) > 0 {
-			return Rule{Type: typ, Value: val, Group: group, Flag: strings.Join(params, ",")}, true
-		}
+	if logicalRuleTypes[strings.ToUpper(typ)] {
+		return Rule{Type: typ, Value: strings.Join(fields[1:], ","), Group: group}, true
 	}
-	return Rule{Type: typ, Value: val, Group: group}, true
+	// Anything past the flag means the line has no shape we can render safely.
+	if len(fields) > 3 || fields[1] == "" {
+		return Rule{}, false
+	}
+	r := Rule{Type: typ, Value: fields[1], Group: group}
+	if len(fields) == 3 {
+		if fields[2] == "" {
+			return Rule{}, false
+		}
+		r.Flag = fields[2]
+	}
+	return r, true
+}
+
+// parseInlineRule turns a []inline body into a neutral Rule.
+func parseInlineRule(body, group string) (Rule, bool) {
+	return parseRuleBody(strings.TrimSpace(body), group)
 }
 
 // parseRemoteRuleset parses an ACL4SSR-style .list file into neutral Rule
@@ -421,21 +417,10 @@ func parseRemoteRuleset(data []byte, group string) (out []Rule, skipped []string
 				continue
 			}
 		}
-		fields := strings.Split(line, ",")
-		for i := range fields {
-			fields[i] = strings.TrimSpace(fields[i])
-		}
-		switch len(fields) {
-		case 2: // TYPE,VALUE
-			out = append(out, Rule{Type: fields[0], Value: fields[1], Group: group})
-		case 3: // TYPE,VALUE,flag (e.g. no-resolve)
-			out = append(out, Rule{Type: fields[0], Value: fields[1], Group: group, Flag: fields[2]})
-		case 1: // bare keyword like FINAL/MATCH
-			if strings.EqualFold(fields[0], "FINAL") || strings.EqualFold(fields[0], "MATCH") {
-				out = append(out, Rule{Type: "MATCH", Group: group})
-			} else {
-				skipped = append(skipped, line)
-			}
+		if r, ok := parseRuleBody(line, group); ok {
+			out = append(out, r)
+		} else {
+			skipped = append(skipped, line)
 		}
 	}
 	return out, skipped
