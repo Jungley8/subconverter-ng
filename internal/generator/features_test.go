@@ -901,3 +901,78 @@ func TestPrepareNodes_NilConfigDoesNotPanic(t *testing.T) {
 		t.Fatalf("expected 1 node, got %d", len(prepared))
 	}
 }
+
+// A three-field inline ruleset ([]TYPE,VALUE,FLAG) must produce the same rule as
+// the identical line in a remote .list: the flag belongs after the group name.
+func TestInlineRuleFlag_AllTargets(t *testing.T) {
+	const (
+		group = "DIRECT"
+		body  = "GEOIP,LAN,no-resolve"
+	)
+	cfg := &extconfig.Config{
+		EnableRuleGenerator: true,
+		ProxyGroups:         []extconfig.ProxyGroup{{Name: "Proxy", Type: "select", Selectors: []string{".*"}}},
+		Rulesets:            []extconfig.Ruleset{{Group: group, Inline: body}},
+	}
+	nodes := mkNodes()
+
+	clash, err := GenerateClash(context.Background(), nodes, cfg, fakeFetcher{}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(clash.Output); !strings.Contains(got, "GEOIP,LAN,DIRECT,no-resolve") {
+		t.Errorf("clash inline flag misplaced:\n%s", got)
+	}
+
+	surge, err := GenerateSurge(context.Background(), nodes, cfg, fakeFetcher{}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(surge.Output); !strings.Contains(got, "GEOIP,LAN,DIRECT,no-resolve") {
+		t.Errorf("surge inline flag misplaced:\n%s", got)
+	}
+
+	quanx, err := GenerateQuanX(context.Background(), nodes, cfg, fakeFetcher{}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(quanx.Output); !strings.Contains(got, "geoip, lan, direct, no-resolve") {
+		t.Errorf("quanx inline flag misplaced:\n%s", got)
+	}
+}
+
+// Inline and remote paths must agree on the same body — one parser, no drift.
+func TestInlineRule_MatchesRemoteRuleset(t *testing.T) {
+	for _, body := range []string{
+		"IP-CIDR,8.8.8.8/32,no-resolve",
+		"IP-CIDR6,2001:db8::/32,no-resolve",
+		"DOMAIN-SUFFIX,google.com",
+		"FINAL",
+	} {
+		inline, ok := expandInlineRule(body, "G")
+		if !ok {
+			t.Errorf("%q: inline rule rejected", body)
+			continue
+		}
+		remote, skipped := expandRemoteRuleset([]byte(body), "G")
+		if len(remote) != 1 || len(skipped) != 0 {
+			t.Errorf("%q: remote = %v skipped = %v", body, remote, skipped)
+			continue
+		}
+		if inline != remote[0] {
+			t.Errorf("%q: inline %q != remote %q", body, inline, remote[0])
+		}
+	}
+}
+
+// Logical rules carry commas inside their value, so the whole remainder must
+// stay one field instead of being split into value + flag.
+func TestInlineLogicalRule_KeepsValueIntact(t *testing.T) {
+	got, ok := expandInlineRule("AND,((DOMAIN,example.com),(NETWORK,udp))", "G")
+	if !ok {
+		t.Fatal("logical inline rule rejected")
+	}
+	if want := "AND,((DOMAIN,example.com),(NETWORK,udp)),G"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
