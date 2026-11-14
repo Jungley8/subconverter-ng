@@ -43,9 +43,15 @@ func TestHandler_ServesIndex(t *testing.T) {
 		// The config input must tell users that leaving it blank falls back to
 		// the server-side default (SUBNG_DEFAULT_CONFIG_URL).
 		"留空用服务端默认",
+		// The provider interval field is seconds and must send provider_interval;
+		// `interval` means the client profile update interval in hours.
+		"provider_interval=",
 	} {
 		if !strings.Contains(body, expected) {
 			t.Errorf("expected body to contain %q", expected)
 		}
+	}
+	if strings.Contains(body, "$('interval')") {
+		t.Error("the provider interval field must not send interval= (that param is hours, not provider seconds)")
 	}
 }

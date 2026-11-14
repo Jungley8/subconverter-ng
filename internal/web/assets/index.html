@@ -786,7 +786,7 @@
           <label for="provider">Provider 模式 <span class="opt">可选 · 仅 target=clash：订阅变为 mihomo proxy-providers，客户端自行拉取与更新节点；emoji/改名/fdn 不作用于 provider 载荷</span></label>
           <div style="display:flex; gap:12px; align-items:center;">
             <label style="display:flex; gap:6px; align-items:center; margin:0;"><input type="checkbox" id="provider" style="width:auto;"> 启用 proxy-provider 输出</label>
-            <label style="display:flex; gap:6px; align-items:center; margin:0;">更新间隔(秒) <input type="text" id="interval" placeholder="86400" style="width:110px;"></label>
+            <label style="display:flex; gap:6px; align-items:center; margin:0;">Provider 更新间隔(秒) <input type="text" id="provider_interval" placeholder="86400" style="width:110px;"></label>
           </div>
         </div>
 
@@ -1082,7 +1082,7 @@ var QRCode=function(t){"use strict";var r,e=function(){return"function"==typeof 
   // 1. Form Caching & Converter Logic (Tab 1)
   // ==========================================
   var STORE_KEY_FORM = 'subng.form.v1';
-  var TEXT_FIELDS = ['urls', 'config', 'target', 'ua', 'targetVersion', 'include', 'exclude', 'proxy', 'interval', 'exclude_protocol'];
+  var TEXT_FIELDS = ['urls', 'config', 'target', 'ua', 'targetVersion', 'include', 'exclude', 'proxy', 'provider_interval', 'exclude_protocol'];
   var FLAG_FIELDS = ['sort', 'dedup', 'udp', 'tfo', 'scv', 'fdn', 'append_type', 'tailscale', 'emoji', 'provider'];
 
   function saveFormState() {
@@ -1149,9 +1149,13 @@ var QRCode=function(t){"use strict";var r,e=function(){return"function"==typeof 
     var excludeRe = $('exclude').value.trim();
     if (excludeRe) { params.push('exclude=' + encodeURIComponent(excludeRe)); }
 
-    var interval = $('interval').value.trim();
-    if (interval) { params.push('interval=' + encodeURIComponent(interval)); }
-    if ($('provider').checked) { params.push('provider=true'); }
+    // provider_interval is seconds and only read in provider mode; `interval`
+    // means the client profile update interval in HOURS and must not be reused.
+    var providerInterval = $('provider_interval').value.trim();
+    if ($('provider').checked) {
+      params.push('provider=true');
+      if (providerInterval) { params.push('provider_interval=' + encodeURIComponent(providerInterval)); }
+    }
 
     ['sort', 'dedup', 'udp', 'tfo', 'scv', 'fdn', 'append_type', 'tailscale'].forEach(function (k) {
       if ($(k).checked) { params.push(k + '=true'); }

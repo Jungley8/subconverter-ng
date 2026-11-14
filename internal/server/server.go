@@ -221,23 +221,25 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 	if target == "" {
 		target = "clash"
 	}
+	// Early target validation: reject unknown names and malformed versions
+	// (e.g. "singbox/abc") before any fetch work happens. Parsing also makes the
+	// conflict checks below case-insensitive, as target names are everywhere
+	// else (NormalizeTarget).
+	name, ver, err := convert.ParseTarget(target)
+	if err != nil {
+		http.Error(w, "invalid target: "+err.Error(), http.StatusBadRequest)
+		return
+	}
 	// &template= renders a full sing-box config, so it pins the target. An
 	// explicitly conflicting target= is a user error — fail closed with a 400
 	// instead of silently overriding (CLI behaves the same way).
 	template := strings.TrimSpace(q.Get("template"))
 	if template != "" {
-		if explicit := q.Get("target"); explicit != "" && explicit != "singbox" && !strings.HasPrefix(explicit, "singbox/") {
+		if explicit := q.Get("target"); explicit != "" && name != convert.TargetSingbox {
 			http.Error(w, fmt.Sprintf("target=%s conflicts with template= (template output is always sing-box); drop the target param or use singbox", explicit), http.StatusBadRequest)
 			return
 		}
-		target = convert.TargetSingbox
-	}
-	// Early target validation: reject unknown names and malformed versions
-	// (e.g. "singbox/abc") before any fetch work happens.
-	name, ver, err := convert.ParseTarget(target)
-	if err != nil {
-		http.Error(w, "invalid target: "+err.Error(), http.StatusBadRequest)
-		return
+		target, name, ver = convert.TargetSingbox, convert.TargetSingbox, nil
 	}
 
 	rawURL := q.Get("url")
@@ -326,11 +328,11 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "provider=true conflicts with template= (template output is always sing-box)", http.StatusBadRequest)
 			return
 		}
-		if explicit := q.Get("target"); explicit != "" && explicit != "clash" && !strings.HasPrefix(explicit, "clash/") {
+		if explicit := q.Get("target"); explicit != "" && name != convert.TargetClash {
 			http.Error(w, fmt.Sprintf("provider=true is only available with target=clash (got target=%s)", explicit), http.StatusBadRequest)
 			return
 		}
-		target = convert.TargetClash
+		target, name, ver = convert.TargetClash, convert.TargetClash, nil
 	}
 	// &provider_interval=: proxy-provider update interval in seconds (provider
 	// mode only). Deliberately not &interval=: that one already means the

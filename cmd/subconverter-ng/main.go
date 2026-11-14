@@ -233,7 +233,8 @@ func cmdConvert(args []string) {
 	// --template always renders sing-box JSON. A conflicting --target given
 	// explicitly is a user error (matches the server's 400 behavior); when
 	// --target was left at its default it is silently pinned to singbox.
-	if *template != "" && *target != "singbox" {
+	// Target names are case-insensitive everywhere else, so compare normalized.
+	if *template != "" && convert.NormalizeTarget(*target) != convert.TargetSingbox {
 		explicitTarget := false
 		fs.Visit(func(f *flag.Flag) {
 			if f.Name == "target" {
@@ -243,7 +244,7 @@ func cmdConvert(args []string) {
 		if explicitTarget {
 			fatal("--target %s conflicts with --template (template output is always sing-box); drop --target or use singbox", *target)
 		}
-		*target = "singbox"
+		*target = convert.TargetSingbox
 	}
 
 	// --provider turns target=clash into proxy-provider output. Conflicts fail
@@ -252,7 +253,7 @@ func cmdConvert(args []string) {
 		if *template != "" {
 			fatal("--provider conflicts with --template (template output is always sing-box)")
 		}
-		if *target != "clash" {
+		if convert.NormalizeTarget(*target) != convert.TargetClash {
 			explicitTarget := false
 			fs.Visit(func(f *flag.Flag) {
 				if f.Name == "target" {
@@ -262,7 +263,7 @@ func cmdConvert(args []string) {
 			if explicitTarget {
 				fatal("--provider is only available with target=clash (got --target %s)", *target)
 			}
-			*target = "clash"
+			*target = convert.TargetClash
 		}
 	}
 
