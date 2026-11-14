@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -212,5 +213,64 @@ func TestHandleSub_TargetNameIsCaseInsensitive(t *testing.T) {
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sub?target=clash&template=http://example.com/t.json&url=http://example.com/s", nil))
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("target=clash with template must still 400, got %d", rec.Code)
+	}
+}
+
+// TestHandleSub_UAOverrideSkipsSharedCache pins the cache policy for a
+// request-supplied UA: the UA is an unbounded key space, so caching it lets a
+// caller mint entries until every real one is evicted. Those requests therefore
+// skip the shared cache; the configured user_agent still caches.
+func TestHandleSub_UAOverrideSkipsSharedCache(t *testing.T) {
+	sub := b64("ss://" + b64("aes-256-gcm:pw") + "@1.1.1.1:8388#HK")
+	ini := "[custom]\nruleset=🐟 Final,[]FINAL\ncustom_proxy_group=🚀 Select`select`.*\nenable_rule_generator=true\n"
+
+	var mu sync.Mutex
+	hits := map[string]int{}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/sub.txt"):
+			mu.Lock()
+			hits[r.URL.Path]++
+			mu.Unlock()
+			_, _ = w.Write([]byte(sub))
+		case strings.HasSuffix(r.URL.Path, "/config.init"):
+			_, _ = w.Write([]byte(ini))
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	air := httptest.NewServer(mux)
+	defer air.Close()
+
+	h := New(testConfig()).Handler()
+	get := func(path, extra string) {
+		t.Helper()
+		q := "/sub?target=clash&url=" + url.QueryEscape(air.URL+path) +
+			"&config=" + url.QueryEscape(air.URL+"/config.init") + extra
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, q, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+		}
+	}
+	count := func(path string) int {
+		mu.Lock()
+		defer mu.Unlock()
+		return hits[path]
+	}
+
+	// &ua=: two requests, two upstream fetches.
+	get("/ua/sub.txt", "&ua=Custom/1.0")
+	get("/ua/sub.txt", "&ua=Custom/1.0")
+	if got := count("/ua/sub.txt"); got != 2 {
+		t.Errorf("upstream hits with &ua= = %d, want 2 (the shared cache must not serve a UA-specific entry)", got)
+	}
+
+	// No &ua=: the second request is a cache hit.
+	get("/plain/sub.txt", "")
+	get("/plain/sub.txt", "")
+	if got := count("/plain/sub.txt"); got != 1 {
+		t.Errorf("upstream hits without &ua= = %d, want 1 (the shared cache should serve the repeat)", got)
 	}
 }

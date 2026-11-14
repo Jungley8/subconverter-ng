@@ -75,7 +75,7 @@ sing-box 协议能力表（best-effort，依据 sing-box 官方 release notes）
 | `filename` | 设置下载文件名（`Content-Disposition`） | :material-check: |
 | `interval` | 客户端订阅自动更新间隔（小时，默认 24，`Profile-Update-Interval` 头） | :material-check: |
 | `proxy` | **本次请求**的上游代理，由服务端发起连接，需服务端公网可达（扩展参数） | :material-check: |
-| `ua` | 按请求覆盖抓取 UA，对本次请求的全部远程抓取（订阅 / 规则 / 外部配置）生效（扩展参数；Web UI 提供 UA 预设下拉自动回填） | :material-check: |
+| `ua` | 按请求覆盖抓取 UA，对本次请求的全部远程抓取（订阅 / 规则 / 外部配置）生效（扩展参数；Web UI 提供 UA 预设下拉自动回填）。带 `ua` 的请求不读写共享缓存：UA 是无界键空间，缓存它会让别人把已有条目挤掉；需要缓存就在服务端配置 `user_agent` | :material-check: |
 | `nocache` | `1` 时绕过本次请求的 TTL 缓存，强制重新抓取 | :material-check: |
 | `flushcache` | `1` 时先清空整个共享缓存再处理本次请求（另有 `GET /flushcache` 端点） | :material-check: |
 | `check` | `true` 时不返回配置，改返回本次转换的 **JSON 诊断报告**（见下） | :material-check: |
@@ -192,7 +192,7 @@ insert:
 
 !!! note "重命名 / 缓存 / 限流"
     - **rename**：外部配置里写 `rename=<正则>@<替换>`（支持 `\1` / `$1` 反向引用、空替换），批量改节点名。处理顺序：去 emoji → 重命名 → 加 emoji。
-    - **缓存**：订阅与规则列表按 URL 做内存 TTL 缓存（默认 300s），避免每次 `/sub` 都去 GitHub 拉规则列表被限流。缓存键含 UA，同一 URL 不同 UA 的响应互不串缓存。`cache_ttl: -1s` 可关闭。
+    - **缓存**：订阅与规则列表做内存 TTL 缓存（默认 300s），避免每次 `/sub` 都去 GitHub 拉规则列表被限流。缓存键由 UA、上游代理和 URL 三者组成：同一 URL 在不同 UA 或不同 `&proxy=` 下互不串缓存（`&proxy=` 由请求方指定，共用缓存会让一个人的出口内容被后来者读到）。`cache_ttl: -1s` 可关闭。
     - **限流**：`/sub` 按客户端 IP 限流（默认 30/min、burst 10），超限返回 `429 + Retry-After`；`/version` 与 Web 界面不受限。详见 `config.example.yaml`。
     - **Subscription-Userinfo**：机场返回的流量 / 到期头会透传给客户端。
 

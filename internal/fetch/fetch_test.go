@@ -320,6 +320,72 @@ func TestSingleFlight_CollapsesConcurrentRequests(t *testing.T) {
 	}
 }
 
+// TestCacheKey_SeparatesProxyAndUA pins the cache key inputs. Sharing an entry
+// across UAs serves one client's content to another; sharing across proxies
+// lets whoever supplies &proxy= choose the bytes every later request receives.
+func TestCacheKey_SeparatesProxyAndUA(t *testing.T) {
+	mk := func(proxy, ua string) *Client {
+		c, err := New(Options{Proxy: proxy, UserAgent: ua, AllowPrivateIPs: true, CacheTTL: -1})
+		if err != nil {
+			t.Fatalf("New(proxy=%q, ua=%q): %v", proxy, ua, err)
+		}
+		return c
+	}
+	const target = "https://sub.example.com/sub?token=1"
+	base := mk("", "UA/1").cacheKey(target)
+	if other := mk("", "UA/2").cacheKey(target); other == base {
+		t.Error("cache key ignores the User-Agent")
+	}
+	if other := mk("socks5://10.0.0.1:1080", "UA/1").cacheKey(target); other == base {
+		t.Error("cache key ignores the upstream proxy")
+	}
+	if other := mk("", "UA/1").cacheKey("https://sub.example.com/other"); other == base {
+		t.Error("cache key ignores the URL")
+	}
+}
+
+// TestGet_CacheDoesNotCrossProxies is the behavioral half: a direct client
+// populates the shared cache, then a client routed through a different proxy
+// asks for the same URL. It must not receive the direct client's body, and it
+// must attempt its own fetch (which fails here, because the proxy is dead).
+func TestGet_CacheDoesNotCrossProxies(t *testing.T) {
+	var directHits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		directHits.Add(1)
+		_, _ = w.Write([]byte("content-from-direct-egress"))
+	}))
+	defer srv.Close()
+
+	shared := NewCache(time.Minute)
+	direct, err := New(Options{AllowPrivateIPs: true, Cache: shared, CacheTTL: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := direct.Get(context.Background(), srv.URL)
+	if err != nil {
+		t.Fatalf("direct fetch: %v", err)
+	}
+	if string(body) != "content-from-direct-egress" {
+		t.Fatalf("direct body = %q", body)
+	}
+
+	// Port 1 refuses connections immediately; the point is that this client
+	// must try to dial it instead of reading the shared cache entry.
+	proxied, err := New(Options{
+		Proxy: "http://127.0.0.1:1", AllowPrivateIPs: true,
+		Cache: shared, CacheTTL: time.Minute,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if body, err := proxied.Get(context.Background(), srv.URL); err == nil {
+		t.Fatalf("proxied client got a body (%q) without fetching through its proxy: the cache key ignores the proxy", body)
+	}
+	if got := directHits.Load(); got != 1 {
+		t.Errorf("upstream hits = %d, want 1 (the proxied request must not reach it)", got)
+	}
+}
+
 func TestFetchDirect_BodySizeLimit(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		chunk := make([]byte, 1<<20) // 1MB chunk

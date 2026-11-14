@@ -76,7 +76,7 @@ The declared version also selects the sing-box config schema (from the official 
 | `filename` | Set the download filename (`Content-Disposition`) | :material-check: |
 | `interval` | Client subscription auto-update interval (hours, default 24, `Profile-Update-Interval` header) | :material-check: |
 | `proxy` | Upstream proxy for this request; connection initiated by server, must be publicly reachable from server (extension parameter) | :material-check: |
-| `ua` | Override the fetch User-Agent for this request. Applies to every remote fetch (subscription / rules / external config) (extension parameter; the Web UI has a UA preset dropdown that fills this field) | :material-check: |
+| `ua` | Override the fetch User-Agent for this request. Applies to every remote fetch (subscription / rules / external config) (extension parameter; the Web UI has a UA preset dropdown that fills this field). A request with `ua` neither reads nor writes the shared cache: the UA is an unbounded key space, so caching it would let callers evict every real entry. Set `user_agent` in the server config if you need caching | :material-check: |
 | `nocache` | When `1`, bypass this request's TTL cache and force a refetch | :material-check: |
 | `flushcache` | When `1`, clear the entire shared cache before handling this request (there is also a `GET /flushcache` endpoint) | :material-check: |
 | `check` | When `true`, return a JSON report of the conversion instead of the config (see below) | :material-check: |
@@ -195,7 +195,7 @@ insert:
 
 !!! note "Rename / cache / rate limit"
     - **rename**: in the external config, write `rename=<regex>@<replacement>` (supports `\1` / `$1` backreferences and empty replacement) to batch-rename nodes. Order of operations: remove emoji → rename → add emoji.
-    - **Cache**: subscriptions and rule lists are cached in memory by URL with a TTL (default 300s), to avoid hitting GitHub for rule lists on every `/sub` and getting rate-limited. The cache key includes the User-Agent, so the same URL with different UAs does not share an entry. `cache_ttl: -1s` disables it.
+    - **Cache**: subscriptions and rule lists are cached in memory by URL with a TTL (default 300s), to avoid hitting GitHub for rule lists on every `/sub` and getting rate-limited. The cache key covers the User-Agent, the upstream proxy, and the URL, so the same URL under a different UA or a different `&proxy=` never shares an entry (`&proxy=` is request-supplied; a shared entry would let one caller's egress answer another's request). `cache_ttl: -1s` disables it.
     - **Rate limit**: `/sub` is rate-limited per client IP (default 30/min, burst 10); over-limit returns `429 + Retry-After`; `/version` and the Web UI are exempt. See `config.example.yaml`.
     - **Subscription-Userinfo**: the traffic / expiry headers returned by the provider are passed through to the client.
 

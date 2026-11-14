@@ -3,6 +3,7 @@ package generator
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -17,6 +18,11 @@ var nodesPlaceholder = regexp.MustCompile(`\{\{\s*Nodes\s*\}\}`)
 // notesNamePlaceholder matches Liquid Formula's {{ "<regex>" | NotesName }}
 // selector expansion.
 var notesNamePlaceholder = regexp.MustCompile(`\{\{\s*"([^"]*)"\s*\|\s*NotesName\s*\}\}`)
+
+// ErrTemplateInvalid marks template problems the user can fix: no {{ Nodes }}
+// placeholder, an invalid NotesName regex, or output that is not valid JSON.
+// Callers answer 400 for these instead of blaming the upstream.
+var ErrTemplateInvalid = errors.New("invalid template")
 
 // notesFallback is emitted when a NotesName selector matches no node. sing-box
 // rejects a selector/urltest without outbounds, and Liquid Formula renders the
@@ -42,7 +48,7 @@ func GenerateSingboxTemplate(ctx context.Context, nodes []*proxy.Proxy, cfg *ext
 		return nil, fmt.Errorf("no valid nodes for template rendering: all nodes were filtered out, dropped, or unsupported by sing-box")
 	}
 	if !nodesPlaceholder.Match(tmpl) {
-		return nil, fmt.Errorf(`template has no {{ Nodes }} placeholder: refusing to render a config without the converted nodes`)
+		return nil, fmt.Errorf(`%w: no {{ Nodes }} placeholder, refusing to render a config without the converted nodes`, ErrTemplateInvalid)
 	}
 
 	// Node outbounds are rendered compactly and joined with commas; the
@@ -98,7 +104,7 @@ func GenerateSingboxTemplate(ctx context.Context, nodes []*proxy.Proxy, cfg *ext
 	// Fail fast here rather than shipping a config the client rejects at startup.
 	var probe map[string]any
 	if err := json.Unmarshal([]byte(out), &probe); err != nil {
-		return nil, fmt.Errorf("rendered template is not valid JSON: %w", err)
+		return nil, fmt.Errorf("%w: rendered template is not valid JSON: %w", ErrTemplateInvalid, err)
 	}
 	res.Output = []byte(out)
 	return res, nil
