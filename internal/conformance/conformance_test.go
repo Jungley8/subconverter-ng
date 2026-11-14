@@ -21,9 +21,10 @@
 //	CONFORMANCE_SINGBOX=$(which sing-box) CONFORMANCE_MIHOMO=$(which mihomo) \
 //	  go test -tags conformance ./internal/conformance -v
 //
-// CONFORMANCE_SINGBOX accepts a comma-separated list so the matrix can pick the
-// smallest binary that satisfies a declared target version; a single binary
-// still validates every case it is new enough for.
+// CONFORMANCE_SINGBOX accepts a comma-separated list so the matrix can install
+// one binary per schema generation. Each case names the release line that must
+// validate it and skips when that line is absent: a newer client rejects an
+// obsolete format by design, so validating an old case with it proves nothing.
 package conformance
 
 import (
@@ -39,7 +40,6 @@ import (
 	"testing"
 
 	"github.com/Jungley8/subconverter-ng/internal/convert"
-	"github.com/Jungley8/subconverter-ng/internal/generator"
 )
 
 // fixtureBase is a host that never resolves: every fixture URL is served by
@@ -89,10 +89,6 @@ func fixtures(t *testing.T) convert.Fetcher {
 type client struct {
 	path                string
 	major, minor, patch int
-}
-
-func (c client) atLeast(major, minor int) bool {
-	return c.major > major || (c.major == major && c.minor >= minor)
 }
 
 var versionRe = regexp.MustCompile(`v?(\d+)\.(\d+)\.(\d+)`)
@@ -162,11 +158,16 @@ func singboxClients(t *testing.T) []client {
 	return clients
 }
 
-// pickSingbox returns the oldest client that is at least as new as the declared
-// target version.
-func pickSingbox(clients []client, need generator.Version) *client {
+// pickSingbox returns the client whose release line is exactly major.minor.
+//
+// "Newest is fine" is false here. sing-box removes an old schema generation
+// outright: 1.14 refuses a config written for 1.11, which is a correct rejection
+// of an obsolete format, not a bug in the generator. A case therefore names the
+// release line that must validate it, and a case whose client is not installed
+// skips instead of failing against a client it was never meant for.
+func pickSingbox(clients []client, major, minor int) *client {
 	for i := range clients {
-		if clients[i].atLeast(need.Major, need.Minor) {
+		if clients[i].major == major && clients[i].minor == minor {
 			return &clients[i]
 		}
 	}
@@ -230,32 +231,34 @@ func TestSingboxClientAcceptsOutput(t *testing.T) {
 		name     string
 		target   string
 		template bool
-		// need is the schema generation the case must be validated with; the
-		// binary has to be at least this new.
-		need generator.Version
-		// what the case is here to catch, used in the skip message.
+		// clientMajor/clientMinor name the release line that must accept the
+		// output. Declared-version cases below 1.12 are validated by 1.11:
+		// 1.14 no longer reads that DNS format, so validating them with the
+		// newest binary would fail for a reason that is not our bug.
+		clientMajor, clientMinor int
+		// covers names what the case protects, used in the skip message.
 		covers string
 	}{
-		{"default", "singbox", false, generator.Version{Major: 1, Minor: 14},
+		{"default", "singbox", false, 1, 14,
 			"the unversioned target must work with the current sing-box release"},
-		{"declared-1.10", "singbox/1.10", false, generator.Version{Major: 1, Minor: 10},
+		{"declared-1.10", "singbox/1.10", false, 1, 11,
 			"pre-action rules, pre-rule_set routing"},
-		{"declared-1.11", "singbox/1.11", false, generator.Version{Major: 1, Minor: 11},
+		{"declared-1.11", "singbox/1.11", false, 1, 11,
 			"1.11 rule actions (hijack-dns / reject)"},
-		{"declared-1.12", "singbox/1.12", false, generator.Version{Major: 1, Minor: 12},
+		{"declared-1.12", "singbox/1.12", false, 1, 14,
 			"1.12 DNS format, route.rule_set, default_domain_resolver"},
-		{"declared-1.13", "singbox/1.13", false, generator.Version{Major: 1, Minor: 13},
+		{"declared-1.13", "singbox/1.13", false, 1, 14,
 			"1.13 removal of block / dns-out"},
-		{"template", "singbox", true, generator.Version{Major: 1, Minor: 14},
+		{"template", "singbox", true, 1, 14,
 			"Liquid-Formula template output is a complete config"},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			bin := pickSingbox(clients, tc.need)
+			bin := pickSingbox(clients, tc.clientMajor, tc.clientMinor)
 			if bin == nil {
-				t.Skipf("no sing-box >= %d.%d installed (case covers: %s)",
-					tc.need.Major, tc.need.Minor, tc.covers)
+				t.Skipf("no sing-box %d.%d installed (case covers: %s)",
+					tc.clientMajor, tc.clientMinor, tc.covers)
 			}
 
 			req := convert.Request{
