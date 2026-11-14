@@ -78,6 +78,7 @@ sing-box 协议能力表（best-effort，依据 sing-box 官方 release notes）
 | `ua` | 按请求覆盖抓取 UA，对本次请求的全部远程抓取（订阅 / 规则 / 外部配置）生效（扩展参数；Web UI 提供 UA 预设下拉自动回填） | :material-check: |
 | `nocache` | `1` 时绕过本次请求的 TTL 缓存，强制重新抓取 | :material-check: |
 | `flushcache` | `1` 时先清空整个共享缓存再处理本次请求（另有 `GET /flushcache` 端点） | :material-check: |
+| `check` | `true` 时不返回配置，改返回本次转换的 **JSON 诊断报告**（见下） | :material-check: |
 
 ## 节点处理参数（部分 target 有效）
 
@@ -108,6 +109,56 @@ sing-box 协议能力表（best-effort，依据 sing-box 官方 release notes）
 - 分组：INI `custom_proxy_group` 的 `[]字面量` 保持 `proxies:` 成员；**正则选择器映射为组级 `filter` + `use:`**（mihomo 原生能力，region 分组照常工作）；无外部配置时生成「🚀 节点选择 / ♻️ 自动选择」最小分组
 - **不适用**：emoji、rename、fdn、dedup 等服务端节点处理不作用于 provider 载荷（客户端看到机场原始节点）；协议版本门控同理
 - 与 `template=` 或非 clash 的显式 `target=` 同用会返回 400
+
+#### 什么时候用 provider 模式
+
+| 你的情况 | 用哪种 | 原因 |
+|---|---|---|
+| 想改节点名（emoji、rename、`&include`/`&exclude` 改显示） | 普通模式 | provider 载荷由客户端直连机场，转换器看不到节点 |
+| 机场节点多、经常换，希望客户端自动更新 | provider 模式 | 客户端按 `provider_interval` 拉取，不经过转换器 |
+| 机场限制 UA、需要 `&ua=` | 两种都行 | 普通模式改抓取 UA；provider 模式写入 `header.User-Agent` |
+| 需要 `&fdn` / `&dedup` / `&exclude_protocol` 生效 | 普通模式 | 这几项对 provider 载荷不生效 |
+| 客户端不是 mihomo 内核 | 普通模式 | `proxy-providers` 是 mihomo 扩展，其它客户端读不懂 |
+
+## 诊断报告（`&check=true`）
+
+同一个转换，返回 JSON 报告而不是配置。用于「导入成功，但少了东西」时定位原因：
+
+```bash
+curl -s 'http://127.0.0.1:25500/sub?target=clash&url=...&config=...&check=true'
+```
+
+```json
+{
+  "target": "clash",
+  "content_type": "text/yaml; charset=utf-8",
+  "output_bytes": 18234,
+  "provider": false,
+  "nodes": 42,
+  "skipped_lines": 3,
+  "unsupported_nodes": [],
+  "empty_groups": ["🇯🇵 JP"],
+  "dropped_rules": ["IP-CIDR,10.0.0.0/8,no-resolve,extra,DIRECT"],
+  "duplicates": 0,
+  "deprecated": 0,
+  "filtered_remarks": 0,
+  "excluded_protocols": 0,
+  "subscription_userinfo": "upload=0; download=0; total=0; expire=0"
+}
+```
+
+| 字段 | 含义 |
+|---|---|
+| `target` | 实际使用的目标，声明了版本时带版本（如 `singbox/1.13`） |
+| `nodes` | 输出节点数；`provider=true` 时只统计内联的分享链接节点 |
+| `skipped_lines` | 订阅中无法解析的行数。只给数量，不回显内容：无法解析的行通常仍是含密码的分享链接 |
+| `unsupported_nodes` | 目标格式无法承载、被丢弃的节点名 |
+| `empty_groups` | 选择器没匹配到任何节点的分组（已填入 `DIRECT`）。通常是正则写错，或机场改了节点名 |
+| `dropped_rules` | 无法安全渲染的规则，例如超过三个字段的行 |
+| `duplicates` / `deprecated` / `filtered_remarks` / `excluded_protocols` | `&dedup` / `&fdn` / `&include` / `&exclude` / `&exclude_protocol` 移除的节点数 |
+| `subscription_userinfo` | 机场返回的流量/到期信息（没有该响应头时省略） |
+
+响应头带 `Cache-Control: no-store`。`check=true` 只改变响应内容，抓取、缓存、限流的处理与正常转换相同。
 
 !!! note "其它 target 的规则处理"
     surge 系 / quanx / sing-box 统一把规则**展开为内联规则**（远程规则集会被抓取并逐条转换为目标语法）；

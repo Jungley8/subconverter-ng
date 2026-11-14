@@ -79,6 +79,7 @@ The declared version also selects the sing-box config schema (from the official 
 | `ua` | Override the fetch User-Agent for this request. Applies to every remote fetch (subscription / rules / external config) (extension parameter; the Web UI has a UA preset dropdown that fills this field) | :material-check: |
 | `nocache` | When `1`, bypass this request's TTL cache and force a refetch | :material-check: |
 | `flushcache` | When `1`, clear the entire shared cache before handling this request (there is also a `GET /flushcache` endpoint) | :material-check: |
+| `check` | When `true`, return a JSON report of the conversion instead of the config (see below) | :material-check: |
 
 ## Node-processing parameters (apply to some targets)
 
@@ -107,6 +108,58 @@ Same idea as the original subconverter `clash.proxy-provider` template. The conv
 - Groups: `[]literal` selectors in the INI `custom_proxy_group` stay as `proxies:` members. Regex selectors become a group-level `filter` plus `use:` (native mihomo behavior, so region groups keep working). With no external config, a minimal "Rocket selector / auto-select" pair is generated.
 - Not applied: emoji, rename, fdn, dedup, and protocol version gating do not touch provider payloads. The client sees the provider's raw nodes.
 - Combining this with `template=` or an explicit non-clash `target=` returns 400.
+
+#### Which mode to use
+
+| Your situation | Use | Why |
+|---|---|---|
+| You want renamed nodes (emoji, rename, `&include`/`&exclude` rewriting names) | Normal mode | In provider mode the client fetches nodes from the airport; the converter never sees them |
+| The airport changes nodes often and the client should follow | Provider mode | mihomo refreshes at `provider_interval` without going through the converter |
+| The airport restricts the User-Agent and you need `&ua=` | Either | Normal mode changes the fetch User-Agent; provider mode writes `header.User-Agent` |
+| You need `&fdn` / `&dedup` / `&exclude_protocol` to take effect | Normal mode | These do not apply to provider payloads |
+| The client is not a mihomo core | Normal mode | `proxy-providers` is a mihomo extension; other clients cannot read it |
+
+## Diagnostics (`&check=true`)
+
+Runs the same conversion and returns a JSON report instead of the config. Use it when
+a profile imports but something is missing:
+
+```bash
+curl -s 'http://127.0.0.1:25500/sub?target=clash&url=...&config=...&check=true'
+```
+
+```json
+{
+  "target": "clash",
+  "content_type": "text/yaml; charset=utf-8",
+  "output_bytes": 18234,
+  "provider": false,
+  "nodes": 42,
+  "skipped_lines": 3,
+  "unsupported_nodes": [],
+  "empty_groups": ["🇯🇵 JP"],
+  "dropped_rules": ["IP-CIDR,10.0.0.0/8,no-resolve,extra,DIRECT"],
+  "duplicates": 0,
+  "deprecated": 0,
+  "filtered_remarks": 0,
+  "excluded_protocols": 0,
+  "subscription_userinfo": "upload=0; download=0; total=0; expire=0"
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `target` | The target actually used, with the version when one is declared (e.g. `singbox/1.13`) |
+| `nodes` | Nodes in the output. With `provider=true` this counts only inline share-link nodes |
+| `skipped_lines` | Subscription lines that did not parse. The count only: an unparseable line is usually a share link, and it still contains a password |
+| `unsupported_nodes` | Nodes the target format cannot carry, dropped by name |
+| `empty_groups` | Groups whose selector matched no node (they are filled with `DIRECT`). Usually a wrong regex or the airport renamed its nodes |
+| `dropped_rules` | Rules that could not be rendered safely, such as lines with more than three fields |
+| `duplicates` / `deprecated` / `filtered_remarks` / `excluded_protocols` | Nodes removed by `&dedup` / `&fdn` / `&include` / `&exclude` / `&exclude_protocol` |
+| `subscription_userinfo` | Traffic and expiry from the airport headers (omitted when absent) |
+
+The response carries `Cache-Control: no-store`. `check=true` changes only the response body:
+fetching, caching, and rate limiting behave as in a normal conversion.
 
 !!! note "Rule handling for other targets"
     surge family / quanx / sing-box always **expand rules inline** (remote rule sets are fetched and converted

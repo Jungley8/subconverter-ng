@@ -788,6 +788,7 @@
             <label style="display:flex; gap:6px; align-items:center; margin:0;"><input type="checkbox" id="provider" style="width:auto;"> 启用 proxy-provider 输出</label>
             <label style="display:flex; gap:6px; align-items:center; margin:0;">Provider 更新间隔(秒) <input type="text" id="provider_interval" placeholder="86400" style="width:110px;"></label>
           </div>
+          <p class="hint" id="providerHint" hidden>provider 模式下节点由客户端直接向机场拉取：emoji、改名、fdn、去重都不生效，且只有 mihomo（Clash.Meta）内核能读这份配置。</p>
         </div>
 
         <div class="field">
@@ -1110,6 +1111,12 @@ var QRCode=function(t){"use strict";var r,e=function(){return"function"==typeof 
     el.addEventListener('input', saveFormState);
     el.addEventListener('change', saveFormState);
   });
+
+  // The provider hint lists what stops applying in provider mode; it only needs
+  // to be on screen while the switch is on.
+  function syncProviderHint() { $('providerHint').hidden = !$('provider').checked; }
+  $('provider').addEventListener('change', syncProviderHint);
+  syncProviderHint();
 
   // UA presets (frontend-only): picking one back-fills the ua input; the
   // backend only ever sees the resulting &ua= value.
