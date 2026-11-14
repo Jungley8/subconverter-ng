@@ -49,3 +49,51 @@ jobs:
         with:
           name: coverage
           path: coverage.out
+
+  # Renders the fixtures and feeds them to the real clients: unit tests assert
+  # the shape we intend, this asserts the shape the client accepts.
+  conformance:
+    runs-on: ubuntu-latest
+    env:
+      CONFORMANCE_REQUIRE: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.x"
+          cache: true
+
+      # Two sing-box generations: 1.11 validates the 1.10/1.11 schemas, 1.14
+      # validates 1.12 and later. Checking a 1.10 config with 1.14 would fail
+      # for the wrong reason: the old format no longer exists there.
+      - name: Install sing-box
+        env:
+          SB_OLD: "1.11.1"
+          SB_NEW: "1.14.4"
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/clients"
+          cd "$RUNNER_TEMP/clients"
+          for v in "$SB_OLD" "$SB_NEW"; do
+            curl -fsSL -o "sb-$v.tar.gz" "https://github.com/SagerNet/sing-box/releases/download/v$v/sing-box-$v-linux-amd64.tar.gz"
+            tar xzf "sb-$v.tar.gz"
+            chmod +x "sing-box-$v-linux-amd64/sing-box"
+          done
+          echo "CONFORMANCE_SINGBOX=$PWD/sing-box-$SB_OLD-linux-amd64/sing-box,$PWD/sing-box-$SB_NEW-linux-amd64/sing-box" >> "$GITHUB_ENV"
+
+      - name: Install mihomo
+        env:
+          MIHOMO: "1.19.34"
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/clients"
+          cd "$RUNNER_TEMP/clients"
+          curl -fsSL -o mihomo.gz "https://github.com/MetaCubeX/mihomo/releases/download/v$MIHOMO/mihomo-linux-amd64-v$MIHOMO.gz"
+          gunzip -f mihomo.gz
+          mv "mihomo-linux-amd64-v$MIHOMO" mihomo
+          chmod +x mihomo
+          echo "CONFORMANCE_MIHOMO=$PWD/mihomo" >> "$GITHUB_ENV"
+
+      - name: Run conformance matrix
+        run: make conformance

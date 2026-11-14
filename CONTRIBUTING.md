@@ -42,6 +42,26 @@ golangci-lint run ./...
 
 All pull requests must pass tests, linters, and coverage checks before merge.
 
+## Client Conformance Tests
+
+Unit tests check the config shape we intend to emit. They cannot tell whether
+the client accepts it. Some clients reject a config that looks correct to us,
+such as a field moved to the wrong level or a removed option.
+
+The conformance suite renders the fixtures in `internal/conformance/testdata`
+and validates the output with the real clients. Install `sing-box` and `mihomo`,
+then run:
+
+```bash
+make conformance
+```
+
+Set `CONFORMANCE_SINGBOX` (comma-separated for several versions) or
+`CONFORMANCE_MIHOMO` to use specific binaries instead of `PATH`.
+
+Add a case to `internal/conformance/conformance_test.go` when you add a target
+or change the output for a client version.
+
 ## Submitting Pull Requests
 
 1. Create a feature branch from `main`.

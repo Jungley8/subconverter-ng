@@ -138,6 +138,7 @@ make test    # Run unit tests and race detection
 make vet     # Run linters and static analysis
 make build   # Build single binary to bin/
 make run     # Run server locally
+make conformance  # Validate output with real sing-box / mihomo (install both first)
 ```
 
 ## License

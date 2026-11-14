@@ -1,0 +1,90 @@
+name: Conformance (latest clients)
+
+# Unit tests can only assert the shape we intend to emit. This job asks the
+# current sing-box and mihomo releases whether they still accept it, so a client
+# release that drops a field we emit is caught here instead of by users.
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  conformance:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CONFORMANCE_REQUIRE: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.x"
+          cache: true
+
+      - name: Resolve latest client releases
+        id: latest
+        run: |
+          set -euo pipefail
+          sb=$(gh release view -R SagerNet/sing-box --json tagName -q .tagName | sed 's/^v//')
+          mh=$(gh release view -R MetaCubeX/mihomo --json tagName -q .tagName | sed 's/^v//')
+          echo "sing-box $sb / mihomo $mh"
+          echo "SB=$sb" >> "$GITHUB_ENV"
+          echo "MH=$mh" >> "$GITHUB_ENV"
+          echo "sb=$sb" >> "$GITHUB_OUTPUT"
+          echo "mh=$mh" >> "$GITHUB_OUTPUT"
+
+      - name: Install clients
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/clients"
+          cd "$RUNNER_TEMP/clients"
+          curl -fsSL -o sb.tar.gz "https://github.com/SagerNet/sing-box/releases/download/v$SB/sing-box-$SB-linux-amd64.tar.gz"
+          tar xzf sb.tar.gz
+          chmod +x sing-box-*/sing-box
+          echo "CONFORMANCE_SINGBOX=$(ls -d "$PWD"/sing-box-*/sing-box)" >> "$GITHUB_ENV"
+          curl -fsSL -o mihomo.gz "https://github.com/MetaCubeX/mihomo/releases/download/v$MH/mihomo-linux-amd64-v$MH.gz"
+          gunzip -f mihomo.gz
+          mv "mihomo-linux-amd64-v$MH" mihomo
+          chmod +x mihomo
+          echo "CONFORMANCE_MIHOMO=$PWD/mihomo" >> "$GITHUB_ENV"
+
+      - name: Run conformance matrix
+        run: |
+          set -o pipefail
+          make conformance 2>&1 | tee conformance.log
+
+      # One tracking issue, commented on each time it still fails: a nightly
+      # that opens a new issue every night trains people to ignore it.
+      - name: Report failure
+        if: failure() && steps.latest.outcome == 'success'
+        run: |
+          set -euo pipefail
+          title="Conformance failed against the latest sing-box / mihomo"
+          body=$(mktemp)
+          {
+            echo "The nightly conformance suite rejected our output with sing-box \`${{ steps.latest.outputs.sb }}\` and mihomo \`${{ steps.latest.outputs.mh }}\`."
+            echo
+            echo "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo
+            echo '```'
+            tail -n 120 conformance.log || true
+            echo '```'
+          } > "$body"
+          existing=$(gh issue list --state open --search "$title in:title" --json number -q '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body-file "$body"
+          else
+            gh issue create --title "$title" --body-file "$body"
+          fi
+
+      - name: Keep the log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conformance-log
+          path: conformance.log

@@ -1,0 +1,36 @@
+proxies:
+  - name: "🇭🇰 HK 01"
+    type: ss
+    server: 1.2.3.4
+    port: 8388
+    cipher: aes-128-gcm
+    password: pw
+    udp: true
+  - name: "🇯🇵 JP 01"
+    type: vmess
+    server: 5.6.7.8
+    port: 443
+    uuid: 11111111-2222-3333-4444-555555555555
+    alterId: 0
+    cipher: auto
+    tls: true
+    servername: jp.example.com
+  - name: "🇺🇸 US 01"
+    type: trojan
+    server: 9.9.9.9
+    port: 443
+    password: pw
+    sni: us.example.com
+  - name: "🇸🇬 SG 01"
+    type: hysteria2
+    server: 8.8.4.4
+    port: 8443
+    password: pw
+    sni: sg.example.com
+    skip-cert-verify: true
+  - name: "官网入口"
+    type: ss
+    server: 127.0.0.1
+    port: 10000
+    cipher: aes-128-gcm
+    password: pw
