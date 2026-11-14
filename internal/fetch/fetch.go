@@ -20,7 +20,6 @@ import (
 	"net/http/cookiejar"
 	"net/netip"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
@@ -82,11 +81,19 @@ const defaultUA = "clash.meta/1.18.0 mihomo/1.18.0"
 // defaultCacheTTL is applied when Options.CacheTTL is zero.
 const defaultCacheTTL = 300 * time.Second
 
+// maxUserAgentLen bounds the request UA (and thus the cache key it feeds). The
+// UA is request-controllable (&ua=), so an unbounded value would let a client
+// grow cache keys without limit.
+const maxUserAgentLen = 256
+
 // New builds a Client. proxyOverride, when non-empty, replaces opts.Proxy
 // (used for per-request &proxy= overrides).
 func New(opts Options) (*Client, error) {
 	if opts.UserAgent == "" {
 		opts.UserAgent = defaultUA
+	}
+	if len(opts.UserAgent) > maxUserAgentLen {
+		return nil, fmt.Errorf("user agent too long: %d bytes (max %d)", len(opts.UserAgent), maxUserAgentLen)
 	}
 	if opts.Timeout == 0 {
 		opts.Timeout = 30 * time.Second
@@ -230,11 +237,11 @@ func (c *Client) GetWithMeta(ctx context.Context, target string) ([]byte, http.H
 
 func (c *Client) fetchDirect(ctx context.Context, target string) ([]byte, http.Header, error) {
 	redactedTarget := config.RedactURL(target)
-	body, hdr, status, err := c.do(ctx, target, nil)
+	body, hdr, status, err := c.do(ctx, target, nil, false)
 	// Gateway hiccups (airport panels intermittently answer 502/504) are worth a
-	// retry or two. The retry URL carries a unique _r= param because
-	// subconverter deployments cache by full URL and would otherwise replay the
-	// cached failure.
+	// retry or two. Retries send no-cache headers instead of appending a cache
+	// buster: a rewritten query would invalidate signed subscription URLs, whose
+	// signature covers the query string.
 	for attempt := 1; attempt <= c.opts.MaxRetries && err == nil && isTransientStatus(status); attempt++ {
 		// Back off only while the caller is still waiting: a cancelled or
 		// timed-out request must not linger in sleep.
@@ -243,7 +250,7 @@ func (c *Client) fetchDirect(ctx context.Context, target string) ([]byte, http.H
 			return nil, nil, ctx.Err()
 		case <-time.After(retryBackoff):
 		}
-		body, hdr, status, err = c.do(ctx, cacheBusted(target, attempt), nil)
+		body, hdr, status, err = c.do(ctx, target, nil, true)
 	}
 	if err == nil && !isCloudflareChallenge(status, body) {
 		// Fail closed on non-200: a 404/500 body is an error page, not a
@@ -268,7 +275,7 @@ func (c *Client) fetchDirect(ctx context.Context, target string) ([]byte, http.H
 	if ferr != nil {
 		return nil, nil, fmt.Errorf("fetch %s: cloudflare solve failed: %w", redactedTarget, config.RedactError(ferr))
 	}
-	body, hdr, status, err = c.do(ctx, target, &replay{cookies: cookies, userAgent: ua})
+	body, hdr, status, err = c.do(ctx, target, &replay{cookies: cookies, userAgent: ua}, false)
 	if err != nil {
 		return nil, nil, fmt.Errorf("fetch %s: replay after solve failed: %w", redactedTarget, config.RedactError(err))
 	}
@@ -308,7 +315,7 @@ type replay struct {
 
 const maxResponseBodySize = 10 << 20 // 10MB limit
 
-func (c *Client) do(ctx context.Context, target string, r *replay) ([]byte, http.Header, int, error) {
+func (c *Client) do(ctx context.Context, target string, r *replay, noCache bool) ([]byte, http.Header, int, error) {
 	var lastErr error
 	for attempt := 0; attempt <= c.opts.MaxRetries; attempt++ {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
@@ -326,6 +333,12 @@ func (c *Client) do(ctx context.Context, target string, r *replay) ([]byte, http
 		}
 		req.Header.Set("User-Agent", ua)
 		req.Header.Set("Accept", "*/*")
+		if noCache {
+			// Ask any upstream cache to revalidate instead of replaying the
+			// failure we are retrying.
+			req.Header.Set("Cache-Control", "no-cache")
+			req.Header.Set("Pragma", "no-cache")
+		}
 
 		resp, err := c.http.Do(req)
 		if err != nil {
@@ -351,19 +364,6 @@ func isTransientStatus(status int) bool {
 
 // retryBackoff keeps retries snappy: these gateway hiccups clear within ~1s.
 const retryBackoff = 400 * time.Millisecond
-
-// cacheBusted appends a unique _r=<n> query param so an upstream cache keyed by
-// the full URL misses and the request reaches the origin again.
-func cacheBusted(target string, attempt int) string {
-	u, err := url.Parse(target)
-	if err != nil {
-		return target
-	}
-	q := u.Query()
-	q.Set("_r", strconv.FormatInt(time.Now().UnixNano()+int64(attempt), 10))
-	u.RawQuery = q.Encode()
-	return u.String()
-}
 
 // isCloudflareChallenge detects the JS interstitial / managed-challenge page.
 func isCloudflareChallenge(status int, body []byte) bool {

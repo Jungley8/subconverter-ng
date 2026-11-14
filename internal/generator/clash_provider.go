@@ -35,6 +35,11 @@ func GenerateClashProvider(ctx context.Context, localNodes []*proxy.Proxy, cfg *
 		opts.ProviderInterval = defaultProviderIntvl
 	}
 
+	// Local share-link nodes are real inline nodes, so server-side processing
+	// (emoji, rename, fdn, dedup, remarks filters, protocol exclusion) applies to
+	// them. Provider payloads are untouched because they are never parsed here.
+	localNodes = prepareNodes(localNodes, cfg, opts, res)
+
 	proxies := make([]map[string]any, 0, len(localNodes))
 	localNames := make([]string, 0, len(localNodes))
 	for _, n := range localNodes {
@@ -144,6 +149,7 @@ func buildGroupsProvider(defs []extconfig.ProxyGroup, providers, localNames []st
 			Tolerance: d.Tolerance,
 		}
 		var filters []string
+		useAll := false
 		seen := map[string]bool{}
 		add := func(name string) {
 			if name != "" && !seen[name] {
@@ -157,6 +163,10 @@ func buildGroupsProvider(defs []extconfig.ProxyGroup, providers, localNames []st
 				continue
 			}
 			if sel == ".*" {
+				// A match-all selector means "every node", and in provider mode
+				// every node means every provider: attach them all with no
+				// filter. The ACL4SSR "🚀 节点选择`select`.*" group depends on it.
+				useAll = true
 				for _, n := range localNames {
 					add(n)
 				}
@@ -175,7 +185,7 @@ func buildGroupsProvider(defs []extconfig.ProxyGroup, providers, localNames []st
 		if len(filters) > 0 {
 			g.Filter = strings.Join(filters, "|")
 		}
-		if len(filters) > 0 && len(providers) > 0 {
+		if len(providers) > 0 && (useAll || len(filters) > 0) {
 			g.Use = providers
 		}
 		if len(g.Proxies) == 0 && len(g.Use) == 0 {

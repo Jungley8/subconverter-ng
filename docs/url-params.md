@@ -22,7 +22,7 @@
 
 ### 版本门控（`target=name[/version]`）
 
-`target` 可带版本后缀，如 `target=singbox/1.3.xx`（`xx` 等非数字尾段被忽略，等价于 `1.3`）或 `target=singbox/1.13.11`（即 `1.13.11`）。版本当前仅 `singbox` 消费：按协议门控，剔除老内核不支持的协议节点并计入 `SkippedNodes` / 日志（原因 `requires sing-box >= 1.x`）。未声明版本时不门控（行为不变）；非法版本（如 `singbox/abc`）报错；其它 target 带版本会被接受并忽略。
+`target` 可带版本后缀，如 `target=singbox/1.3.xx`（`xx` 等非数字尾段被忽略，等价于 `1.3`）或 `target=singbox/1.13.11`（即 `1.13.11`）。版本当前仅 `singbox` 消费：按协议门控，剔除老内核不支持的协议节点并计入 `SkippedNodes` / 日志（原因 `requires sing-box >= 1.x`）。未声明版本时不门控，且按当前 sing-box（1.14）schema 输出；老内核请显式声明版本。非法版本（如 `singbox/abc`）报错；其它 target 带版本会被接受并忽略。
 
 sing-box 协议能力表（best-effort，依据 sing-box 官方 release notes）：
 
@@ -44,8 +44,8 @@ sing-box 协议能力表（best-effort，依据 sing-box 官方 release notes）
 | 声明版本 | schema 行为 |
 |---|---|
 | ≥ 1.11 | 启用规则动作：DNS 劫持 / 拒绝类规则改写为 `action: hijack-dns` / `action: reject`，不再输出 `block` / `dns` 特殊出站（1.13 起已移除，老内核会加载失败） |
-| ≥ 1.12 | 启用 `rule_set` 与新 DNS 格式：`GEOSITE` / `GEOIP` 规则迁移为远程 `.srs` 规则集引用（顶层 `rule_set` 数组），`geoip: private` 特例迁移为 `ip_is_private: true`；DNS server 改为 `{type, server}` 新格式（1.14 移除 legacy 格式） |
-| 未声明版本 | 保持 legacy 输出（兼容 ≤ 1.11 老内核），行为与旧版本工具完全一致 |
+| ≥ 1.12 | 启用 `rule_set` 与新 DNS 格式：`GEOSITE` / `GEOIP` 规则迁移为远程 `.srs` 规则集引用（`route.rule_set` 数组，并补 `route.default_domain_resolver`），`geoip: private` 特例迁移为 `ip_is_private: true`；DNS server 改为 `{type, server}` 新格式（1.14 移除 legacy 格式） |
+| 未声明版本 | 按当前 sing-box（1.14）schema 输出（规则动作 + 新 DNS 格式 + `route.rule_set` + `route.default_domain_resolver`）。sing-box ≤ 1.11 的老内核请显式声明版本（如 `singbox/1.11`） |
 
 !!! note
     `direct` 出站从未弃用，所有版本均保留；`rule_set` 引用不写 `download_detour`（1.14 已弃用）。

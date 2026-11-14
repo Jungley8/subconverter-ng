@@ -190,3 +190,27 @@ func TestHandleSub_ProviderIntervalParam(t *testing.T) {
 		t.Errorf("status = %d, want 400 for provider_interval=0", rec.Code)
 	}
 }
+
+// Target names are case-insensitive everywhere else (NormalizeTarget), so the
+// provider/template conflict checks must not reject "Clash" or "SINGBOX".
+func TestHandleSub_TargetNameIsCaseInsensitive(t *testing.T) {
+	air := fakeAirport()
+	defer air.Close()
+	h := New(testConfig()).Handler()
+
+	for _, target := range []string{"Clash", "CLASH"} {
+		req := "/sub?target=" + target + "&provider=true&url=" + url.QueryEscape(air.URL+"/sub.txt") +
+			"&config=" + url.QueryEscape(air.URL+"/config.init")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, req, nil))
+		if rec.Code != http.StatusOK {
+			t.Errorf("target=%s&provider=true: status = %d, want 200, body=%s", target, rec.Code, rec.Body.String())
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sub?target=clash&template=http://example.com/t.json&url=http://example.com/s", nil))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("target=clash with template must still 400, got %d", rec.Code)
+	}
+}
