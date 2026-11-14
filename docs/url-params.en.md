@@ -14,7 +14,26 @@ Query parameters for `GET /sub`, kept as compatible as possible with [tindy2013/
 | `shadowrocket` | `shadow-rocket` | Surge-style managed conf (imported via Shadowrocket's "Config" tab; use clash for home screen subscription) | `text/plain` |
 | `quanx` | `quantumultx` `quantumult-x` | Quantumult X resource config | `text/plain` |
 | `loon` | | Loon `.conf` | `text/plain` |
-| `v2ray` | `mixed` `v2rayn` | base64 node subscription (ss/vmess/vless/trojan/hysteria2/tuic share links) | `text/plain` |
+| `v2ray` | `mixed` `v2rayn` `ss` `ssr` `trojan` | base64 node subscription (ss/vmess/vless/trojan/hysteria2/tuic share links) | `text/plain` |
+| `ssd` | `shadowsocksdroid` | SSD subscription (`ssd://` plus base64 JSON, **Shadowsocks only**) | `text/plain` |
+
+The `v2ray` aliases `ss` / `ssr` / `trojan` / `mixed` all emit the same base64 mixed node list: those clients accept mixed lists, and filtering by protocol would only lose nodes. `surfboard` is an alias of `surge`; Surfboard imports the Surge config as is.
+
+## Subscription input formats (`url=`)
+
+The content behind `url=` is detected by shape, with no extra parameter:
+
+| Input | Meaning |
+|---|---|
+| base64 link list | The common case: each decoded line is one share link (`ss://` `ssr://` `vmess://` `vless://` `trojan://` `hysteria2://` `tuic://` `anytls://` `wireguard://`, etc.) |
+| Clash / Clash.Meta YAML | A `proxies:` document, parsed directly |
+| sing-box JSON | A full config or an `outbounds` array |
+| Surge `.conf` or `[Proxy]` lines | `Name = ss, host, port, ...` |
+| Quantumult X resource | `shadowsocks=host:port, method=..., tag=...` (also reads `[server_local]`-style sections; filter and rewrite sections are ignored) |
+| `ssd://` URI | base64 JSON, still common on older airports; one URI is enough, it does not need to be HTTP-reachable |
+| A single share link | Put `vless://...` directly in `url=`; nothing is fetched |
+
+Lines that do not parse are skipped and counted in the log and `&check=true`; they never fail the whole conversion. An SSD URI and a QuanX resource are single pieces of content you can paste into `url=` as is.
 
 !!! note "Protocol coverage"
     Each target prioritizes the common protocols (ss/vmess/vless/trojan/hysteria2/tuic). A protocol a given

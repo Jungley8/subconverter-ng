@@ -4,9 +4,12 @@
 //   - A ready-made Clash/Clash.Meta YAML document.
 //   - A sing-box JSON configuration or outbounds array.
 //   - A Surge .conf file or [Proxy] node list.
+//   - A Quantumult X resource ("shadowsocks=host:port, method=..., tag=...").
 //   - A base64 blob whose decoded body is a newline-separated list of share
-//     links (ss://, vmess://, vless://, trojan://, hysteria2://, tuic://, etc.)
-//     or one of the structured document formats above.
+//     links (ss://, ssr://, vmess://, vless://, trojan://, hysteria2://,
+//     tuic://, etc.) or one of the structured document formats above.
+//   - An ssd:// subscription (base64 JSON), the format older airports still
+//     hand out.
 package parser
 
 import (
@@ -77,10 +80,11 @@ func matchScheme(s string) string {
 	return ""
 }
 
-// IsShareLink reports whether s is a single share link (e.g.
-// "vless://uuid@host:443?...#name") rather than a subscription URL to fetch.
-// Callers use it to accept node links directly in place of subscription URLs.
-func IsShareLink(s string) bool { return matchScheme(s) != "" }
+// IsShareLink reports whether s is node content carried inline (a single share
+// link such as "vless://uuid@host:443?...#name", or an ssd:// subscription whose
+// body is the payload) rather than a URL to fetch. Callers use it to accept node
+// content directly in place of subscription URLs.
+func IsShareLink(s string) bool { return matchScheme(s) != "" || looksLikeSSD(s) }
 
 // Parse decodes a subscription payload into proxy nodes. Unparseable or
 // unsupported lines are skipped and returned in skipped for diagnostics; a
@@ -88,6 +92,11 @@ func IsShareLink(s string) bool { return matchScheme(s) != "" }
 // a recognized subscription document format.
 func Parse(payload []byte) (nodes []*proxy.Proxy, skipped []string, err error) {
 	text := strings.TrimSpace(string(payload))
+
+	// ssd:// is a whole subscription in one URI, not a line of a list.
+	if nodes, skipped, ok := parseSSD(text); ok {
+		return nodes, skipped, nil
+	}
 
 	// Direct document formats
 	if looksLikeClashYAML(text) {
@@ -98,6 +107,9 @@ func Parse(payload []byte) (nodes []*proxy.Proxy, skipped []string, err error) {
 	}
 	if looksLikeSurge(text) {
 		return parseSurge(text)
+	}
+	if looksLikeQuanX(text) {
+		return parseQuanX(text)
 	}
 
 	body := text
@@ -111,6 +123,9 @@ func Parse(payload []byte) (nodes []*proxy.Proxy, skipped []string, err error) {
 		}
 		if looksLikeSurge(body) {
 			return parseSurge(body)
+		}
+		if looksLikeQuanX(body) {
+			return parseQuanX(body)
 		}
 	}
 

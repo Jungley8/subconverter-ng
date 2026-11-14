@@ -187,7 +187,7 @@ func cmdConvert(args []string) {
 	url := fs.String("url", "", "subscription URL(s), file path, or '-' for stdin, '|'-separated (required)")
 	cfgURL := fs.String("config", "", "external INI config URL, file path, or '-' for stdin")
 	template := fs.String("template", "", "render into a sing-box JSON template fetched over http(s)")
-	target := fs.String("target", "clash", "output target: clash|singbox|surge|shadowrocket|quanx|loon|v2ray")
+	target := fs.String("target", "clash", "output target: clash|singbox|surge|shadowrocket|quanx|loon|v2ray|ssd")
 	out := fs.String("o", "", "output file (default: stdout)")
 	proxy := fs.String("proxy", "", "upstream proxy URL (http/socks5)")
 	flaresolverr := fs.String("flaresolverr", "", "FlareSolverr endpoint, e.g. http://127.0.0.1:8191/v1")

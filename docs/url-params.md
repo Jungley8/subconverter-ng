@@ -14,7 +14,26 @@
 | `shadowrocket` | `shadow-rocket` | Surge 风格托管 conf（Shadowrocket 需在底部「配置」页添加；若在首页添加订阅推荐选 clash） | `text/plain` |
 | `quanx` | `quantumultx` `quantumult-x` | Quantumult X 资源配置 | `text/plain` |
 | `loon` | | Loon `.conf` | `text/plain` |
-| `v2ray` | `mixed` `v2rayn` | base64 节点订阅（ss/vmess/vless/trojan/hysteria2/tuic 分享链接） | `text/plain` |
+| `v2ray` | `mixed` `v2rayn` `ss` `ssr` `trojan` | base64 节点订阅（ss/vmess/vless/trojan/hysteria2/tuic 分享链接） | `text/plain` |
+| `ssd` | `shadowsocksdroid` | SSD 订阅（`ssd://` + base64 JSON，**仅 Shadowsocks**） | `text/plain` |
+
+`v2ray` 的别名 `ss` / `ssr` / `trojan` / `mixed` 输出同一份 base64 混合节点列表：这些客户端都接受混合列表，按类型过滤反而会丢掉节点。`surfboard` 是 `surge` 的别名，输出的 Surge 配置 Surfboard 可直接导入。
+
+## 订阅输入格式（`url=`）
+
+`url=` 指向的内容会按形状自动识别，不需要额外参数：
+
+| 输入 | 说明 |
+|---|---|
+| base64 链接列表 | 最常见：解出后每行一个分享链接（`ss://` `ssr://` `vmess://` `vless://` `trojan://` `hysteria2://` `tuic://` `anytls://` `wireguard://` 等） |
+| Clash / Clash.Meta YAML | `proxies:` 文档，直接解析 |
+| sing-box JSON | 完整配置或 `outbounds` 数组 |
+| Surge `.conf` 或 `[Proxy]` 节点行 | `名称 = ss, host, port, ...` |
+| Quantumult X 资源 | `shadowsocks=host:port, method=..., tag=...`（也认 `[server_local]` 等分段；过滤/重写段忽略） |
+| `ssd://` URI | base64 JSON，旧机场常见；单个 URI 即可，不需要能 HTTP 访问 |
+| 单个分享链接 | 直接把 `vless://...` 这类链接填进 `url=`，不经过抓取 |
+
+解析不了的行会跳过并在日志/`&check=true` 里计数，不会让整份转换失败。SSD 与 QuanX 资源都是**单条内容**，直接贴在 `url=` 里即可。
 
 !!! note "协议覆盖"
     各 target 优先输出常见协议（ss/vmess/vless/trojan/hysteria2/tuic）。某 target 无法表达的协议（如

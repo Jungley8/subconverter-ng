@@ -46,6 +46,9 @@ func TestHandler_ServesIndex(t *testing.T) {
 		// The provider interval field is seconds and must send provider_interval;
 		// `interval` means the client profile update interval in hours.
 		"provider_interval=",
+		// Every target the server can render must be selectable here,
+		// otherwise the UI cannot produce it at all.
+		`<option value="ssd">`,
 		// Provider mode changes which node processing applies, so the switch
 		// must say what stops working before the user enables it.
 		"id=\"providerHint\"",
