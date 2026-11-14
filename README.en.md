@@ -138,7 +138,7 @@ make test    # Run unit tests and race detection
 make vet     # Run linters and static analysis
 make build   # Build single binary to bin/
 make run     # Run server locally
-make conformance  # Validate output with real sing-box / mihomo (install both first)
+make conformance  # Validate output with real sing-box / mihomo (needs mihomo, and CONFORMANCE_SINGBOX pointing at both 1.11 and the current release)
 ```
 
 ## License
