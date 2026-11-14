@@ -69,7 +69,7 @@ jobs:
       # for the wrong reason: the old format no longer exists there.
       - name: Install sing-box
         env:
-          SB_OLD: "1.11.1"
+          SB_OLD: "1.11.15"
           SB_NEW: "1.14.4"
         run: |
           set -euo pipefail

@@ -139,7 +139,7 @@ make test    # 运行测试与竞态检测
 make vet     # 静态检查与 linter
 make build   # 编译单二进制到 bin/
 make run     # 本地开发运行
-make conformance  # 用真实 sing-box / mihomo 校验输出（需先安装两者）
+make conformance  # 用真实 sing-box / mihomo 校验输出（需 mihomo，并用 CONFORMANCE_SINGBOX 指定 1.11 与当前版本两个 sing-box）
 ```
 
 ## License

@@ -11,9 +11,9 @@ test:
 	go test ./...
 
 # Conformance renders the fixture subscriptions and asks the real clients
-# (sing-box check, mihomo -t) whether they accept the output. Needs both
-# binaries on PATH, or point CONFORMANCE_SINGBOX / CONFORMANCE_MIHOMO at them
-# (CONFORMANCE_SINGBOX takes a comma-separated list for the version matrix).
+# (sing-box check, mihomo -t) whether they accept the output. Needs mihomo on
+# PATH and CONFORMANCE_SINGBOX listing one sing-box per schema generation (1.11
+# and the current release); set CONFORMANCE_MIHOMO to use a specific mihomo.
 conformance:
 	@[ -n "$(CONFORMANCE_SINGBOX)" ] || command -v sing-box >/dev/null || { echo "conformance: no sing-box (install it or set CONFORMANCE_SINGBOX)"; exit 1; }
 	@[ -n "$(CONFORMANCE_MIHOMO)" ] || command -v mihomo >/dev/null || { echo "conformance: no mihomo (install it or set CONFORMANCE_MIHOMO)"; exit 1; }

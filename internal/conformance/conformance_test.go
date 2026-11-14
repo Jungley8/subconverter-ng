@@ -21,11 +21,11 @@
 //	CONFORMANCE_SINGBOX=$(which sing-box) CONFORMANCE_MIHOMO=$(which mihomo) \
 //	  go test -tags conformance ./internal/conformance -v
 //
-// CONFORMANCE_SINGBOX accepts a comma-separated list so the matrix can install
-// one binary per schema generation. Each case names the release line that must
-// validate it: a newer client rejects an obsolete format by design, so an old
-// case is never fed to it. A missing line skips locally and fails in CI, because
-// a case that silently never runs is a case that proves nothing.
+// CONFORMANCE_SINGBOX accepts a comma-separated list: one binary per schema
+// generation. Each case names the release line that must validate it, because a
+// newer client rejects an obsolete format by design. Locally a missing line
+// skips. Under CONFORMANCE_REQUIRE the client matrix must match the case matrix
+// exactly: a case with no client, or a client no case uses, fails.
 package conformance
 
 import (
@@ -236,7 +236,7 @@ func TestSingboxClientAcceptsOutput(t *testing.T) {
 		// 1.14 no longer reads that DNS format, so validating them with the
 		// newest binary would fail for a reason that is not our bug.
 		clientMajor, clientMinor int
-		// covers names what the case protects, used in the messages.
+		// covers names what the case protects, used in the skip message.
 		covers string
 	}{
 		{"default", "singbox", false, 1, 14,
@@ -253,16 +253,57 @@ func TestSingboxClientAcceptsOutput(t *testing.T) {
 			"Liquid-Formula template output is a complete config"},
 	}
 
+	// Under CONFORMANCE_REQUIRE the client matrix must equal the case matrix.
+	// A case with no client skips silently (issue #31). An installed client that
+	// no case uses is the same blind spot one level up: it is probed, then never
+	// asked to load anything, so a schema it removed would reach users unseen.
+	if requireTools() {
+		installed := map[[2]int]bool{}
+		for _, c := range clients {
+			installed[[2]int{c.major, c.minor}] = true
+		}
+		newest := [2]int{clients[len(clients)-1].major, clients[len(clients)-1].minor}
+		required := map[[2]int]bool{}
+		var problems []string
+		for _, tc := range cases {
+			line := [2]int{tc.clientMajor, tc.clientMinor}
+			required[line] = true
+			if !installed[line] {
+				problems = append(problems, fmt.Sprintf("case %s needs sing-box %d.%d",
+					tc.name, line[0], line[1]))
+			}
+			if tc.target == "singbox" && line != newest {
+				problems = append(problems, fmt.Sprintf(
+					"case %s declares no version but is validated by %d.%d, not the newest %d.%d",
+					tc.name, line[0], line[1], newest[0], newest[1]))
+			}
+		}
+		reported := map[[2]int]bool{}
+		for _, c := range clients {
+			line := [2]int{c.major, c.minor}
+			if required[line] || reported[line] {
+				continue
+			}
+			reported[line] = true
+			problems = append(problems, fmt.Sprintf("sing-box %d.%d.%d validates no case",
+				c.major, c.minor, c.patch))
+		}
+		if len(problems) > 0 {
+			t.Fatalf("client matrix and case matrix disagree:\n  %s\n"+
+				"To support a new release, bump defaultSingboxVersion and move the unversioned cases to it. "+
+				"A client that validates nothing hides the next regression.",
+				strings.Join(problems, "\n  "))
+		}
+	}
+
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			bin := pickSingbox(clients, tc.clientMajor, tc.clientMinor)
 			if bin == nil {
-				reason := fmt.Sprintf("no sing-box %d.%d installed (case covers: %s)",
+				// Only reachable without CONFORMANCE_REQUIRE: the matrix check
+				// above already rejected a missing release line.
+				t.Skipf("no sing-box %d.%d installed (case covers: %s)",
 					tc.clientMajor, tc.clientMinor, tc.covers)
-				if requireTools() {
-					t.Fatalf("CONFORMANCE_REQUIRE=1: %s; add this release line to the client matrix", reason)
-				}
-				t.Skip(reason)
 			}
 
 			req := convert.Request{
