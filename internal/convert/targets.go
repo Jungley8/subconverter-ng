@@ -20,6 +20,7 @@ const (
 	TargetQuanX        = "quanx"
 	TargetLoon         = "loon"
 	TargetV2Ray        = "v2ray"
+	TargetSSD          = "ssd"
 )
 
 // targetAliases maps accepted spellings to a canonical target name.
@@ -31,6 +32,7 @@ var targetAliases = map[string]string{
 	"quanx": TargetQuanX, "quantumultx": TargetQuanX, "quantumult-x": TargetQuanX, "quantumult_x": TargetQuanX, "qx": TargetQuanX, "quantumult": TargetQuanX,
 	"loon":  TargetLoon,
 	"v2ray": TargetV2Ray, "mixed": TargetV2Ray, "v2rayn": TargetV2Ray, "v2rayng": TargetV2Ray, "ss": TargetV2Ray, "ssr": TargetV2Ray, "trojan": TargetV2Ray,
+	"ssd": TargetSSD, "shadowsocksdroid": TargetSSD,
 }
 
 // NormalizeTarget lower-cases, trims, and maps the target through targetAliases.
@@ -108,7 +110,7 @@ func describeTarget(name string, ver *generator.Version) string {
 
 // targetOrder is the stable display order for supportedList.
 var targetOrder = []string{
-	TargetClash, TargetSingbox, TargetSurge, TargetShadowrocket, TargetQuanX, TargetLoon, TargetV2Ray,
+	TargetClash, TargetSingbox, TargetSurge, TargetShadowrocket, TargetQuanX, TargetLoon, TargetV2Ray, TargetSSD,
 }
 
 // supportedTargets is the set of canonical targets render can currently emit.
@@ -121,6 +123,7 @@ var supportedTargets = map[string]bool{
 	TargetShadowrocket: true,
 	TargetQuanX:        true,
 	TargetLoon:         true,
+	TargetSSD:          true,
 }
 
 func supportedList() string {
@@ -150,6 +153,8 @@ func render(ctx context.Context, target string, nodes []*proxy.Proxy, cfg *extco
 		return generator.GenerateLoon(ctx, nodes, cfg, f, gen)
 	case TargetQuanX:
 		return generator.GenerateQuanX(ctx, nodes, cfg, f, gen)
+	case TargetSSD:
+		return generator.GenerateSSD(ctx, nodes, cfg, f, gen)
 	default:
 		return nil, fmt.Errorf("unsupported target %q", target)
 	}

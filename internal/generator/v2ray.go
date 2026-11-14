@@ -272,6 +272,16 @@ func nodeShareLink(n *proxy.Proxy) (string, bool) {
 // ssPluginQuery builds the SIP002 plugin query value for an SS node, or "" when
 // the node has no plugin.
 func ssPluginQuery(c map[string]any) string {
+	spec := ssPluginSpec(c)
+	if spec == "" {
+		return ""
+	}
+	return "plugin=" + url.QueryEscape(spec)
+}
+
+// ssPluginSpec renders the SIP003 plugin spec ("obfs-local;obfs=http;obfs-host=x")
+// shared by the ss:// query form and the SSD plugin/plugin_options fields.
+func ssPluginSpec(c map[string]any) string {
 	plugin := cs(c, "plugin")
 	if plugin == "" {
 		return ""
@@ -298,7 +308,7 @@ func ssPluginQuery(c map[string]any) string {
 	default:
 		return ""
 	}
-	return "plugin=" + url.QueryEscape(strings.Join(parts, ";"))
+	return strings.Join(parts, ";")
 }
 
 // applyVMessTransportJSON fills net/host/path/type into a vmess share-link JSON

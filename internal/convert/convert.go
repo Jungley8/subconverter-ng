@@ -267,6 +267,11 @@ func Run(ctx context.Context, f Fetcher, req Request) ([]byte, *Diagnostics, err
 
 	result, err := render(ctx, name, nodes, cfg, f, gen)
 	if err != nil {
+		// The subscription parsed fine; this target just cannot encode any of
+		// it. That is the same user-facing situation as an empty subscription.
+		if errors.Is(err, generator.ErrTargetNodes) {
+			return nil, nil, fmt.Errorf("%w: %s", ErrNoNodes, err)
+		}
 		return nil, nil, err
 	}
 	return result.Output, diagnosticsFor(result, skipped, userinfo), nil
