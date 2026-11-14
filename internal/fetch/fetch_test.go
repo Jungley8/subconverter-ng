@@ -378,3 +378,66 @@ func TestSSRF_AllowPrivateCIDR(t *testing.T) {
 		t.Errorf("allowPrivate=true blocked: %v", err)
 	}
 }
+
+func TestNew_RejectsOversizedUserAgent(t *testing.T) {
+	if _, err := New(Options{UserAgent: strings.Repeat("a", maxUserAgentLen+1)}); err == nil {
+		t.Fatal("expected error for a UA longer than maxUserAgentLen")
+	}
+	if _, err := New(Options{UserAgent: strings.Repeat("a", maxUserAgentLen)}); err != nil {
+		t.Fatalf("UA at the limit must be accepted: %v", err)
+	}
+}
+
+func TestFetchDirect_RetriesTransientStatusWithoutRewritingURL(t *testing.T) {
+	var (
+		mu       sync.Mutex
+		requests []struct {
+			url        string
+			noCacheHdr string
+		}
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		requests = append(requests, struct {
+			url        string
+			noCacheHdr string
+		}{r.URL.String(), r.Header.Get("Cache-Control")})
+		n := len(requests)
+		mu.Unlock()
+		if n < 3 { // two gateway failures, then success
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		_, _ = w.Write([]byte("ok-body"))
+	}))
+	defer srv.Close()
+
+	c, err := New(Options{AllowPrivateIPs: true, CacheTTL: -1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := c.Get(context.Background(), srv.URL+"/sub?token=signed")
+	if err != nil {
+		t.Fatalf("retry should reach the successful third attempt: %v", err)
+	}
+	if string(body) != "ok-body" {
+		t.Errorf("body = %q", body)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(requests) != 3 {
+		t.Fatalf("requests = %d, want 3", len(requests))
+	}
+	want := "/sub?token=signed"
+	for i, r := range requests {
+		if r.url != want {
+			t.Errorf("request %d URL = %q, want %q (retries must not rewrite the query: signed URLs break)", i, r.url, want)
+		}
+		if i == 0 && r.noCacheHdr != "" {
+			t.Errorf("first request must not carry Cache-Control, got %q", r.noCacheHdr)
+		}
+		if i > 0 && r.noCacheHdr != "no-cache" {
+			t.Errorf("retry %d Cache-Control = %q, want no-cache", i, r.noCacheHdr)
+		}
+	}
+}
