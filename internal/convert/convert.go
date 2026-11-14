@@ -186,8 +186,7 @@ func Run(ctx context.Context, f Fetcher, req Request) ([]byte, *Diagnostics, err
 			localNodes = append(localNodes, ns...)
 			skipped = append(skipped, sk...)
 		}
-		gen := req.Gen
-		gen.TargetVersion = ver
+		gen := buildGen(cfg, req, ver)
 		gen.ProviderMode = true
 		gen.ProviderURLs = subs
 		gen.ProviderUA = req.UserAgent
@@ -235,6 +234,32 @@ func Run(ctx context.Context, f Fetcher, req Request) ([]byte, *Diagnostics, err
 		return nil, nil, fmt.Errorf("%w; %d lines skipped%s", ErrNoNodes, len(skipped), skippedHint(skipped))
 	}
 
+	gen := buildGen(cfg, req, ver)
+
+	if req.Template != "" {
+		tmpl, err := resolveTemplate(ctx, f, req.Template)
+		if err != nil {
+			return nil, nil, err
+		}
+		result, err := generator.GenerateSingboxTemplate(ctx, nodes, cfg, tmpl, gen)
+		if err != nil {
+			return nil, nil, err
+		}
+		return result.Output, diagnosticsFor(result, skipped, userinfo), nil
+	}
+
+	result, err := render(ctx, name, nodes, cfg, f, gen)
+	if err != nil {
+		return nil, nil, err
+	}
+	return result.Output, diagnosticsFor(result, skipped, userinfo), nil
+}
+
+// buildGen resolves the per-request generator options against the external
+// config: declared target version, rename rules, remarks filters and emoji
+// rules. The provider path uses it too, so local share-link nodes get the same
+// treatment as inlined subscription nodes.
+func buildGen(cfg *extconfig.Config, req Request, ver *generator.Version) generator.Options {
 	gen := req.Gen
 	gen.TargetVersion = ver
 	gen.RenameRules = generator.CompileRenameRules(cfg.RenameRules)
@@ -254,24 +279,7 @@ func Run(ctx context.Context, f Fetcher, req Request) ([]byte, *Diagnostics, err
 			gen.EmojiRules = emoji.Default()
 		}
 	}
-
-	if req.Template != "" {
-		tmpl, err := resolveTemplate(ctx, f, req.Template)
-		if err != nil {
-			return nil, nil, err
-		}
-		result, err := generator.GenerateSingboxTemplate(ctx, nodes, cfg, tmpl, gen)
-		if err != nil {
-			return nil, nil, err
-		}
-		return result.Output, diagnosticsFor(result, skipped, userinfo), nil
-	}
-
-	result, err := render(ctx, name, nodes, cfg, f, gen)
-	if err != nil {
-		return nil, nil, err
-	}
-	return result.Output, diagnosticsFor(result, skipped, userinfo), nil
+	return gen
 }
 
 // diagnosticsFor assembles the Diagnostics returned alongside a rendered config,
