@@ -6,12 +6,13 @@ import (
 	"time"
 )
 
-// Cache is a thread-safe, in-memory TTL cache for successful GET responses,
-// keyed by URL. Entries retain both the body and the response headers so
-// metadata (e.g. Subscription-Userinfo) survives a cache hit.
+// Cache is a thread-safe, in-memory TTL cache for successful GET responses.
+// Entries retain both the body and the response headers so metadata (e.g.
+// Subscription-Userinfo) survives a cache hit.
 //
-// The cache is keyed by URL only; it deliberately ignores per-request proxy
-// differences. Callers that need a fresh fetch must bypass (use a Client with
+// The cache stores opaque keys; Client.cacheKey builds them from the UA, the
+// upstream proxy, and the URL. Two clients that differ in either must not share
+// an entry.
 const defaultMaxEntries = 1000
 
 type Cache struct {

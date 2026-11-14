@@ -208,9 +208,10 @@ func (c *Client) GetWithMeta(ctx context.Context, target string) ([]byte, http.H
 		}
 	}
 
-	ch := c.group.DoChan(target, func() (any, error) {
+	key := c.cacheKey(target)
+	ch := c.group.DoChan(key, func() (any, error) {
 		if c.cache != nil {
-			if body, hdr, ok := c.cache.get(target); ok {
+			if body, hdr, ok := c.cache.get(key); ok {
 				return metaResult{body: body, hdr: hdr}, nil
 			}
 		}
@@ -294,11 +295,20 @@ func (c *Client) maybeCache(target string, status int, body []byte, hdr http.Hea
 	c.cache.set(c.cacheKey(target), body, hdr)
 }
 
-// cacheKey derives the cache key for a target URL. The Client's User-Agent is
-// part of the key because many panels return different subscription content
-// depending on the UA; two Clients differing only in UA must not share entries.
+// cacheKey derives the cache key for a target URL. Both the User-Agent and the
+// upstream proxy are part of the key:
+//
+//   - Many panels return different content per UA, so two Clients differing only
+//     in UA must not share an entry.
+//   - The proxy decides where the bytes come from. &proxy= is request-supplied,
+//     so sharing an entry across proxies lets one caller's egress answer
+//     another caller's request: with a proxy they control, they choose the
+//     content every later request for that URL receives.
+//
+// The singleflight key uses this function too, for the same reasons: sharing a
+// flight across UAs would hand one client's content to another.
 func (c *Client) cacheKey(target string) string {
-	return c.opts.UserAgent + "\x1f" + target
+	return c.opts.Proxy + "\x1f" + c.opts.UserAgent + "\x1f" + target
 }
 
 // FlushCache clears all cached entries. Safe to call when caching is disabled.

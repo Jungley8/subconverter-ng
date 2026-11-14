@@ -25,6 +25,18 @@ import (
 // a readable hint instead of a generic upstream-failure response. Test with errors.Is.
 var ErrNoNodes = errors.New("no usable nodes parsed from subscription(s)")
 
+// ErrBadRequest marks a failure caused by the request itself — an unknown
+// target, provider mode without a subscription URL, a template that cannot be
+// used — as opposed to an upstream failure. The HTTP layer answers 400 for
+// these and 424 (upstream dependency failed) for everything else. Test with
+// errors.Is.
+var ErrBadRequest = errors.New("invalid request")
+
+// badRequest builds an ErrBadRequest with a user-facing message.
+func badRequest(format string, args ...any) error {
+	return fmt.Errorf("%w: %s", ErrBadRequest, fmt.Sprintf(format, args...))
+}
+
 // Fetcher is the subset of fetch.Client convert needs (kept as an interface for
 // testability).
 type Fetcher interface {
@@ -137,13 +149,13 @@ type Diagnostics struct {
 func Run(ctx context.Context, f Fetcher, req Request) ([]byte, *Diagnostics, error) {
 	name, ver, err := ParseTarget(req.Target)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, badRequest("%s", err)
 	}
 	if !supportedTargets[name] {
-		return nil, nil, fmt.Errorf("unsupported target %q (supported: %s)", describeTarget(name, ver), supportedList())
+		return nil, nil, badRequest("unsupported target %q (supported: %s)", describeTarget(name, ver), supportedList())
 	}
 	if len(req.SubURLs) == 0 {
-		return nil, nil, fmt.Errorf("no subscription url provided")
+		return nil, nil, badRequest("no subscription url provided")
 	}
 
 	var cfg *extconfig.Config
@@ -163,7 +175,7 @@ func Run(ctx context.Context, f Fetcher, req Request) ([]byte, *Diagnostics, err
 	// inlined as local nodes.
 	if req.Provider {
 		if name != "clash" {
-			return nil, nil, fmt.Errorf("provider mode is only available with target=clash (got %s)", describeTarget(name, ver))
+			return nil, nil, badRequest("provider mode is only available with target=clash (got %s)", describeTarget(name, ver))
 		}
 		var subs, links []string
 		for _, u := range req.SubURLs {
@@ -174,7 +186,7 @@ func Run(ctx context.Context, f Fetcher, req Request) ([]byte, *Diagnostics, err
 			}
 		}
 		if len(subs) == 0 {
-			return nil, nil, fmt.Errorf("provider mode needs at least one http(s) subscription url")
+			return nil, nil, badRequest("provider mode needs at least one http(s) subscription url")
 		}
 		var localNodes []*proxy.Proxy
 		var skipped []string
@@ -243,6 +255,11 @@ func Run(ctx context.Context, f Fetcher, req Request) ([]byte, *Diagnostics, err
 		}
 		result, err := generator.GenerateSingboxTemplate(ctx, nodes, cfg, tmpl, gen)
 		if err != nil {
+			// A template the user supplied failed to render: their file, their
+			// fix, not an upstream outage.
+			if errors.Is(err, generator.ErrTemplateInvalid) {
+				return nil, nil, badRequest("%s", err)
+			}
 			return nil, nil, err
 		}
 		return result.Output, diagnosticsFor(result, skipped, userinfo), nil
@@ -305,7 +322,7 @@ func diagnosticsFor(result *generator.Result, skipped []string, userinfo string)
 func resolveTemplate(ctx context.Context, f Fetcher, spec string) ([]byte, error) {
 	spec = strings.TrimSpace(spec)
 	if !strings.HasPrefix(spec, "http://") && !strings.HasPrefix(spec, "https://") {
-		return nil, fmt.Errorf("template %q must be an http(s) URL to a sing-box JSON template", spec)
+		return nil, badRequest("template %q must be an http(s) URL to a sing-box JSON template", spec)
 	}
 	return f.Get(ctx, spec)
 }

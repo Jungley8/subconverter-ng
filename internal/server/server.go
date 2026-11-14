@@ -261,10 +261,12 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 
 	// Build a fetch client, allowing a per-request &proxy= override of the
 	// configured upstream proxy. The shared cache is injected so cached
-	// ruleset/subscription fetches persist across requests (keyed by UA+URL;
-	// per-request proxy differences are intentionally ignored).
+	// ruleset/subscription fetches persist across requests; its key covers the
+	// UA and the proxy as well as the URL, so one caller's egress can never
+	// answer another caller's request (see fetch.Client.cacheKey).
 	// UA precedence: explicit &ua= > configured user_agent. An empty result
 	// keeps current behaviour: fetch.New fills in its default.
+	uaOverride := strings.TrimSpace(q.Get("ua")) != ""
 	resolvedUA := firstNonEmpty(strings.TrimSpace(q.Get("ua")), s.cfg.Fetch.UserAgent)
 	userProxy := q.Get("proxy")
 	if userProxy != "" && !s.cfg.Fetch.AllowPrivateIPs {
@@ -284,7 +286,11 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 		AllowPrivateCIDRs: s.cfg.Fetch.PrivateCIDRs(),
 		Group:             s.group,
 	}
-	if noCache || s.cache == nil {
+	// A request-supplied UA means content tailored to that UA, and the UA is an
+	// unbounded key space: caching it lets anyone mint cache entries until every
+	// real one is evicted, so those requests skip the shared cache entirely.
+	// Clients that want caching set user_agent in the server config instead.
+	if noCache || uaOverride || s.cache == nil {
 		opts.CacheTTL = -1 // disable caching for this request
 	} else {
 		opts.Cache = s.cache
@@ -520,14 +526,23 @@ func nonNil(v []string) []string {
 	return v
 }
 
-// writeUserError renders a conversion failure with an appropriate HTTP error status
-// (422 for unprocessable content such as no usable nodes, 424 for upstream fetch failure)
-// along with plain-text comments detailing the cause with secrets redacted.
+// writeUserError renders a conversion failure with the HTTP status that matches
+// who can fix it: 400 when the request itself is wrong (unknown target, provider
+// mode without a subscription URL, unusable template), 422 when the request is
+// well-formed but the subscription yielded no nodes, 424 when an upstream fetch
+// failed. Blaming a 424 on a bad parameter sends the user to debug the wrong
+// side.
+//
 // 4xx is deliberate: reverse proxies such as Cloudflare replace 5xx bodies with
 // their own error page, hiding the diagnostic.
 func writeUserError(w http.ResponseWriter, err error) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	redactedMsg := config.RedactString(err.Error())
+	if errors.Is(err, convert.ErrBadRequest) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = fmt.Fprintf(w, "# subconverter-ng: 请求参数有误 / invalid request\n# %s\n", redactedMsg)
+		return
+	}
 	if errors.Is(err, convert.ErrNoNodes) {
 		w.WriteHeader(http.StatusUnprocessableEntity)
 		_, _ = fmt.Fprintf(w, "# subconverter-ng: %s\n# 订阅无可用节点，请检查订阅链接或订阅内容是否有效。\n", redactedMsg)
