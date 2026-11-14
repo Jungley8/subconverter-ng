@@ -42,6 +42,7 @@ nav:
   - 快速开始: quickstart.md
   - Web 界面: web.md
   - URL 参数: url-params.md
+  - 与原始 subconverter 的差异: compat.md
   - 上游代理与 UA: proxy.md
   - 绕过 Cloudflare: cloudflare.md
   - Docker 部署: docker.md
@@ -68,6 +69,7 @@ plugins:
             快速开始: Quick Start
             Web 界面: Web UI
             URL 参数: URL Parameters
+            与原始 subconverter 的差异: Differences from subconverter
             上游代理与 UA: Upstream Proxy & UA
             绕过 Cloudflare: Bypass Cloudflare
             Docker 部署: Docker Deployment
