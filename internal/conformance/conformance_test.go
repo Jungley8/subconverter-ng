@@ -23,8 +23,9 @@
 //
 // CONFORMANCE_SINGBOX accepts a comma-separated list so the matrix can install
 // one binary per schema generation. Each case names the release line that must
-// validate it and skips when that line is absent: a newer client rejects an
-// obsolete format by design, so validating an old case with it proves nothing.
+// validate it: a newer client rejects an obsolete format by design, so an old
+// case is never fed to it. A missing line skips locally and fails in CI, because
+// a case that silently never runs is a case that proves nothing.
 package conformance
 
 import (
@@ -163,8 +164,7 @@ func singboxClients(t *testing.T) []client {
 // "Newest is fine" is false here. sing-box removes an old schema generation
 // outright: 1.14 refuses a config written for 1.11, which is a correct rejection
 // of an obsolete format, not a bug in the generator. A case therefore names the
-// release line that must validate it, and a case whose client is not installed
-// skips instead of failing against a client it was never meant for.
+// release line that must validate it and never falls back to a newer client.
 func pickSingbox(clients []client, major, minor int) *client {
 	for i := range clients {
 		if clients[i].major == major && clients[i].minor == minor {
@@ -236,7 +236,7 @@ func TestSingboxClientAcceptsOutput(t *testing.T) {
 		// 1.14 no longer reads that DNS format, so validating them with the
 		// newest binary would fail for a reason that is not our bug.
 		clientMajor, clientMinor int
-		// covers names what the case protects, used in the skip message.
+		// covers names what the case protects, used in the messages.
 		covers string
 	}{
 		{"default", "singbox", false, 1, 14,
@@ -257,8 +257,12 @@ func TestSingboxClientAcceptsOutput(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			bin := pickSingbox(clients, tc.clientMajor, tc.clientMinor)
 			if bin == nil {
-				t.Skipf("no sing-box %d.%d installed (case covers: %s)",
+				reason := fmt.Sprintf("no sing-box %d.%d installed (case covers: %s)",
 					tc.clientMajor, tc.clientMinor, tc.covers)
+				if requireTools() {
+					t.Fatalf("CONFORMANCE_REQUIRE=1: %s; add this release line to the client matrix", reason)
+				}
+				t.Skip(reason)
 			}
 
 			req := convert.Request{
