@@ -46,6 +46,10 @@ func TestHandler_ServesIndex(t *testing.T) {
 		// The provider interval field is seconds and must send provider_interval;
 		// `interval` means the client profile update interval in hours.
 		"provider_interval=",
+		// Provider mode changes which node processing applies, so the switch
+		// must say what stops working before the user enables it.
+		"id=\"providerHint\"",
+		"emoji、改名、fdn、去重都不生效",
 	} {
 		if !strings.Contains(body, expected) {
 			t.Errorf("expected body to contain %q", expected)

@@ -5,6 +5,7 @@ package server
 
 import (
 	"crypto/subtle"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -419,6 +420,13 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 		slog.Info("nodes unsupported by target", "target", display, "nodes", strings.Join(diag.SkippedNodes, ", "))
 	}
 
+	// &check=true turns the response into a JSON report of what the conversion
+	// did instead of the config itself. See writeCheckReport.
+	if boolParam(q.Get("check"), false) {
+		writeCheckReport(w, diag, display, provider, len(out))
+		return
+	}
+
 	// Content-Type varies by target (YAML for clash, JSON for sing-box, plain
 	// text for surge/quanx/loon/v2ray). The generator reports the right one.
 	contentType := diag.ContentType
@@ -447,6 +455,69 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Subscription-Userinfo", diag.SubscriptionUserinfo)
 	}
 	_, _ = w.Write(out)
+}
+
+// checkReport is the &check=true response: what one conversion did, in a shape
+// a client or a shell pipeline can read.
+type checkReport struct {
+	Target               string   `json:"target"`
+	ContentType          string   `json:"content_type"`
+	OutputBytes          int      `json:"output_bytes"`
+	Provider             bool     `json:"provider"`
+	Nodes                int      `json:"nodes"`
+	SkippedLines         int      `json:"skipped_lines"`
+	UnsupportedNodes     []string `json:"unsupported_nodes"`
+	EmptyGroups          []string `json:"empty_groups"`
+	DroppedRules         []string `json:"dropped_rules"`
+	Duplicates           int      `json:"duplicates"`
+	Deprecated           int      `json:"deprecated"`
+	FilteredRemarks      int      `json:"filtered_remarks"`
+	ExcludedProtocols    int      `json:"excluded_protocols"`
+	SubscriptionUserinfo string   `json:"subscription_userinfo,omitempty"`
+}
+
+// writeCheckReport answers &check=true with the conversion diagnostics as JSON.
+// It exists for "the profile imported, but something is missing": the report
+// names the groups that matched no node, the rules the target cannot express,
+// and the nodes it dropped.
+//
+// Skipped subscription lines are counted, never echoed. They are usually
+// malformed share links, and a malformed share link still contains a password.
+func writeCheckReport(w http.ResponseWriter, diag *convert.Diagnostics, display string, provider bool, outputBytes int) {
+	contentType := diag.ContentType
+	if contentType == "" {
+		contentType = "text/yaml; charset=utf-8"
+	}
+	report := checkReport{
+		Target:               display,
+		ContentType:          contentType,
+		OutputBytes:          outputBytes,
+		Provider:             provider,
+		Nodes:                diag.NodeCount,
+		SkippedLines:         len(diag.SkippedLines),
+		UnsupportedNodes:     nonNil(diag.SkippedNodes),
+		EmptyGroups:          nonNil(diag.EmptyGroups),
+		DroppedRules:         nonNil(diag.SkippedRules),
+		Duplicates:           diag.Duplicates,
+		Deprecated:           diag.Deprecated,
+		FilteredRemarks:      diag.Filtered,
+		ExcludedProtocols:    diag.ExcludedProtocols,
+		SubscriptionUserinfo: diag.SubscriptionUserinfo,
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(report)
+}
+
+// nonNil keeps empty lists as [] in JSON instead of null, so consumers can
+// range over them without a nil check.
+func nonNil(v []string) []string {
+	if v == nil {
+		return []string{}
+	}
+	return v
 }
 
 // writeUserError renders a conversion failure with an appropriate HTTP error status
