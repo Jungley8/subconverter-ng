@@ -52,8 +52,9 @@ func TestGenerateSingbox(t *testing.T) {
 	var doc struct {
 		Outbounds []map[string]any `json:"outbounds"`
 		Route     struct {
-			Rules []map[string]any `json:"rules"`
-			Final string           `json:"final"`
+			Rules   []map[string]any `json:"rules"`
+			Final   string           `json:"final"`
+			RuleSet []map[string]any `json:"rule_set"`
 		} `json:"route"`
 	}
 	if err := json.Unmarshal(res.Output, &doc); err != nil {
@@ -84,33 +85,44 @@ func TestGenerateSingbox(t *testing.T) {
 	if tags["Auto"]["type"] != "urltest" {
 		t.Errorf("Auto group type = %v, want urltest", tags["Auto"]["type"])
 	}
-	// Builtins.
-	if tags["direct"] == nil || tags["block"] == nil {
-		t.Error("missing direct/block builtins")
+	// Builtins. With no declared version the generator targets the current
+	// sing-box release, so the removed block/dns-out outbounds must be absent.
+	if tags["direct"] == nil {
+		t.Error("missing direct builtin")
+	}
+	if tags["block"] != nil || tags["dns-out"] != nil {
+		t.Errorf("block/dns-out outbounds were removed in sing-box 1.13: %v", tags["block"])
 	}
 	// VLESS reality + utls carried into tls.
 	vlessTLS, _ := tags["US"]["tls"].(map[string]any)
 	if vlessTLS == nil || vlessTLS["reality"] == nil || vlessTLS["utls"] == nil {
 		t.Errorf("vless tls missing reality/utls: %v", tags["US"]["tls"])
 	}
-	// Route: FINAL -> route.final = Proxy; dns/domain_suffix/geosite rules present.
+	// Route: FINAL -> route.final = Proxy; DNS hijack action, domain_suffix and
+	// rule_set-based GEO rules present.
 	if doc.Route.Final != "Proxy" {
 		t.Errorf("route.final = %q, want Proxy", doc.Route.Final)
 	}
-	var sawDomainSuffix, sawDNS, sawGeosite bool
+	var sawDNSAction, sawDomainSuffix, sawRuleSet bool
 	for _, r := range doc.Route.Rules {
-		if r["protocol"] == "dns" {
-			sawDNS = true
+		if r["action"] == "hijack-dns" {
+			sawDNSAction = true
 		}
 		if _, ok := r["domain_suffix"]; ok {
 			sawDomainSuffix = true
 		}
 		if _, ok := r["geosite"]; ok {
-			sawGeosite = true
+			t.Errorf("inline geosite field is invalid for the current schema: %+v", r)
+		}
+		if _, ok := r["rule_set"]; ok {
+			sawRuleSet = true
 		}
 	}
-	if !sawDNS || !sawDomainSuffix || !sawGeosite {
-		t.Errorf("route rules missing dns/domain_suffix/geosite: %+v", doc.Route.Rules)
+	if !sawDNSAction || !sawDomainSuffix || !sawRuleSet {
+		t.Errorf("route rules missing hijack-dns/domain_suffix/rule_set: %+v", doc.Route.Rules)
+	}
+	if len(doc.Route.RuleSet) == 0 {
+		t.Error("route.rule_set definitions missing for the GEO rules")
 	}
 }
 
@@ -297,10 +309,11 @@ func TestGenerateSingboxSchemaSwitch(t *testing.T) {
 			Servers []map[string]any `json:"servers"`
 			Final   string           `json:"final"`
 		} `json:"dns"`
-		RuleSet []map[string]any `json:"rule_set"`
-		Route   struct {
-			Rules []map[string]any `json:"rules"`
-			Final string           `json:"final"`
+		Route struct {
+			Rules                 []map[string]any `json:"rules"`
+			Final                 string           `json:"final"`
+			RuleSet               []map[string]any `json:"rule_set"`
+			DefaultDomainResolver map[string]any   `json:"default_domain_resolver"`
 		} `json:"route"`
 	}
 	parse := func(t *testing.T, res *Result) singDoc {
@@ -308,6 +321,16 @@ func TestGenerateSingboxSchemaSwitch(t *testing.T) {
 		var doc singDoc
 		if err := json.Unmarshal(res.Output, &doc); err != nil {
 			t.Fatalf("invalid JSON: %v", err)
+		}
+		// rule_set is a route field. sing-box rejects an unknown root key at
+		// decode time, so pin the absence of a root-level one separately from
+		// the struct (which would silently ignore it).
+		var root map[string]any
+		if err := json.Unmarshal(res.Output, &root); err != nil {
+			t.Fatalf("invalid JSON: %v", err)
+		}
+		if _, ok := root["rule_set"]; ok {
+			t.Error("rule_set must not be a root field: sing-box fails with `unknown field \"rule_set\"`")
 		}
 		return doc
 	}
@@ -396,26 +419,31 @@ func TestGenerateSingboxSchemaSwitch(t *testing.T) {
 	if !strings.Contains(skipped, "GEOIP,TWITTER") {
 		t.Errorf("GEOIP,TWITTER must be skipped at 1.13, skipped rules: %v", res.SkippedRules)
 	}
-	// Top-level rule_set definitions: geosite-ads + geoip-cn + geosite-google@cn,
+	// route.rule_set definitions: geosite-ads + geoip-cn + geosite-google@cn,
 	// no geoip-private (ip_is_private) and no geoip-twitter (skipped).
 	wantSets := map[string]string{
 		"geosite-ads":       "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-ads.srs",
 		"geoip-cn":          "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs",
 		"geosite-google@cn": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-google@cn.srs",
 	}
-	if len(doc.RuleSet) != len(wantSets) {
-		t.Errorf("top-level rule_set has %d entries, want %d: %v", len(doc.RuleSet), len(wantSets), doc.RuleSet)
+	if len(doc.Route.RuleSet) != len(wantSets) {
+		t.Errorf("route.rule_set has %d entries, want %d: %v", len(doc.Route.RuleSet), len(wantSets), doc.Route.RuleSet)
 	}
-	for _, rs := range doc.RuleSet {
+	for _, rs := range doc.Route.RuleSet {
 		tag, _ := rs["tag"].(string)
 		wantURL, ok := wantSets[tag]
 		if !ok {
-			t.Errorf("unexpected top-level rule_set entry %q", tag)
+			t.Errorf("unexpected route.rule_set entry %q", tag)
 			continue
 		}
 		if rs["type"] != "remote" || rs["format"] != "binary" || rs["url"] != wantURL {
 			t.Errorf("rule_set %q = %v, want remote/binary with url %s", tag, rs, wantURL)
 		}
+	}
+	// 1.12 deprecated implicit resolvers and 1.14 rejects the omission, so the
+	// rules must name the DNS server that owns domain resolution.
+	if got := doc.Route.DefaultDomainResolver["server"]; got != "remote" {
+		t.Errorf("route.default_domain_resolver = %v, want server remote", doc.Route.DefaultDomainResolver)
 	}
 	// New DNS server format.
 	if len(doc.DNS.Servers) != 2 {
@@ -457,8 +485,11 @@ func TestGenerateSingboxSchemaSwitch(t *testing.T) {
 	if doc11.DNS.Servers[0]["address"] != "tls://8.8.8.8" {
 		t.Errorf("dns must stay legacy at 1.11: %v", doc11.DNS.Servers)
 	}
-	if doc11.RuleSet != nil {
-		t.Errorf("no top-level rule_set expected at 1.11: %v", doc11.RuleSet)
+	if doc11.Route.RuleSet != nil {
+		t.Errorf("no rule_set expected at 1.11: %v", doc11.Route.RuleSet)
+	}
+	if doc11.Route.DefaultDomainResolver != nil {
+		t.Errorf("default_domain_resolver is a 1.12+ field, absent at 1.11: %v", doc11.Route.DefaultDomainResolver)
 	}
 
 	// (c) sing-box 1.12: rule_sets + new DNS on top of the 1.11 actions.
@@ -472,8 +503,11 @@ func TestGenerateSingboxSchemaSwitch(t *testing.T) {
 	if doc12.DNS.Servers[0]["type"] != "tls" || doc12.DNS.Servers[0]["server"] != "8.8.8.8" {
 		t.Errorf("dns must use the new format at 1.12: %v", doc12.DNS.Servers)
 	}
-	if len(doc12.RuleSet) != len(wantSets) {
-		t.Errorf("top-level rule_set has %d entries at 1.12, want %d: %v", len(doc12.RuleSet), len(wantSets), doc12.RuleSet)
+	if len(doc12.Route.RuleSet) != len(wantSets) {
+		t.Errorf("route.rule_set has %d entries at 1.12, want %d: %v", len(doc12.Route.RuleSet), len(wantSets), doc12.Route.RuleSet)
+	}
+	if got := doc12.Route.DefaultDomainResolver["server"]; got != "remote" {
+		t.Errorf("route.default_domain_resolver at 1.12 = %v, want server remote", doc12.Route.DefaultDomainResolver)
 	}
 	var sawPrivate12 bool
 	for _, r := range doc12.Route.Rules {
@@ -522,9 +556,10 @@ func TestGenerateSingboxFinalReject(t *testing.T) {
 		return d
 	}
 
-	// Legacy (no declared version): FINAL,REJECT still points at the block
-	// outbound, so no extra rule is needed.
-	legacy := render(t, nil)
+	// Legacy (declared < 1.11): FINAL,REJECT still points at the block outbound,
+	// so no extra rule is needed. A bare target=singbox is not legacy: it
+	// follows the current release, so the caller must declare the old version.
+	legacy := render(t, &Version{Major: 1, Minor: 10})
 	if legacy.Route.Final != "block" {
 		t.Errorf("legacy route.final = %q, want block", legacy.Route.Final)
 	}

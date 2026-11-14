@@ -21,21 +21,26 @@ var singboxProtocolFloor = map[string][2]int{
 	"hysteria": {1, 1}, "tuic": {1, 2}, "hysteria2": {1, 5}, "anytls": {1, 12},
 }
 
+// defaultSingboxVersion is the schema used when the target carries no version
+// suffix. It tracks the current sing-box release, so `target=singbox` alone
+// yields a config the current client accepts; older kernels must declare their
+// version (e.g. target=singbox/1.11).
+var defaultSingboxVersion = Version{Major: 1, Minor: 14}
+
 // singboxSchema aggregates the schema switches enabled by the declared sing-box
-// version (based on the official deprecation notes). A nil schema (no declared
-// version) keeps the legacy output byte-identical to before.
+// version (based on the official deprecation notes).
 type singboxSchema struct {
 	actions  bool // >=1.11: hijack-dns/reject rule actions, no block/dns-out outbounds
 	newDNS   bool // >=1.12: new DNS server format ({type, server} instead of address URLs)
 	ruleSets bool // >=1.12: geosite/geoip inline fields -> remote rule_set references
 }
 
-// singboxSchemaFor derives the schema switches from the declared version.
-// A nil version returns nil: fully legacy output.
+// singboxSchemaFor derives the schema switches from the declared version,
+// falling back to defaultSingboxVersion when the target has none.
 func singboxSchemaFor(opts Options) *singboxSchema {
 	ver := opts.TargetVersion
 	if ver == nil {
-		return nil
+		ver = &defaultSingboxVersion
 	}
 	return &singboxSchema{
 		actions:  ver.AtLeast(1, 11),
@@ -85,8 +90,9 @@ func (c *ruleSetCollector) definitions() []map[string]any {
 // selector/urltest outbounds for the proxy groups and route rules translated
 // from the rulesets. Protocols with no sing-box outbound form are skipped and
 // reported in Result.SkippedNodes. A built-in base (log/dns/inbounds) is used.
-// A declared TargetVersion additionally switches to the modern sing-box schema
-// (rule actions / new DNS format / rule_sets, see singboxSchema).
+// The schema follows the declared TargetVersion, or the current sing-box
+// release (see defaultSingboxVersion): rule actions, the new DNS format and
+// rule_sets are on unless an older version is declared.
 func GenerateSingbox(ctx context.Context, nodes []*proxy.Proxy, cfg *extconfig.Config, f Fetcher, opts Options) (*Result, error) {
 	res := &Result{ContentType: ctJSON}
 	nodes = prepareNodes(nodes, cfg, opts, res)
@@ -171,6 +177,22 @@ func GenerateSingbox(ctx context.Context, nodes []*proxy.Proxy, cfg *extconfig.C
 		}
 	}
 
+	route := map[string]any{
+		"rules":                 routeRules,
+		"final":                 final,
+		"auto_detect_interface": true,
+	}
+	if defs := collector.definitions(); defs != nil {
+		// rule_set is a field of route, never a root field: sing-box rejects an
+		// unknown root key at decode time ("rule_set: json: unknown field").
+		route["rule_set"] = defs
+	}
+	if schema != nil && schema.newDNS {
+		// 1.12 deprecated implicit DNS resolvers for domain outbounds and 1.14
+		// makes the omission fatal; name the DNS server the rules already use.
+		route["default_domain_resolver"] = map[string]any{"server": "remote"}
+	}
+
 	conf := map[string]any{
 		"log": map[string]any{"level": "info", "timestamp": true},
 		"dns": map[string]any{
@@ -181,14 +203,7 @@ func GenerateSingbox(ctx context.Context, nodes []*proxy.Proxy, cfg *extconfig.C
 			{"type": "mixed", "tag": "mixed-in", "listen": "127.0.0.1", "listen_port": 2080},
 		},
 		"outbounds": outbounds,
-		"route": map[string]any{
-			"rules":                 routeRules,
-			"final":                 final,
-			"auto_detect_interface": true,
-		},
-	}
-	if defs := collector.definitions(); defs != nil {
-		conf["rule_set"] = defs
+		"route":     route,
 	}
 
 	b, err := json.MarshalIndent(conf, "", "  ")
@@ -312,7 +327,8 @@ var geositeAlias = map[string]string{
 // REJECT/REJECT-DROP target becomes an "action": "reject" rule; under the
 // rule_set schema (schema.ruleSets) GEOSITE/GEOIP values are emitted as
 // rule_set references (geoip:private -> ip_is_private) and recorded in
-// collector. A nil schema keeps the legacy inline fields.
+// collector. A declared version below the switch keeps the legacy inline
+// fields.
 func singboxRouteRule(r Rule, emitted, groupNames map[string]bool, schema *singboxSchema, collector *ruleSetCollector) (map[string]any, bool) {
 	canon := normalizeRuleType(r.Type)
 	field, ok := singboxRuleField[canon]

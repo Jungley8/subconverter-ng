@@ -23,7 +23,7 @@ Query parameters for `GET /sub`, kept as compatible as possible with [tindy2013/
 
 ### Version gating (`target=name[/version]`)
 
-`target` accepts a version suffix. Examples: `target=singbox/1.3.xx` (`xx` and other non-numeric trailing segments are ignored, same as `1.3`) or `target=singbox/1.13.11`. Only `singbox` reads the version today. The version gates protocols. Nodes the declared kernel cannot render are dropped and listed in `SkippedNodes` / the log with the reason `requires sing-box >= 1.x`. Without a version no gating applies, and behavior is unchanged. A malformed version (for example `singbox/abc`) is an error. Other targets accept the suffix and ignore it.
+`target` accepts a version suffix. Examples: `target=singbox/1.3.xx` (`xx` and other non-numeric trailing segments are ignored, same as `1.3`) or `target=singbox/1.13.11`. Only `singbox` reads the version today. The version gates protocols. Nodes the declared kernel cannot render are dropped and listed in `SkippedNodes` / the log with the reason `requires sing-box >= 1.x`. Without a version no gating applies, and the output follows the current sing-box release (1.14); declare a version for older kernels. A malformed version (for example `singbox/abc`) is an error. Other targets accept the suffix and ignore it.
 
 sing-box protocol floors (best effort, from the official release notes):
 
@@ -45,8 +45,8 @@ The declared version also selects the sing-box config schema (from the official 
 | Declared version | Schema behavior |
 |---|---|
 | >= 1.11 | Rule actions: DNS hijack and reject rules become `action: hijack-dns` / `action: reject`. The `block` / `dns` special outbounds are not emitted (removed in 1.13; older kernels reject them) |
-| >= 1.12 | `rule_set` and the new DNS format: `GEOSITE` / `GEOIP` rules become remote `.srs` rule-set references (top-level `rule_set` array). `geoip: private` becomes `ip_is_private: true`. DNS servers use the `{type, server}` form (1.14 removes the legacy form) |
-| No version | Legacy output, compatible with sing-box 1.11 and older. Identical to the output of earlier releases |
+| >= 1.12 | `rule_set` and the new DNS format: `GEOSITE` / `GEOIP` rules become remote `.srs` rule-set references (the `route.rule_set` array, plus `route.default_domain_resolver`). `geoip: private` becomes `ip_is_private: true`. DNS servers use the `{type, server}` form (1.14 removes the legacy form) |
+| No version | Output follows the current sing-box release (1.14): rule actions, the new DNS format, `route.rule_set` and `route.default_domain_resolver`. Declare a version (for example `singbox/1.11`) for older kernels |
 
 !!! note
     The `direct` outbound is never deprecated and is kept for every version. `rule_set` entries omit `download_detour`, which 1.14 deprecates.
