@@ -48,8 +48,8 @@ jobs:
           chmod +x sing-box-*/sing-box
           echo "CONFORMANCE_SINGBOX=$(ls -d "$PWD"/sing-box-*/sing-box)" >> "$GITHUB_ENV"
           curl -fsSL -o mihomo.gz "https://github.com/MetaCubeX/mihomo/releases/download/v$MH/mihomo-linux-amd64-v$MH.gz"
+          # gunzip drops the .gz suffix, so the binary lands as ./mihomo.
           gunzip -f mihomo.gz
-          mv "mihomo-linux-amd64-v$MH" mihomo
           chmod +x mihomo
           echo "CONFORMANCE_MIHOMO=$PWD/mihomo" >> "$GITHUB_ENV"
 

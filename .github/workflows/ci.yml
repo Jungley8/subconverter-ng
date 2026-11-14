@@ -90,8 +90,8 @@ jobs:
           mkdir -p "$RUNNER_TEMP/clients"
           cd "$RUNNER_TEMP/clients"
           curl -fsSL -o mihomo.gz "https://github.com/MetaCubeX/mihomo/releases/download/v$MIHOMO/mihomo-linux-amd64-v$MIHOMO.gz"
+          # gunzip drops the .gz suffix, so the binary lands as ./mihomo.
           gunzip -f mihomo.gz
-          mv "mihomo-linux-amd64-v$MIHOMO" mihomo
           chmod +x mihomo
           echo "CONFORMANCE_MIHOMO=$PWD/mihomo" >> "$GITHUB_ENV"
 
