@@ -267,7 +267,7 @@ func GenerateClash(ctx context.Context, nodes []*proxy.Proxy, cfg *extconfig.Con
 		if err != nil {
 			return nil, fmt.Errorf("fetch clash_rule_base: %w", err)
 		}
-		root, err := parseBase(data)
+		root, width, err := parseBase(data)
 		if err != nil {
 			return nil, err
 		}
@@ -300,7 +300,7 @@ func GenerateClash(ctx context.Context, nodes []*proxy.Proxy, cfg *extconfig.Con
 			}
 			setMappingValue(root, "rules", rulesNode)
 		}
-		y, err := encodeBase(root)
+		y, err := encodeBase(root, width)
 		if err != nil {
 			return nil, err
 		}
