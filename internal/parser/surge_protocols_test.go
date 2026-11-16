@@ -132,7 +132,7 @@ peer = (public-key = pubkey, allowed-ips = "0.0.0.0/0, ::/0", endpoint = wg.exam
 		"mtu":                  1280,
 		"dns":                  []string{"1.1.1.1"},
 		"persistent-keepalive": 30,
-		"allowed-ips":          "0.0.0.0/0, ::/0",
+		"allowed-ips":          []string{"0.0.0.0/0", "::/0"},
 		"udp":                  true,
 	})
 	checkClash(t, nodes[12], map[string]any{

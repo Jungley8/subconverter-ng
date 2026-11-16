@@ -198,6 +198,12 @@ func (r *surgeRenderer) nodeLine(n *proxy.Proxy) (string, string) {
 		if isXHTTP(n.Clash) {
 			return "", "xhttp transport is not supported"
 		}
+		switch n.Type {
+		case "vmess", "vless", "trojan":
+			if isHTTPUpgrade(n.Clash) {
+				return "", "httpupgrade is not supported"
+			}
+		}
 		if line, ok := loonNodeLine(n); ok {
 			return line, ""
 		}
@@ -208,6 +214,14 @@ func (r *surgeRenderer) nodeLine(n *proxy.Proxy) (string, string) {
 	port := strconv.Itoa(ci(c, "port"))
 	head := n.Name + " = "
 
+	// Only Surge can carry the HTTPUpgrade upgrade request. Shadowrocket and
+	// Loon would silently fall back to plain WebSocket, so skip the node.
+	switch n.Type {
+	case "vmess", "vless", "trojan":
+		if flavor != flavorSurge && isHTTPUpgrade(n.Clash) {
+			return "", "httpupgrade is not supported"
+		}
+	}
 	// Only the VMess/VLESS/Trojan families carry a share-link transport here;
 	// masque's "network" is its own QUIC/H2 knob and must not be gated.
 	switch n.Type {
@@ -281,6 +295,7 @@ func (r *surgeRenderer) nodeLine(n *proxy.Proxy) (string, string) {
 		if cb(c, "skip-cert-verify") {
 			parts = append(parts, "skip-cert-verify=true")
 		}
+		parts = append(parts, surgeHysteria2ObfsParts(flavor, c)...)
 		return head + strings.Join(parts, ", "), ""
 
 	case "hysteria":
@@ -363,7 +378,9 @@ func (r *surgeRenderer) nodeLine(n *proxy.Proxy) (string, string) {
 		if flavor == flavorSurge {
 			// Surge v5 is tuic-v5 with uuid+password; v4 is the token form.
 			if n.Version == 4 {
-				return head + "tuic, " + server + ", " + port + ", token=" + cs(c, "password"), ""
+				parts := []string{"tuic", server, port, "token=" + cs(c, "password")}
+				parts = append(parts, surgeTUICTLSParts(c)...)
+				return head + strings.Join(parts, ", "), ""
 			}
 			parts := []string{"tuic-v5", server, port, "uuid=" + cs(c, "uuid"), "password=" + cs(c, "password")}
 			parts = append(parts, surgeTUICTLSParts(c)...)
@@ -613,6 +630,7 @@ func loonNodeLine(n *proxy.Proxy) (string, bool) {
 		if cb(c, "skip-cert-verify") {
 			parts = append(parts, "skip-cert-verify=true")
 		}
+		parts = append(parts, surgeHysteria2ObfsParts(flavorLoon, c)...)
 		return head + strings.Join(parts, ","), true
 
 	case "hysteria":

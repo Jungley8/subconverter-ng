@@ -443,10 +443,16 @@ func extractSingboxTransport(p *proxy.Proxy, tr map[string]any) {
 		if path := cs(tr, "path"); path != "" {
 			wsOpts["path"] = path
 		}
+		host := ""
 		if headers := cmap(tr, "headers"); headers != nil {
-			if host := cs(headers, "Host"); host != "" {
-				wsOpts["headers"] = map[string]any{"Host": host}
-			}
+			host = cs(headers, "Host")
+		}
+		// sing-box httpupgrade has a single host field; ws carries it in headers.
+		if host == "" {
+			host = cs(tr, "host")
+		}
+		if host != "" {
+			wsOpts["headers"] = map[string]any{"Host": host}
 		}
 		p.Set("ws-opts", wsOpts)
 

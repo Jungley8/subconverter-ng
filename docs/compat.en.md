@@ -33,7 +33,7 @@ This table shows how each target handles the new protocols and transports. The c
 | Mieru | Emits | Skips | — | — | — | — |
 | MASQUE | Emits | Skips (sing-box does not treat it as a node) | Emits | — | — | — |
 | TrustTunnel | Emits | Skips | Emits | — | — | — |
-| XHTTP | Emits | Skips node | VLESS only | — | — | VLESS/VMess |
+| XHTTP | Emits | Skips node | VLESS only | — | — | VLESS/VMess/Trojan |
 | HTTPUpgrade | Emits | Emits | VLESS/VMess/Trojan | — | — | VLESS/VMess |
 | AmneziaWG | Emits | Skips node | Skips node | Skips node | Skips node | Emits parameters |
 | TUIC v4 | Skips (v5 only) | Skips (v5 only) | Emits `tuic` + token | — | — | Emits v4 link |
@@ -49,6 +49,9 @@ Legend: "Emits" means the target produces this protocol. "Skips" means the conve
 - sing-box skips XHTTP nodes.
 - Surge uses XHTTP for VLESS only.
 - A number in the sing-box column is the minimum sing-box version.
+- sing-box 1.13 and later write WireGuard as an endpoint. Older releases use the legacy outbound.
+- A MASQUE node read from Surge has no ECDSA key pair. The clash target skips it.
+- Shadowrocket and Loon skip HTTPUpgrade nodes.
 
 ## Not supported
 

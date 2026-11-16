@@ -62,6 +62,15 @@ func parseWireGuard(uri string) (*proxy.Proxy, error) {
 		}
 	}
 
+	if dns := firstQ(q, "dns", "dns-server"); dns != "" {
+		p.Set("dns", splitALPN(dns))
+	}
+	if ka := firstQ(q, "persistent-keepalive", "keepalive"); ka != "" {
+		if n, err := strconv.Atoi(ka); err == nil {
+			p.Set("persistent-keepalive", n)
+		}
+	}
+
 	// reserved=<a,b,c> -> [a,b,c] (ints).
 	if rsv := firstQ(q, "reserved"); rsv != "" {
 		var vals []int

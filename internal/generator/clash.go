@@ -675,6 +675,12 @@ func clashUnsupportedReason(n *proxy.Proxy) string {
 		return "mihomo masque needs an ECDSA key pair"
 	case n.Type == "trusttunnel" && (cs(c, "username") == "" || cs(c, "password") == ""):
 		return "mihomo trusttunnel needs a username and password"
+	case n.Type == "wireguard" && (cs(c, "private-key") == "" || cs(c, "public-key") == ""):
+		return "wireguard needs a private-key and public-key"
+	case isXHTTP(c) && n.Type != "vless":
+		// mihomo implements xhttp for VLESS only; emitting it for another
+		// protocol loads but routes nothing.
+		return "mihomo xhttp is VLESS-only"
 	}
 	return ""
 }

@@ -41,6 +41,9 @@ proxies:
     password: naivepass
     tls: true
     sni: naive.example.com
+    alpn:
+      - h2
+      - http/1.1
   - name: ANYTLS-1
     type: anytls
     server: 4.4.4.5
@@ -118,3 +121,10 @@ proxies:
     server: 11.0.0.1
     port: 443
     token: t4token
+  - name: WG-1
+    type: wireguard
+    server: 10.0.0.3
+    port: 51821
+    private-key: "feF3p824XdVkX3JEzMb5/dLkA/kFNP3RqIU6EuQRTsA="
+    public-key: "crE5ikHZUC0NG2C0x1M1nzHRWVNXsS6c9tgPOeXCISs="
+    ip: 10.0.0.4

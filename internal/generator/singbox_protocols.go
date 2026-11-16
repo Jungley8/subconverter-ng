@@ -2,6 +2,7 @@ package generator
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/Jungley8/subconverter-ng/internal/proxy"
 )
@@ -162,9 +163,8 @@ func singboxNaiveOutbound(n *proxy.Proxy) map[string]any {
 	if sni := cs(c, "sni"); sni != "" {
 		tls["server_name"] = sni
 	}
-	if alpn := splitAny(c["alpn"]); len(alpn) > 0 {
-		tls["alpn"] = alpn
-	}
+	// sing-box naive rejects tls.alpn ("alpn is not supported on naive
+	// outbound"); the naive stack selects its own protocol.
 	base["tls"] = tls
 	return base
 }
@@ -208,4 +208,63 @@ func uniqueTag(base string, used map[string]bool) string {
 			return candidate
 		}
 	}
+}
+
+// nodeSingboxWireGuardEndpoint renders a WireGuard node in the endpoint form
+// sing-box 1.13+ requires. The legacy outbound fields (local_address,
+// peer_public_key) no longer decode there.
+func nodeSingboxWireGuardEndpoint(n *proxy.Proxy) map[string]any {
+	c := n.Clash
+	ep := map[string]any{
+		"type": "wireguard",
+		"tag":  n.Name,
+	}
+	if priv := cs(c, "private-key"); priv != "" {
+		ep["private_key"] = priv
+	}
+	if mtu := ci(c, "mtu"); mtu > 0 {
+		ep["mtu"] = mtu
+	}
+	var addr []string
+	if ip := cs(c, "ip"); ip != "" {
+		if !strings.Contains(ip, "/") {
+			ip += "/32"
+		}
+		addr = append(addr, ip)
+	}
+	if ipv6 := cs(c, "ipv6"); ipv6 != "" {
+		if !strings.Contains(ipv6, "/") {
+			ipv6 += "/128"
+		}
+		addr = append(addr, ipv6)
+	}
+	if len(addr) > 0 {
+		ep["address"] = addr
+	}
+
+	peer := map[string]any{
+		"address":    cs(c, "server"),
+		"port":       ci(c, "port"),
+		"public_key": cs(c, "public-key"),
+	}
+	if psk := cs(c, "pre-shared-key"); psk != "" {
+		peer["pre_shared_key"] = psk
+	}
+	var allowed []string
+	for _, a := range strings.Split(firstNonEmptyStr(cs(c, "allowed-ips"), "0.0.0.0/0,::/0"), ",") {
+		if a = strings.TrimSpace(a); a != "" {
+			allowed = append(allowed, a)
+		}
+	}
+	if len(allowed) > 0 {
+		peer["allowed_ips"] = allowed
+	}
+	if rsv := parseReserved(c["reserved"]); len(rsv) > 0 {
+		peer["reserved"] = rsv
+	}
+	if ka := ci(c, "persistent-keepalive"); ka > 0 {
+		peer["persistent_keepalive_interval"] = ka
+	}
+	ep["peers"] = []map[string]any{peer}
+	return ep
 }

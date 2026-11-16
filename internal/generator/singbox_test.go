@@ -619,6 +619,7 @@ func TestGenerateSingbox_Enhancements(t *testing.T) {
 
 	var doc struct {
 		Outbounds []map[string]any `json:"outbounds"`
+		Endpoints []map[string]any `json:"endpoints"`
 		Route     struct {
 			Rules []map[string]any `json:"rules"`
 		} `json:"route"`
@@ -631,17 +632,29 @@ func TestGenerateSingbox_Enhancements(t *testing.T) {
 	for _, ob := range doc.Outbounds {
 		tags[ob["tag"].(string)] = ob
 	}
+	endpoints := map[string]map[string]any{}
+	for _, ep := range doc.Endpoints {
+		endpoints[ep["tag"].(string)] = ep
+	}
 
-	// WireGuard outbound check
-	wg, ok := tags["WG"]
+	// WireGuard is an endpoint from sing-box 1.13 on.
+	wg, ok := endpoints["WG"]
 	if !ok || wg["type"] != "wireguard" {
-		t.Fatalf("missing or wrong WG outbound: %v", wg)
+		t.Fatalf("missing or wrong WG endpoint: %v", wg)
 	}
-	if wg["private_key"] != "privkey" || wg["peer_public_key"] != "pubkey" || wg["pre_shared_key"] != "psk" {
-		t.Errorf("WG keys mismatch: %v", wg)
+	if wg["private_key"] != "privkey" {
+		t.Errorf("WG private_key mismatch: %v", wg)
 	}
-	if addrs, ok := wg["local_address"].([]any); !ok || len(addrs) != 1 || addrs[0] != "10.0.0.2/32" {
-		t.Errorf("WG local_address mismatch: %v", wg["local_address"])
+	peers, _ := wg["peers"].([]any)
+	if len(peers) != 1 {
+		t.Fatalf("WG peers = %v", wg["peers"])
+	}
+	peer, _ := peers[0].(map[string]any)
+	if peer["public_key"] != "pubkey" || peer["pre_shared_key"] != "psk" {
+		t.Errorf("WG peer keys mismatch: %v", peer)
+	}
+	if addrs, ok := wg["address"].([]any); !ok || len(addrs) != 1 || addrs[0] != "10.0.0.2/32" {
+		t.Errorf("WG address mismatch: %v", wg["address"])
 	}
 
 	// Hysteria v1 check

@@ -33,6 +33,9 @@ func shareSnell(n *proxy.Proxy) string {
 	if cb(c, "reuse") {
 		q.Set("reuse", "1")
 	}
+	if cb(c, "udp") {
+		q.Set("udp", "1")
+	}
 	if mode := cs(c, "mode"); mode != "" {
 		q.Set("mode", mode)
 	}
@@ -138,6 +141,10 @@ var awgQueryKeys = []string{
 	"i1", "i2", "i3", "i4", "i5",
 	"j1", "j2", "j3",
 	"itime", "version",
+	"header-protection-key", "content-padding-addition",
+	"rekey-after-time", "rekey-timeout", "reject-after-time",
+	"keepalive-timeout", "max-handshake-attempts",
+	"random-trailers", "disable-cookies",
 }
 
 // appendAmneziaWGQuery adds the amnezia-wg-option values present on a WireGuard

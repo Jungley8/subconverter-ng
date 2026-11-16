@@ -518,11 +518,14 @@ func TestSurgeWireGuardRoundTrip(t *testing.T) {
 		"server": "wg.example.com", "port": 51820,
 		"private-key": "priv", "public-key": "pub", "pre-shared-key": "psk",
 		"ip": "10.0.0.2", "ipv6": "fd00::2", "mtu": 1280,
-		"allowed-ips": "0.0.0.0/0, ::/0", "persistent-keepalive": 25,
+		"persistent-keepalive": 25,
 	} {
 		if got.Clash[k] != want {
 			t.Errorf("round-trip %s = %v, want %v; node=%v", k, got.Clash[k], want, got.Clash)
 		}
+	}
+	if got := joinAny(got.Clash["allowed-ips"]); got != "0.0.0.0/0,::/0" {
+		t.Errorf("round-trip allowed-ips = %q, want both families", got)
 	}
 }
 
@@ -541,5 +544,17 @@ func TestSurgeWireGuardSectionNameSanitized(t *testing.T) {
 	nodes, skipped, err := parser.Parse([]byte(out))
 	if err != nil || len(nodes) != 1 || len(skipped) != 0 {
 		t.Fatalf("round-trip failed: nodes=%d skipped=%v err=%v\n%s", len(nodes), skipped, err, out)
+	}
+}
+
+func TestSurgeWireGuardIPv6EndpointBracketed(t *testing.T) {
+	n := proxy.New("wireguard", "WG6", "fd00::1", 51820)
+	n.Set("private-key", "priv")
+	n.Set("public-key", "pub")
+	n.Set("ip", "10.0.0.2")
+
+	_, out := renderSurgeFamily(t, flavorSurge, []*proxy.Proxy{n}, Options{ListOnly: true})
+	if !strings.Contains(out, "endpoint = [fd00::1]:51820") {
+		t.Errorf("IPv6 endpoint must be bracketed:\n%s", out)
 	}
 }

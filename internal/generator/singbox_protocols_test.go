@@ -212,8 +212,8 @@ func TestGenerateSingboxNaive(t *testing.T) {
 	if tls["server_name"] != "cam.example.com" {
 		t.Errorf("NaiveQUIC tls.server_name = %v", tls["server_name"])
 	}
-	if alpn, _ := tls["alpn"].([]any); len(alpn) != 2 || alpn[0] != "h2" {
-		t.Errorf("NaiveQUIC tls.alpn = %v", tls["alpn"])
+	if _, ok := tls["alpn"]; ok {
+		t.Errorf("naive tls must not carry alpn: %v", tls)
 	}
 	// sing-box naive TLS has no insecure switch, so skip-cert-verify is dropped.
 	if _, ok := tls["insecure"]; ok {

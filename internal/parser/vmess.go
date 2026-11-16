@@ -142,14 +142,15 @@ func applyHTTPUpgrade(p *proxy.Proxy, host, path string) {
 
 // applyXHTTPQuery writes the canonical xhttp shape. extra carries an
 // url-encoded JSON object with the full xhttp block; explicit query keys win.
-func applyXHTTPQuery(p *proxy.Proxy, q url.Values) {
+func applyXHTTPQuery(p *proxy.Proxy, q url.Values) error {
 	opts := map[string]any{}
 	if extra := q.Get("extra"); extra != "" {
 		var obj map[string]any
-		if err := json.Unmarshal([]byte(extra), &obj); err == nil {
-			for k, v := range obj {
-				opts[k] = v
-			}
+		if err := json.Unmarshal([]byte(extra), &obj); err != nil {
+			return fmt.Errorf("xhttp extra: %w", err)
+		}
+		for k, v := range obj {
+			opts[k] = v
 		}
 	}
 	if path := q.Get("path"); path != "" {
@@ -165,4 +166,5 @@ func applyXHTTPQuery(p *proxy.Proxy, q url.Values) {
 	if len(opts) > 0 {
 		p.Set("xhttp-opts", opts)
 	}
+	return nil
 }

@@ -156,6 +156,25 @@ func surgeSnellParts(c map[string]any) []string {
 	return parts
 }
 
+// surgeHysteria2ObfsParts renders Hysteria2 obfuscation. Surge writes the key as
+// part of the parameter name (salamander-<key>); Shadowrocket/Loon take the
+// canonical obfs + obfs-<key> pair.
+func surgeHysteria2ObfsParts(flavor surgeFlavor, c map[string]any) []string {
+	obfs := cs(c, "obfs")
+	if obfs == "" {
+		return nil
+	}
+	key := cs(c, "obfs-password")
+	if key == "" {
+		return []string{"obfs=" + obfs}
+	}
+	if flavor == flavorSurge && (obfs == "salamander" || obfs == "gecko") {
+		return []string{obfs + "-" + key}
+	}
+	return []string{"obfs=" + obfs, "obfs-password=" + key}
+}
+
+// surgeAnytlsParts renders anytls.
 func surgeAnytlsParts(c map[string]any) []string {
 	parts := []string{
 		"anytls", cs(c, "server"), strconv.Itoa(ci(c, "port")),
@@ -267,6 +286,9 @@ func (r *surgeRenderer) uniqueSection(base string) string {
 // section. A node without ip or ipv6 cannot be routed and is skipped.
 func (r *surgeRenderer) surgeWireGuardPolicy(n *proxy.Proxy) (string, string) {
 	c := n.Clash
+	if cs(c, "private-key") == "" || cs(c, "public-key") == "" {
+		return "", "wireguard needs a private-key and public-key"
+	}
 	ip, ipv6 := cs(c, "ip"), cs(c, "ipv6")
 	if ip == "" && ipv6 == "" {
 		return "", "WireGuard needs ip or ipv6"
@@ -298,10 +320,15 @@ func (r *surgeRenderer) surgeWireGuardPolicy(n *proxy.Proxy) (string, string) {
 	if allowed == "" {
 		allowed = "0.0.0.0/0, ::/0"
 	}
+	server := cs(c, "server")
+	endpoint := server + ":" + strconv.Itoa(ci(c, "port"))
+	if strings.Contains(server, ":") {
+		endpoint = "[" + server + "]:" + strconv.Itoa(ci(c, "port"))
+	}
 	peer := []string{
 		"public-key = " + cs(c, "public-key"),
 		"allowed-ips = \"" + allowed + "\"",
-		"endpoint = " + cs(c, "server") + ":" + strconv.Itoa(ci(c, "port")),
+		"endpoint = " + endpoint,
 	}
 	if psk := cs(c, "pre-shared-key"); psk != "" {
 		peer = append(peer, "preshared-key = "+psk)

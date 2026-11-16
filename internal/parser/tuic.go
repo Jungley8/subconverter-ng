@@ -43,6 +43,13 @@ func parseTUIC(uri string) (*proxy.Proxy, error) {
 		p := proxy.New("tuic", name, host, port)
 		p.Set("password", token)
 		p.Version = 4
+		p.Set("sni", q.Get("sni"))
+		if alpn := q.Get("alpn"); alpn != "" {
+			p.Set("alpn", splitALPN(alpn))
+		}
+		if boolish(q.Get("allow_insecure")) || boolish(q.Get("insecure")) {
+			p.SetRaw("skip-cert-verify", true)
+		}
 		return p, nil
 	}
 

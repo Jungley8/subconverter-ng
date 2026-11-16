@@ -211,6 +211,9 @@ func nodeShareLink(n *proxy.Proxy) (string, bool) {
 		return link, true
 
 	case "wireguard":
+		if cs(c, "private-key") == "" || cs(c, "public-key") == "" {
+			return "", false
+		}
 		q := url.Values{}
 		if pk := cs(c, "public-key"); pk != "" {
 			q.Set("publickey", pk)
@@ -238,8 +241,11 @@ func nodeShareLink(n *proxy.Proxy) (string, bool) {
 			}
 			q.Set("reserved", strings.Join(parts, ","))
 		}
+		if dns := joinAny(c["dns"]); dns != "" {
+			q.Set("dns", dns)
+		}
 		appendAmneziaWGQuery(q, c)
-		link := "wireguard://" + cs(c, "private-key") + "@" + hostport
+		link := "wireguard://" + url.User(cs(c, "private-key")).String() + "@" + hostport
 		if enc := q.Encode(); enc != "" {
 			link += "?" + enc
 		}

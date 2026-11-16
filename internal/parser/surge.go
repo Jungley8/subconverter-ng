@@ -116,7 +116,15 @@ func parseSurge(text string) ([]*proxy.Proxy, []string, error) {
 
 		if currentWG != "" {
 			if k, v, ok := strings.Cut(line, "="); ok {
-				wgSections[currentWG][strings.ToLower(strings.TrimSpace(k))] = strings.TrimSpace(v)
+				key := strings.ToLower(strings.TrimSpace(k))
+				// A node has one endpoint: keep the first peer when a section
+				// lists several.
+				if key == "peer" {
+					if _, exists := wgSections[currentWG][key]; exists {
+						continue
+					}
+				}
+				wgSections[currentWG][key] = strings.TrimSpace(v)
 			}
 			continue
 		}
@@ -217,7 +225,9 @@ func parseSurgeLine(typ, name, server string, port int, extra []string) (*proxy.
 		if boolish(params["tfo"]) {
 			p.SetRaw("tfo", true)
 		}
-		if applySurgeShadowTLS(p, params) {
+		if used, err := applySurgeShadowTLS(p, params); err != nil {
+			return nil, err
+		} else if used {
 			return p, nil
 		}
 		if obfs := params["obfs"]; obfs != "" {
@@ -360,6 +370,7 @@ func parseSurgeLine(typ, name, server string, port int, extra []string) (*proxy.
 			p.SetRaw("skip-cert-verify", true)
 		}
 		applySurgeHysteria2Obfs(p, params)
+		applySurgePositionalObfs(p, posArgs)
 		return p, nil
 
 	case "hysteria":
@@ -558,17 +569,17 @@ func applySurgeTUICOptions(p *proxy.Proxy, params map[string]string) {
 
 // applySurgeShadowTLS turns the shadow-tls-* Surge parameters into the
 // Shadowsocks plugin wrapper. It reports whether the node uses ShadowTLS.
-func applySurgeShadowTLS(p *proxy.Proxy, params map[string]string) bool {
+func applySurgeShadowTLS(p *proxy.Proxy, params map[string]string) (bool, error) {
 	pass := params["shadow-tls-password"]
 	version := params["shadow-tls-version"]
 	sni := params["shadow-tls-sni"]
 	if pass == "" && version == "" && sni == "" {
-		return false
+		return false, nil
 	}
-	opts := map[string]any{}
-	if pass != "" {
-		opts["password"] = pass
+	if pass == "" {
+		return false, fmt.Errorf("shadow-tls needs shadow-tls-password")
 	}
+	opts := map[string]any{"password": pass}
 	if sni != "" {
 		opts["host"] = sni
 	}
@@ -577,7 +588,7 @@ func applySurgeShadowTLS(p *proxy.Proxy, params map[string]string) bool {
 	}
 	p.Set("plugin", "shadow-tls")
 	p.Set("plugin-opts", opts)
-	return true
+	return true, nil
 }
 
 // applySurgeHysteria2Obfs maps Surge's combined salamander-<key> /
@@ -587,6 +598,11 @@ func applySurgeHysteria2Obfs(p *proxy.Proxy, params map[string]string) {
 	if obfs == "" {
 		return
 	}
+	if key := params["obfs-password"]; key != "" {
+		p.Set("obfs", obfs)
+		p.Set("obfs-password", key)
+		return
+	}
 	kind, key, ok := strings.Cut(obfs, "-")
 	if ok && (kind == "salamander" || kind == "gecko") {
 		p.Set("obfs", kind)
@@ -594,6 +610,22 @@ func applySurgeHysteria2Obfs(p *proxy.Proxy, params map[string]string) {
 		return
 	}
 	p.Set("obfs", obfs)
+}
+
+// applySurgePositionalObfs reads Surge's salamander-<key> / gecko-<key> flags,
+// which are standalone tokens rather than key=value parameters.
+func applySurgePositionalObfs(p *proxy.Proxy, posArgs []string) {
+	for _, arg := range posArgs {
+		kind, key, ok := strings.Cut(arg, "-")
+		switch strings.ToLower(kind) {
+		case "salamander", "gecko":
+			if ok && key != "" {
+				p.Set("obfs", strings.ToLower(kind))
+				p.Set("obfs-password", key)
+				return
+			}
+		}
+	}
 }
 
 // parseSurgeSnell maps a Surge snell line. Surge omits the version for v1.
@@ -627,9 +659,13 @@ func parseSurgeSnell(name, server string, port int, params map[string]string) (*
 	p.Set("mode", params["mode"])
 
 	opts := map[string]any{}
-	if pass := params["shadow-tls-password"]; pass != "" {
+	stPass := params["shadow-tls-password"]
+	if stPass == "" && (params["shadow-tls-version"] != "" || params["shadow-tls-sni"] != "") {
+		return nil, fmt.Errorf("snell: shadow-tls needs shadow-tls-password")
+	}
+	if stPass != "" {
 		opts["mode"] = "shadow-tls"
-		opts["password"] = pass
+		opts["password"] = stPass
 		if sni := params["shadow-tls-sni"]; sni != "" {
 			opts["host"] = sni
 		}
@@ -678,7 +714,7 @@ func parseSurgeWireGuardSection(name, section string, sections map[string]map[st
 		p.Set("persistent-keepalive", ka)
 	}
 	if allowed := peer["allowed-ips"]; allowed != "" {
-		p.Set("allowed-ips", allowed)
+		p.Set("allowed-ips", splitALPN(allowed))
 	}
 	p.SetRaw("udp", true)
 	return p, nil

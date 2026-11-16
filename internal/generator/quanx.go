@@ -166,6 +166,11 @@ func formatQuanXRule(r Rule) (string, bool) {
 // protocols QuanX cannot express.
 func quanxNodeLine(n *proxy.Proxy) (string, bool) {
 	c := n.Clash
+	// Quantumult X has no ShadowTLS or modern V2Ray transports. Emitting the
+	// underlying node would silently drop the wrapper/transport.
+	if isShadowTLS(c) || isXHTTP(c) || isHTTPUpgrade(c) {
+		return "", false
+	}
 	addr := cs(c, "server") + ":" + strconv.Itoa(ci(c, "port"))
 	tag := "tag=" + n.Name
 

@@ -33,7 +33,7 @@
 | Mieru | 输出 | 跳过 | — | — | — | — |
 | MASQUE | 输出 | 跳过（sing-box 不把它当作节点） | 输出 | — | — | — |
 | TrustTunnel | 输出 | 跳过 | 输出 | — | — | — |
-| XHTTP | 输出 | 跳过节点 | 仅 VLESS | — | — | VLESS/VMess |
+| XHTTP | 输出 | 跳过节点 | 仅 VLESS | — | — | VLESS/VMess/Trojan |
 | HTTPUpgrade | 输出 | 输出 | VLESS/VMess/Trojan | — | — | VLESS/VMess |
 | AmneziaWG | 输出 | 跳过节点 | 跳过节点 | 跳过节点 | 跳过节点 | 输出参数 |
 | TUIC v4 | 跳过（仅 v5） | 跳过（仅 v5） | 输出 tuic + token | — | — | 输出 v4 链接 |
@@ -49,6 +49,9 @@
 - sing-box 跳过 XHTTP 节点。
 - Surge 只为 VLESS 使用 XHTTP。
 - sing-box 列中的版本号是该协议要求的最低 sing-box 版本。
+- sing-box 1.13 及以后把 WireGuard 写成 endpoint。更早的版本写成旧版 outbound。
+- 从 Surge 读取的 MASQUE 节点没有 ECDSA 密钥对。clash target 跳过这类节点。
+- Shadowrocket 与 Loon 跳过 HTTPUpgrade 节点。
 
 ## 不支持
 

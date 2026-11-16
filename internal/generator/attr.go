@@ -31,6 +31,8 @@ var typeNames = map[string]string{
 	"mieru":       "MIERU",
 	"masque":      "MASQUE",
 	"trusttunnel": "TRUSTTUNNEL",
+	"awg":         "AWG",
+	"tuic4":       "TUIC4",
 }
 
 func typeName(t string) string {
@@ -58,6 +60,12 @@ func attrTypeName(n *proxy.Proxy) string {
 				return "HTTPS"
 			}
 		}
+	}
+	if n.Type == "wireguard" && hasAmneziaWG(n.Clash) {
+		return "AWG"
+	}
+	if n.Type == "tuic" && n.Version == 4 {
+		return "TUIC4"
 	}
 	return typeName(n.Type)
 }

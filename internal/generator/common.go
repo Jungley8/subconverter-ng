@@ -174,10 +174,10 @@ var protocolAliases = map[string]string{
 	"masque":       "masque",
 	"trusttunnel":  "trusttunnel",
 	"trust-tunnel": "trusttunnel",
-	"awg":          "wireguard",
-	"amneziawg":    "wireguard",
-	"tuic4":        "tuic",
-	"tuicv4":       "tuic",
+	"awg":          "awg",
+	"amneziawg":    "awg",
+	"tuic4":        "tuic4",
+	"tuicv4":       "tuic4",
 }
 
 // CanonicalProtocol normalizes a protocol name or alias to its standard form.
@@ -245,7 +245,9 @@ func filterProtocols(nodes []*proxy.Proxy, excluded map[string]bool) ([]*proxy.P
 		}
 		rawType := strings.ToLower(strings.TrimSpace(n.Type))
 		canon := CanonicalProtocol(rawType)
-		if excluded[canon] || excluded[rawType] {
+		if excluded[canon] || excluded[rawType] ||
+			(excluded["awg"] && hasAmneziaWG(n.Clash)) ||
+			(excluded["tuic4"] && n.Type == "tuic" && n.Version == 4) {
 			dropped++
 			continue
 		}
