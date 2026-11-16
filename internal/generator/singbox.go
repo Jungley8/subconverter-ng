@@ -19,6 +19,7 @@ var singboxProtocolFloor = map[string][2]int{
 	"ss": {1, 0}, "socks5": {1, 0}, "socks": {1, 0}, "vmess": {1, 0},
 	"vless": {1, 0}, "trojan": {1, 0}, "wireguard": {1, 0},
 	"hysteria": {1, 1}, "tuic": {1, 2}, "hysteria2": {1, 5}, "anytls": {1, 12},
+	"ssh": {1, 5}, "naive": {1, 13}, "snell": {1, 14},
 }
 
 // defaultSingboxVersion is the schema used when the target carries no version
@@ -227,6 +228,12 @@ func GenerateSingbox(ctx context.Context, nodes []*proxy.Proxy, cfg *extconfig.C
 func nodeOutbounds(nodes []*proxy.Proxy, opts Options, res *Result) (outbounds []map[string]any, emitted map[string]bool, allNames []string) {
 	emitted = map[string]bool{}
 	allNames = make([]string, 0, len(nodes))
+	// Derived tags (the ShadowTLS wrapper) must not collide with any node name,
+	// including names later in the list, so reserve every name up front.
+	usedTags := make(map[string]bool, len(nodes))
+	for _, n := range nodes {
+		usedTags[n.Name] = true
+	}
 	for _, n := range nodes {
 		// Version gate: drop protocols the declared sing-box release cannot
 		// render. Skipped nodes stay out of emitted/allNames, so groups and
@@ -237,13 +244,26 @@ func nodeOutbounds(nodes []*proxy.Proxy, opts Options, res *Result) (outbounds [
 					fmt.Sprintf("%s (%s: requires sing-box >= %d.%d)", n.Name, n.Type, floor[0], floor[1]))
 				continue
 			}
+			// ShadowTLS has existed since 1.0, but its v3 handshake only since
+			// 1.3, so the wrapper version decides the floor for a wrapped ss node.
+			if n.Type == "ss" && isShadowTLS(n.Clash) {
+				if _, _, v := shadowTLSOpts(n.Clash); v >= 3 && !opts.TargetVersion.AtLeast(1, 3) {
+					res.SkippedNodes = append(res.SkippedNodes,
+						fmt.Sprintf("%s (%s: shadowtls version %d requires sing-box >= 1.3)", n.Name, n.Type, v))
+					continue
+				}
+			}
 		}
-		ob, ok := nodeSingboxOutbound(n)
+		if reason := singboxSkipReason(n); reason != "" {
+			res.SkippedNodes = append(res.SkippedNodes, n.Name+" ("+n.Type+": "+reason+")")
+			continue
+		}
+		obs, ok := singboxOutboundsForNode(n, usedTags)
 		if !ok {
 			res.SkippedNodes = append(res.SkippedNodes, n.Name+" ("+n.Type+": unsupported by sing-box generator)")
 			continue
 		}
-		outbounds = append(outbounds, ob)
+		outbounds = append(outbounds, obs...)
 		emitted[n.Name] = true
 		allNames = append(allNames, n.Name)
 	}
@@ -500,6 +520,15 @@ func nodeSingboxOutbound(n *proxy.Proxy) (map[string]any, bool) {
 		base["tls"] = singboxTLS(c, cs(c, "sni"), true)
 		return base, true
 
+	case "snell":
+		return singboxSnellOutbound(n)
+
+	case "ssh":
+		return singboxSSHOutbound(n), true
+
+	case "naive":
+		return singboxNaiveOutbound(n), true
+
 	case "socks5", "socks":
 		base["type"] = "socks"
 		base["version"] = "5"
@@ -591,6 +620,9 @@ func singboxTransport(c map[string]any) map[string]any {
 			if h := cs(hdr, "Host"); h != "" {
 				t["headers"] = map[string]any{"Host": h}
 			}
+		}
+		if isHTTPUpgrade(c) {
+			t["v2ray_http_upgrade"] = true
 		}
 		return t
 	case "grpc":
