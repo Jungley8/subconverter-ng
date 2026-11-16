@@ -38,7 +38,11 @@ func GenerateLoon(ctx context.Context, nodes []*proxy.Proxy, cfg *extconfig.Conf
 
 func generateSurgeFamily(ctx context.Context, flavor surgeFlavor, nodes []*proxy.Proxy, cfg *extconfig.Config, f Fetcher, opts Options) (*Result, error) {
 	res := &Result{ContentType: ctText}
-	nodes = prepareNodes(nodes, cfg, opts, res)
+	prepared, err := prepareNodes(nodes, cfg, opts, res)
+	if err != nil {
+		return nil, err
+	}
+	nodes = prepared
 
 	var b strings.Builder
 	b.WriteString("[General]\n")
@@ -79,7 +83,10 @@ func generateSurgeFamily(ctx context.Context, flavor surgeFlavor, nodes []*proxy
 
 	// Proxy groups: reuse the shared resolver, then drop members that were not
 	// emitted as proxies (so a group never points at a missing node line).
-	groups := buildGroups(cfg.ProxyGroups, nodes, allNames, res)
+	groups, err := buildGroups(cfg.ProxyGroups, nodes, allNames, res)
+	if err != nil {
+		return nil, err
+	}
 	b.WriteString("\n[Proxy Group]\n")
 	for _, g := range groups {
 		b.WriteString(formatSurgeGroup(g, emitted))

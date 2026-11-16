@@ -5,12 +5,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/Jungley8/subconverter-ng/internal/extconfig"
 	"github.com/Jungley8/subconverter-ng/internal/generator"
+	"github.com/Jungley8/subconverter-ng/internal/matcher"
 	"gopkg.in/yaml.v3"
 )
 
@@ -326,7 +326,7 @@ func TestRun_RemarksFilters(t *testing.T) {
 		}
 		return diag
 	}
-	must := func(t *testing.T, spec string) []*regexp.Regexp {
+	must := func(t *testing.T, spec string) []*matcher.Matcher {
 		t.Helper()
 		re, err := CompileRemarks(spec)
 		if err != nil {
@@ -820,5 +820,171 @@ func TestResolveTemplateURLOnly(t *testing.T) {
 	b, err := resolveTemplate(context.Background(), f, "https://example.com/t.json")
 	if err != nil || string(b) != `{"outbounds":[]}` {
 		t.Errorf("resolveTemplate(url) = %q, %v, want the fetched template", b, err)
+	}
+}
+
+func TestRun_InvalidSelectorIsBadRequest(t *testing.T) {
+	f := fakeFetcher{
+		"client/subscribe": sampleSubscription(),
+		"config.init": []byte("[custom]\n" +
+			"ruleset=🐟 漏网之鱼,[]FINAL\n" +
+			"custom_proxy_group=AI节点`url-test`^(?!.*(港).*$\n"), // unbalanced group
+	}
+	req := Request{
+		Target:    "clash",
+		SubURLs:   []string{"https://airport.example.com/api/v1/client/subscribe?token=x"},
+		ConfigURL: "https://github.com/x/config.init",
+	}
+	_, _, err := Run(context.Background(), f, req)
+	if !errors.Is(err, ErrBadRequest) {
+		t.Fatalf("err = %v, want ErrBadRequest", err)
+	}
+	if !strings.Contains(err.Error(), "AI节点") {
+		t.Errorf("error should name the group: %v", err)
+	}
+}
+
+func TestRun_InvalidRemarksIsBadRequest(t *testing.T) {
+	f := fakeFetcher{
+		"client/subscribe": sampleSubscription(),
+		"config.init":      []byte("[custom]\nexclude_remarks=([\n"),
+	}
+	req := Request{
+		Target:    "clash",
+		SubURLs:   []string{"https://airport.example.com/api/v1/client/subscribe?token=x"},
+		ConfigURL: "https://github.com/x/config.init",
+	}
+	_, _, err := Run(context.Background(), f, req)
+	if !errors.Is(err, ErrBadRequest) {
+		t.Fatalf("err = %v, want ErrBadRequest", err)
+	}
+	if !strings.Contains(err.Error(), "exclude_remarks") {
+		t.Errorf("error should name the key: %v", err)
+	}
+}
+
+func TestCompileRemarksInvalidIsBadRequest(t *testing.T) {
+	_, err := CompileRemarks("([")
+	if !errors.Is(err, ErrBadRequest) {
+		t.Fatalf("err = %v, want ErrBadRequest: the spec came from the request", err)
+	}
+}
+
+func TestRun_InvalidRenameAndEmojiAreBadRequest(t *testing.T) {
+	for _, ini := range []string{
+		"[custom]\nrename=([@x\n",
+		"[custom]\nrename=no-separator\n",
+		"[custom]\nemoji=([,🇦\n",
+	} {
+		f := fakeFetcher{
+			"client/subscribe": sampleSubscription(),
+			"config.init":      []byte(ini),
+		}
+		req := Request{
+			Target:    "clash",
+			SubURLs:   []string{"https://airport.example.com/api/v1/client/subscribe?token=x"},
+			ConfigURL: "https://github.com/x/config.init",
+		}
+		_, _, err := Run(context.Background(), f, req)
+		if !errors.Is(err, ErrBadRequest) {
+			t.Errorf("%q: err = %v, want ErrBadRequest", ini, err)
+		}
+	}
+}
+
+func TestRun_OverriddenBrokenRemarksDoesNotFail(t *testing.T) {
+	f := fakeFetcher{
+		"client/subscribe": sampleSubscription(),
+		"config.init":      []byte("[custom]\nexclude_remarks=([\n"),
+	}
+	override, err := CompileRemarks("(US)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := Request{
+		Target:         "clash",
+		SubURLs:        []string{"https://airport.example.com/api/v1/client/subscribe?token=x"},
+		ConfigURL:      "https://github.com/x/config.init",
+		ExcludeRemarks: override,
+	}
+	_, diag, err := Run(context.Background(), f, req)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if diag.Filtered == 0 {
+		t.Error("the request-level exclude did not run")
+	}
+}
+
+func TestRun_ProviderIncludeMustCompileForClient(t *testing.T) {
+	include, err := CompileRemarks(`(?P<x>US)`) // valid RE2, invalid regexp2
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := fakeFetcher{}
+	req := Request{
+		Target:         "clash",
+		SubURLs:        []string{"https://airport.example.com/sub"},
+		Provider:       true,
+		IncludeRemarks: include,
+	}
+	_, _, err = Run(context.Background(), f, req)
+	if !errors.Is(err, ErrBadRequest) {
+		t.Fatalf("err = %v, want ErrBadRequest: mihomo compiles the filter with regexp2", err)
+	}
+}
+
+func TestRun_TemplateNotesNameInvalidIsBadRequest(t *testing.T) {
+	tmpl := `{"outbounds": [{{ Nodes }}], "extra": [{{ "([" | NotesName }}]}`
+	f := fakeFetcher{
+		"client/subscribe": sampleSubscription(),
+		"t.json":           []byte(tmpl),
+	}
+	req := Request{
+		Target:   "singbox",
+		SubURLs:  []string{"https://airport.example.com/api/v1/client/subscribe?token=x"},
+		Template: "https://example.com/t.json",
+	}
+	_, _, err := Run(context.Background(), f, req)
+	if !errors.Is(err, ErrBadRequest) {
+		t.Fatalf("err = %v, want ErrBadRequest", err)
+	}
+}
+
+func TestRun_TemplateMatcherTimeoutIsBadRequest(t *testing.T) {
+	name := strings.Repeat("a", 40) + "!"
+	link := "ss://" + b64("aes-256-gcm:pass") + "@1.2.3.4:8388#" + name
+	sub := b64(link)
+	f := fakeFetcher{
+		"client/subscribe": []byte(sub),
+		"config.init":      []byte("[custom]\nexclude_remarks=^(a+)+(?=b)\n"),
+		"t.json":           []byte(`{"outbounds": [{{ Nodes }}]}`),
+	}
+	req := Request{
+		Target:    "singbox",
+		SubURLs:   []string{"https://airport.example.com/api/v1/client/subscribe?token=x"},
+		ConfigURL: "https://github.com/x/config.init",
+		Template:  "https://example.com/t.json",
+	}
+	_, _, err := Run(context.Background(), f, req)
+	if !errors.Is(err, ErrBadRequest) {
+		t.Fatalf("err = %v, want ErrBadRequest", err)
+	}
+}
+
+func TestRun_ProviderExcludeMustCompileForClient(t *testing.T) {
+	exclude, err := CompileRemarks(`(?P<x>US)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := Request{
+		Target:         "clash",
+		SubURLs:        []string{"https://airport.example.com/sub"},
+		Provider:       true,
+		ExcludeRemarks: exclude,
+	}
+	_, _, err = Run(context.Background(), fakeFetcher{}, req)
+	if !errors.Is(err, ErrBadRequest) {
+		t.Fatalf("err = %v, want ErrBadRequest", err)
 	}
 }

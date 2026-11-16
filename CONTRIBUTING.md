@@ -3,6 +3,21 @@
 Thank you for your interest in contributing to subconverter-ng.
 Follow these guidelines to submit changes and report issues.
 
+## Conventions
+
+Two input shapes come from the user and need care.
+
+**Regexes from a config or URL.** Compile them with `internal/matcher`, not
+`regexp.Compile`. Upstream subconverter accepts PCRE, and its docs use
+lookahead selectors such as `(^(?!.*(美国|日本)).*)`. Report a pattern that no
+engine accepts, or one whose match times out. Never skip it: a skipped selector
+turns the group into DIRECT. Use `CompileClient` for a pattern written into a
+client config; mihomo compiles it with regexp2.
+
+**YAML documents written by the user.** Keep them in a `yaml.Node` tree. Decode
+into `map[string]any` only for data this program generates. A map round trip
+loses key order, comments, and scalar quotes.
+
 ## Development Setup
 
 Install Go 1.27 or newer.

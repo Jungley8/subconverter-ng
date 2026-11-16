@@ -95,7 +95,11 @@ func (c *ruleSetCollector) definitions() []map[string]any {
 // rule_sets are on unless an older version is declared.
 func GenerateSingbox(ctx context.Context, nodes []*proxy.Proxy, cfg *extconfig.Config, f Fetcher, opts Options) (*Result, error) {
 	res := &Result{ContentType: ctJSON}
-	nodes = prepareNodes(nodes, cfg, opts, res)
+	prepared, err := prepareNodes(nodes, cfg, opts, res)
+	if err != nil {
+		return nil, err
+	}
+	nodes = prepared
 	schema := singboxSchemaFor(opts)
 
 	// Node outbounds.
@@ -117,7 +121,10 @@ func GenerateSingbox(ctx context.Context, nodes []*proxy.Proxy, cfg *extconfig.C
 	for _, d := range cfg.ProxyGroups {
 		groupNames[d.Name] = true
 	}
-	groups := buildGroups(cfg.ProxyGroups, nodes, allNames, res)
+	groups, err := buildGroups(cfg.ProxyGroups, nodes, allNames, res)
+	if err != nil {
+		return nil, err
+	}
 	for _, g := range groups {
 		outbounds = append(outbounds, singboxGroupOutbound(g, emitted, groupNames, schema))
 	}

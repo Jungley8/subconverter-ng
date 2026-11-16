@@ -42,6 +42,10 @@
 | 订阅内容里没有可用节点 | `422` |
 | 上游抓取失败（订阅 / 配置 / 规则集） | `424` |
 
+**配置里的正则支持 PCRE 语法。** 分组选择器、`include`/`exclude`、`rename`、`emoji` 都先用 Go RE2 编译，失败再换 PCRE 引擎，覆盖 lookahead、lookbehind 与反向引用。上游文档里的 `(^(?!.*(美国|日本)).*)` 这类排除式分组可以正常匹配。两种引擎都编译失败、或匹配超过 100ms 超时时返回 `400`，错误里带分组名与选择器。provider 模式下 `include`/`exclude` 会写进客户端 `filter`，因此还必须能被 PCRE 引擎编译。`!!TYPE=`、`!!GROUP=` 等属性选择器未实现，同样返回 `400`，不静默产出空分组。
+
+**`clash_rule_base` 保留原文件布局。** 只替换生成段：`proxies`、`proxy-groups`、`rules`，provider 模式另加 `proxy-providers`，`expand=false` 时另加 `rule-providers`。其余键序、引号与注释保持原样；缩进统一为 2 空格，空行不保留。base 抓取或解析失败时返回错误，不回落内置骨架。
+
 **缓存按「UA + 上游代理 + URL」区分。** 带 `&ua=` 的请求不读写共享缓存（UA 是无界键空间）。需要缓存就把 UA 写进服务端 `user_agent`。
 
 **sing-box 输出随内核版本变化。** 未声明版本时按当前 sing-box schema 输出；老内核用 `target=singbox/1.11` 这类写法。同一份配置在不同 sing-box 大版本之间不保证通用，这是上游内核的 schema 变化，不是转换器的可选行为。

@@ -4,15 +4,29 @@ package generator
 
 import (
 	"context"
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/Jungley8/subconverter-ng/internal/emoji"
 	"github.com/Jungley8/subconverter-ng/internal/extconfig"
+	"github.com/Jungley8/subconverter-ng/internal/matcher"
 	"github.com/Jungley8/subconverter-ng/internal/proxy"
 	"gopkg.in/yaml.v3"
 )
+
+// tailscaleRuleLines is the neutral tailscaleRules set formatted as Clash rule
+// lines, for the paths that work on rendered strings rather than Rule values.
+func tailscaleRuleLines() []string {
+	lines := make([]string, 0, len(tailscaleRules))
+	for _, r := range tailscaleRules {
+		if line, ok := formatClashRule(r); ok {
+			lines = append(lines, line)
+		}
+	}
+	return lines
+}
 
 // Fetcher fetches remote rulesets and base configs.
 type Fetcher interface {
@@ -104,7 +118,7 @@ type Options struct {
 // Replacement uses Go's $N backref syntax (subconverter's \N is translated at
 // compile time).
 type RenameRule struct {
-	Pattern *regexp.Regexp
+	Pattern *matcher.Matcher
 	Replace string
 }
 
@@ -116,8 +130,8 @@ var backrefSlash = regexp.MustCompile(`\\(\d+)`)
 // RenameRules. The first "@" separates pattern from replacement; the
 // replacement may be empty. Backrefs may be written subconverter-style (\1) or
 // Go-style ($1) — \N is translated to $N before use, while existing $N are left
-// untouched. Invalid entries (no "@", or a pattern that fails to compile) are
-// skipped.
+// untouched. Invalid entries are reported by extconfig.Parse, so the ones
+// skipped here never reach a conversion.
 func CompileRenameRules(raw []string) []RenameRule {
 	var out []RenameRule
 	for _, line := range raw {
@@ -125,7 +139,7 @@ func CompileRenameRules(raw []string) []RenameRule {
 		if !ok || pat == "" {
 			continue
 		}
-		re, err := regexp.Compile(pat)
+		re, err := matcher.Compile(pat)
 		if err != nil {
 			continue
 		}
@@ -150,17 +164,17 @@ type groupOut struct {
 }
 
 type clashOut struct {
-	MixedPort          int              `yaml:"mixed-port"`
-	AllowLan           bool             `yaml:"allow-lan"`
-	Mode               string           `yaml:"mode"`
-	LogLevel           string           `yaml:"log-level"`
-	ExternalController string           `yaml:"external-controller"`
-	DNS                map[string]any   `yaml:"dns"`
-	Proxies            []map[string]any `yaml:"proxies,omitempty"`
-	ProxyProviders     map[string]any   `yaml:"proxy-providers,omitempty"`
-	ProxyGroups        []groupOut       `yaml:"proxy-groups"`
-	RuleProviders      map[string]any   `yaml:"rule-providers,omitempty"`
-	Rules              []string         `yaml:"rules"`
+	MixedPort          int            `yaml:"mixed-port"`
+	AllowLan           bool           `yaml:"allow-lan"`
+	Mode               string         `yaml:"mode"`
+	LogLevel           string         `yaml:"log-level"`
+	ExternalController string         `yaml:"external-controller"`
+	DNS                map[string]any `yaml:"dns"`
+	Proxies            *yaml.Node     `yaml:"proxies"`
+	ProxyProviders     map[string]any `yaml:"proxy-providers,omitempty"`
+	ProxyGroups        []groupOut     `yaml:"proxy-groups"`
+	RuleProviders      map[string]any `yaml:"rule-providers,omitempty"`
+	Rules              []string       `yaml:"rules"`
 }
 
 // Result is the rendered config plus diagnostics worth surfacing to the user.
@@ -187,7 +201,11 @@ const (
 // GenerateClash builds a Clash.Meta config.
 func GenerateClash(ctx context.Context, nodes []*proxy.Proxy, cfg *extconfig.Config, f Fetcher, opts Options) (*Result, error) {
 	res := &Result{ContentType: ctYAML}
-	nodes = prepareNodes(nodes, cfg, opts, res)
+	prepared, err := prepareNodes(nodes, cfg, opts, res)
+	if err != nil {
+		return nil, err
+	}
+	nodes = prepared
 
 	proxies := make([]map[string]any, 0, len(nodes))
 	names := make([]string, 0, len(nodes))
@@ -198,9 +216,13 @@ func GenerateClash(ctx context.Context, nodes []*proxy.Proxy, cfg *extconfig.Con
 
 	// list=true: emit only the proxies list, no groups/rules.
 	if opts.ListOnly {
+		proxiesNode, err := proxiesNode(proxies)
+		if err != nil {
+			return nil, err
+		}
 		y, err := yaml.Marshal(struct {
-			Proxies []map[string]any `yaml:"proxies"`
-		}{Proxies: proxies})
+			Proxies *yaml.Node `yaml:"proxies"`
+		}{Proxies: proxiesNode})
 		if err != nil {
 			return nil, err
 		}
@@ -208,7 +230,10 @@ func GenerateClash(ctx context.Context, nodes []*proxy.Proxy, cfg *extconfig.Con
 		return res, nil
 	}
 
-	groups := buildGroups(cfg.ProxyGroups, nodes, names, res)
+	groups, err := buildGroups(cfg.ProxyGroups, nodes, names, res)
+	if err != nil {
+		return nil, err
+	}
 
 	// Rule output: either inline every rule (default, expand=true) or emit
 	// rule-providers + RULE-SET rules (expand=false).
@@ -222,45 +247,65 @@ func GenerateClash(ctx context.Context, nodes []*proxy.Proxy, cfg *extconfig.Con
 		res.SkippedRules = skippedRules
 	}
 
+	proxiesNode, err := proxiesNode(proxies)
+	if err != nil {
+		return nil, err
+	}
+
 	out := defaultBase()
-	out.Proxies = proxies
+	out.Proxies = proxiesNode
 	out.ProxyGroups = groups
 	out.RuleProviders = providers
 	out.Rules = rules
 
-	// A custom base template (clash_rule_base) overrides the default skeleton;
-	// we inject proxies/proxy-groups/rules into it and marshal that instead.
+	// A custom base template (clash_rule_base) overrides the default skeleton:
+	// its document is kept as authored and only the generated sections are
+	// swapped in. A base that cannot be fetched or parsed is an error, not a
+	// silent fall back to the skeleton — the user asked for their own layout.
 	if cfg.ClashRuleBase != "" {
-		if data, err := f.Get(ctx, cfg.ClashRuleBase); err == nil {
-			var base map[string]any
-			if yaml.Unmarshal(data, &base) == nil && base != nil {
-				base["proxies"] = proxies
-				base["proxy-groups"] = groups
-				if providers != nil {
-					base["rule-providers"] = providers
-				}
-				if cfg.OverwriteRules || base["rules"] == nil {
-					base["rules"] = rules
-				} else if opts.Tailscale {
-					ts := []any{
-						"IP-CIDR,100.64.0.0/10,DIRECT,no-resolve",
-						"IP-CIDR,fd7a:115c:a1e0::/48,DIRECT,no-resolve",
-					}
-					if existing, ok := base["rules"].([]any); ok {
-						base["rules"] = append(ts, existing...)
-					} else {
-						base["rules"] = ts
-					}
-				}
-				y, err := yaml.Marshal(base)
+		data, err := f.Get(ctx, cfg.ClashRuleBase)
+		if err != nil {
+			return nil, fmt.Errorf("fetch clash_rule_base: %w", err)
+		}
+		root, err := parseBase(data)
+		if err != nil {
+			return nil, err
+		}
+		groupsNode, err := yamlNode(groups)
+		if err != nil {
+			return nil, err
+		}
+		setMappingValue(root, "proxies", proxiesNode)
+		setMappingValue(root, "proxy-groups", groupsNode)
+		// rule-providers follows the generated rules: injecting providers while
+		// keeping the base's rules would leave its RULE-SET lines dangling.
+		switch existing := mappingValue(root, "rules"); {
+		case cfg.OverwriteRules || existing == nil:
+			rulesNode, err := yamlNode(rules)
+			if err != nil {
+				return nil, err
+			}
+			setMappingValue(root, "rules", rulesNode)
+			if providers != nil {
+				providersNode, err := yamlNode(providers)
 				if err != nil {
 					return nil, err
 				}
-				res.Output = unescapeUnicode(y)
-				return res, nil
+				setMappingValue(root, "rule-providers", providersNode)
 			}
+		case opts.Tailscale:
+			rulesNode, err := prependRules(existing, tailscaleRuleLines())
+			if err != nil {
+				return nil, err
+			}
+			setMappingValue(root, "rules", rulesNode)
 		}
-		// On any failure we fall through to the default base rather than erroring.
+		y, err := encodeBase(root)
+		if err != nil {
+			return nil, err
+		}
+		res.Output = unescapeUnicode(y)
+		return res, nil
 	}
 
 	y, err := yaml.Marshal(out)
@@ -271,66 +316,188 @@ func GenerateClash(ctx context.Context, nodes []*proxy.Proxy, cfg *extconfig.Con
 	return res, nil
 }
 
-// unescapeUnicode rewrites \uXXXX and \U00XXXXXX escape sequences that yaml.v3
-// emits for non-ASCII characters (notably emoji, which live outside the BMP and
-// which yaml.v3 conservatively escapes) back into raw UTF-8. Real Clash configs
-// carry literal emoji in node/group names, and clients display them as-is.
+// unescapeUnicode rewrites \uXXXX and \U00XXXXXX escapes that yaml.v3 emits
+// for non-ASCII characters (notably emoji, which live outside the BMP and which
+// yaml.v3 conservatively escapes) back into raw UTF-8. Real Clash configs carry
+// literal emoji in node/group names, and clients display them as-is.
 //
-// Only non-ASCII code points are unescaped, so genuine control-character
-// escapes are preserved and never reintroduced as raw bytes. A literal "\\"
-// is passed through untouched so "\\U..." is not misread as an escape.
+// Only escapes inside a double-quoted scalar are rewritten: there they mean the
+// same code point to a YAML parser. In a single-quoted or plain scalar, a
+// comment, or a block scalar the sequence is literal text, and rewriting it
+// would change the value. Non-ASCII only, so control-character escapes stay.
 func unescapeUnicode(b []byte) []byte {
-	s := string(b)
 	var sb strings.Builder
-	sb.Grow(len(s))
-	for i := 0; i < len(s); {
-		if s[i] == '\\' && i+1 < len(s) {
-			switch s[i+1] {
-			case '\\':
-				sb.WriteString(`\\`)
-				i += 2
+	sb.Grow(len(b))
+	blockIndent := -1
+	for _, line := range strings.SplitAfter(string(b), "\n") {
+		indent := len(line) - len(strings.TrimLeft(line, " \t"))
+		if blockIndent >= 0 {
+			if strings.TrimSpace(line) == "" || indent > blockIndent {
+				sb.WriteString(line)
 				continue
-			case 'U':
-				if i+10 <= len(s) {
-					if r, err := strconv.ParseInt(s[i+2:i+10], 16, 32); err == nil && r >= 0x80 {
-						sb.WriteRune(rune(r))
-						i += 10
-						continue
-					}
-				}
-			case 'u':
-				if i+6 <= len(s) {
-					if r, err := strconv.ParseInt(s[i+2:i+6], 16, 32); err == nil && r >= 0x80 {
-						sb.WriteRune(rune(r))
-						i += 6
-						continue
-					}
-				}
 			}
+			blockIndent = -1
 		}
-		sb.WriteByte(s[i])
-		i++
+		sb.WriteString(unescapeUnicodeLine(line))
+		if blockScalarHeader(line) {
+			blockIndent = indent
+		}
 	}
 	return []byte(sb.String())
 }
 
-// filterNodes drops nodes whose name matches any exclude_remarks regex, and —
-// when include_remarks is set — keeps only those matching at least one.
-func filterNodes(nodes []*proxy.Proxy, cfg *extconfig.Config) []*proxy.Proxy {
-	if cfg == nil {
-		return nodes
-	}
-	out := nodes[:0:0]
-	for _, n := range nodes {
-		if matchesAny(cfg.ExcludeRemarks, n.Name) {
+// unescapeUnicodeLine rewrites the escapes of one line. Quote state does not
+// carry across lines: an unclosed scalar stays as written.
+func unescapeUnicodeLine(line string) string {
+	var sb strings.Builder
+	sb.Grow(len(line))
+	inDouble, inSingle := false, false
+	for i := 0; i < len(line); {
+		c := line[i]
+		if inSingle {
+			if c == '\'' {
+				if i+1 < len(line) && line[i+1] == '\'' {
+					sb.WriteString("''")
+					i += 2
+					continue
+				}
+				inSingle = false
+			}
+			sb.WriteByte(c)
+			i++
 			continue
 		}
-		if len(cfg.IncludeRemarks) > 0 && !matchesAny(cfg.IncludeRemarks, n.Name) {
+		if inDouble {
+			switch {
+			case c == '\\' && i+1 < len(line) && line[i+1] == '"':
+				sb.WriteString(`\"`)
+				i += 2
+			case c == '"':
+				inDouble = false
+				sb.WriteByte(c)
+				i++
+			case c == '\\' && i+1 < len(line) && line[i+1] == '\\':
+				sb.WriteString(`\\`)
+				i += 2
+			case c == '\\' && i+1 < len(line) && line[i+1] == 'U' && i+10 <= len(line):
+				if r, err := strconv.ParseInt(line[i+2:i+10], 16, 32); err == nil && r >= 0x80 {
+					sb.WriteRune(rune(r))
+					i += 10
+				} else {
+					sb.WriteByte(c)
+					i++
+				}
+			case c == '\\' && i+1 < len(line) && line[i+1] == 'u' && i+6 <= len(line):
+				if r, err := strconv.ParseInt(line[i+2:i+6], 16, 32); err == nil && r >= 0x80 {
+					sb.WriteRune(rune(r))
+					i += 6
+				} else {
+					sb.WriteByte(c)
+					i++
+				}
+			default:
+				sb.WriteByte(c)
+				i++
+			}
 			continue
+		}
+		switch {
+		case c == '#' && (i == 0 || line[i-1] == ' ' || line[i-1] == '\t'):
+			sb.WriteString(line[i:])
+			return sb.String()
+		case c == '"' && quoteStartsScalar(line, i):
+			inDouble = true
+		case c == '\'' && quoteStartsScalar(line, i):
+			inSingle = true
+		}
+		sb.WriteByte(c)
+		i++
+	}
+	return sb.String()
+}
+
+// quoteStartsScalar reports whether the quote at s[i] opens a scalar: the last
+// non-space byte before it is a mapping value, entry, or sequence indicator.
+func quoteStartsScalar(s string, i int) bool {
+	for j := i - 1; j >= 0; j-- {
+		switch s[j] {
+		case ' ', '\t', '\r':
+			continue
+		case ':', ',', '[', '{':
+			return true
+		case '-':
+			return onlyIndentBefore(s, j)
+		default:
+			return false
+		}
+	}
+	// Only indentation precedes the quote: on a continuation line of a plain or
+	// single-quoted scalar, so it does not open a new scalar.
+	return false
+}
+
+func onlyIndentBefore(s string, j int) bool {
+	for k := j - 1; k >= 0; k-- {
+		if s[k] != ' ' && s[k] != '\t' {
+			return false
+		}
+	}
+	return true
+}
+
+// blockScalarHeader reports whether the line ends with a block scalar
+// indicator (| or >, with optional chomping/indentation modifiers).
+func blockScalarHeader(line string) bool {
+	t := strings.TrimRight(line, " \t\r\n")
+	if i := strings.Index(t, " #"); i >= 0 {
+		t = strings.TrimRight(t[:i], " \t")
+	}
+	fields := strings.Fields(t)
+	if len(fields) == 0 {
+		return false
+	}
+	tok := fields[len(fields)-1]
+	if tok[0] != '|' && tok[0] != '>' {
+		return false
+	}
+	for _, c := range tok[1:] {
+		if c != '+' && c != '-' && (c < '1' || c > '9') {
+			return false
+		}
+	}
+	return true
+}
+
+// filterNodes drops nodes whose name matches any exclude_remarks regex, and —
+// when include_remarks is set — keeps only those matching at least one.
+func filterNodes(nodes []*proxy.Proxy, cfg *extconfig.Config) ([]*proxy.Proxy, int, error) {
+	if cfg == nil {
+		return nodes, 0, nil
+	}
+	out := nodes[:0:0]
+	dropped := 0
+	for _, n := range nodes {
+		excluded, err := matchesAny(cfg.ExcludeRemarks, n.Name)
+		if err != nil {
+			return nil, 0, fmt.Errorf("%w: exclude_remarks: %w", ErrConfigInvalid, err)
+		}
+		if excluded {
+			dropped++
+			continue
+		}
+		if len(cfg.IncludeRemarks) > 0 {
+			included, err := matchesAny(cfg.IncludeRemarks, n.Name)
+			if err != nil {
+				return nil, 0, fmt.Errorf("%w: include_remarks: %w", ErrConfigInvalid, err)
+			}
+			if !included {
+				dropped++
+				continue
+			}
 		}
 		out = append(out, n)
 	}
-	return out
+	return out, dropped, nil
 }
 
 // dedup removes nodes that are identical in every connection field, ignoring
@@ -399,19 +566,23 @@ func filterDeprecated(nodes []*proxy.Proxy) (out []*proxy.Proxy, dropped int) {
 	return out, dropped
 }
 
-func matchesAny(res []*regexp.Regexp, s string) bool {
+func matchesAny(res []*matcher.Matcher, s string) (bool, error) {
 	for _, re := range res {
-		if re.MatchString(s) {
-			return true
+		ok, err := re.Match(s)
+		if err != nil {
+			return false, err
+		}
+		if ok {
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 // applyNodeOptions stamps URL-flag-driven fields onto every node and applies
 // emoji processing (remove existing, then add per rules). Renames happen here —
 // before group/rule assembly — so proxy-group member lists stay in sync.
-func applyNodeOptions(nodes []*proxy.Proxy, opts Options) {
+func applyNodeOptions(nodes []*proxy.Proxy, opts Options) error {
 	for _, n := range nodes {
 		if opts.AppendType && n.Type != "" {
 			n.Rename("[" + strings.ToUpper(n.Type) + "] " + n.Name)
@@ -420,10 +591,18 @@ func applyNodeOptions(nodes []*proxy.Proxy, opts Options) {
 			n.Rename(emoji.Remove(n.Name))
 		}
 		for _, rr := range opts.RenameRules {
-			n.Rename(rr.Pattern.ReplaceAllString(n.Name, rr.Replace))
+			name, err := rr.Pattern.ReplaceAll(n.Name, rr.Replace)
+			if err != nil {
+				return fmt.Errorf("%w: rename rule %q: %w", ErrConfigInvalid, rr.Pattern.Pattern(), err)
+			}
+			n.Rename(name)
 		}
 		if opts.AddEmoji {
-			n.Rename(emoji.Add(n.Name, opts.EmojiRules))
+			name, err := emoji.Add(n.Name, opts.EmojiRules)
+			if err != nil {
+				return fmt.Errorf("%w: emoji rule: %w", ErrConfigInvalid, err)
+			}
+			n.Rename(name)
 		}
 		if opts.UDP {
 			n.Clash["udp"] = true
@@ -436,14 +615,20 @@ func applyNodeOptions(nodes []*proxy.Proxy, opts Options) {
 			n.Clash["skip-cert-verify"] = true
 		}
 	}
+	return nil
 }
 
 // buildGroups resolves each custom_proxy_group's selectors against the node
-// list. Empty groups are filled with DIRECT to keep the config loadable.
-func buildGroups(defs []extconfig.ProxyGroup, nodes []*proxy.Proxy, allNames []string, res *Result) []groupOut {
+// list. Empty groups are filled with DIRECT to keep the config loadable; a
+// selector that cannot be compiled is an error, because the resulting DIRECT-only
+// group would hide the fault.
+func buildGroups(defs []extconfig.ProxyGroup, nodes []*proxy.Proxy, allNames []string, res *Result) ([]groupOut, error) {
 	groups := make([]groupOut, 0, len(defs))
 	for _, d := range defs {
-		members := resolveSelectors(d.Selectors, nodes, allNames)
+		members, err := resolveSelectors(d.Selectors, nodes, allNames)
+		if err != nil {
+			return nil, fmt.Errorf("%w: proxy group %q: %w", ErrConfigInvalid, d.Name, err)
+		}
 		if len(members) == 0 {
 			members = []string{"DIRECT"}
 			res.EmptyGroups = append(res.EmptyGroups, d.Name)
@@ -459,12 +644,12 @@ func buildGroups(defs []extconfig.ProxyGroup, nodes []*proxy.Proxy, allNames []s
 		}
 		groups = append(groups, g)
 	}
-	return groups
+	return groups, nil
 }
 
 // resolveSelectors expands []Literal references and regex/.* node matchers into
 // an ordered, de-duplicated member list.
-func resolveSelectors(selectors []string, nodes []*proxy.Proxy, allNames []string) []string {
+func resolveSelectors(selectors []string, nodes []*proxy.Proxy, allNames []string) ([]string, error) {
 	var out []string
 	seen := map[string]bool{}
 	add := func(name string) {
@@ -484,17 +669,24 @@ func resolveSelectors(selectors []string, nodes []*proxy.Proxy, allNames []strin
 			}
 			continue
 		}
-		re, err := regexp.Compile(sel)
+		if strings.HasPrefix(sel, "!!") {
+			return nil, unsupportedSelector(sel)
+		}
+		re, err := matcher.Compile(sel)
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("selector %q: %w", sel, err)
 		}
 		for _, n := range nodes {
-			if re.MatchString(n.Name) {
+			ok, err := re.Match(n.Name)
+			if err != nil {
+				return nil, fmt.Errorf("selector %q: %w", sel, err)
+			}
+			if ok {
 				add(n.Name)
 			}
 		}
 	}
-	return out
+	return out, nil
 }
 
 // buildRules expands all rulesets in declared order into Clash rule lines. The

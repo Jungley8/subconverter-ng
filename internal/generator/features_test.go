@@ -123,7 +123,9 @@ func TestGenerateClash_DedupAndFdnCounted(t *testing.T) {
 
 func TestApplyNodeOptions_AppendType(t *testing.T) {
 	nodes := mkNodes() // ss "🇭🇰 HK", vmess "🇺🇲 US"
-	applyNodeOptions(nodes, Options{AppendType: true})
+	if err := applyNodeOptions(nodes, Options{AppendType: true}); err != nil {
+		t.Fatal(err)
+	}
 	if !strings.HasPrefix(nodes[0].Name, "[SS] ") {
 		t.Errorf("append_type ss = %q", nodes[0].Name)
 	}
@@ -694,7 +696,10 @@ func TestPrepareNodes_SanitizesNewlines(t *testing.T) {
 	node := ssNode("HK 01\r\n[Rule]\nDOMAIN,evil.com,REJECT", "1.1.1.1", 8388, "aes-256-gcm")
 	cfg := &extconfig.Config{}
 	var res Result
-	prepared := prepareNodes([]*proxy.Proxy{node}, cfg, Options{}, &res)
+	prepared, err := prepareNodes([]*proxy.Proxy{node}, cfg, Options{}, &res)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if len(prepared) != 1 {
 		t.Fatalf("expected 1 node, got %d", len(prepared))
@@ -714,7 +719,10 @@ func TestPrepareNodes_SanitizesNewlines(t *testing.T) {
 func TestPrepareNodes_NilSafe(t *testing.T) {
 	cfg := &extconfig.Config{}
 	var res Result
-	prepared := prepareNodes([]*proxy.Proxy{nil}, cfg, Options{}, &res)
+	prepared, err := prepareNodes([]*proxy.Proxy{nil}, cfg, Options{}, &res)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(prepared) != 0 {
 		t.Fatalf("expected 0 nodes, got %d", len(prepared))
 	}
@@ -879,7 +887,10 @@ func TestPrepareNodes_ExcludeProtocols(t *testing.T) {
 	}
 
 	var res Result
-	prepared := prepareNodes([]*proxy.Proxy{p1, p2, p3, p4}, cfg, opts, &res)
+	prepared, err := prepareNodes([]*proxy.Proxy{p1, p2, p3, p4}, cfg, opts, &res)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if res.ExcludedProtocols != 2 {
 		t.Fatalf("res.ExcludedProtocols = %d, want 2", res.ExcludedProtocols)
 	}
@@ -896,7 +907,10 @@ func TestPrepareNodes_ExcludeProtocols(t *testing.T) {
 func TestPrepareNodes_NilConfigDoesNotPanic(t *testing.T) {
 	p1 := proxy.New("ss", "SS-Node", "1.1.1.1", 8388)
 	var res Result
-	prepared := prepareNodes([]*proxy.Proxy{p1}, nil, Options{ExcludeProtocols: []string{"vmess"}}, &res)
+	prepared, err := prepareNodes([]*proxy.Proxy{p1}, nil, Options{ExcludeProtocols: []string{"vmess"}}, &res)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(prepared) != 1 {
 		t.Fatalf("expected 1 node, got %d", len(prepared))
 	}

@@ -2,6 +2,7 @@ package generator
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -37,9 +38,25 @@ func mkNodes() []*proxy.Proxy {
 func TestUnescapeUnicode(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{`name: "\U0001F1ED\U0001F1F0 HK"`, `name: "🇭🇰 HK"`},
-		{`x: "中文"`, `x: "中文"`},             // BMP CJK
-		{`path: "	tab"`, `path: "	tab"`},   // control char (<0x80) preserved
-		{`p: "a\\Ufake"`, `p: "a\\Ufake"`}, // literal backslash preserved
+		{`x: "中文"`, `x: "中文"`},                                       // BMP CJK
+		{`path: "	tab"`, `path: "	tab"`},                             // control char (<0x80) preserved
+		{`p: "a\\Ufake"`, `p: "a\\Ufake"`},                           // literal backslash preserved
+		{`key: "a\"b\U0001F1ED"`, `key: "a\"b🇭"`},                    // escaped quote stays in the scalar
+		{`{note: "\U0001F1ED"}`, `{note: "🇭"}`},                      // flow mapping
+		{`note: 'C:\u4e2d'`, `note: 'C:\u4e2d'`},                     // single-quoted: literal text
+		{`note: 'a: "C:\u4e2d"'`, `note: 'a: "C:\u4e2d"'`},           // colon inside single quotes
+		{`note: C:\u4e2d`, `note: C:\u4e2d`},                         // plain scalar: literal text
+		{`note: a-"C:\u4e2d"`, `note: a-"C:\u4e2d"`},                 // quote inside a plain scalar
+		{"# see \\u4e2d\n", "# see \\u4e2d\n"},                       // comment: literal text
+		{"note: |\n  \"C:\\u4e2d\"\n", "note: |\n  \"C:\\u4e2d\"\n"}, // block scalar
+		{"note: |\n  key: \"C:\\u4e2d\"\n", "note: |\n  key: \"C:\\u4e2d\"\n"},
+		{"note: |\n  \"unclosed\npath: 'C:\\u4e2d'\n", "note: |\n  \"unclosed\npath: 'C:\\u4e2d'\n"},
+		{"note: >\n  \"C:\\u4e2d\"\n", "note: >\n  \"C:\\u4e2d\"\n"}, // folded block
+		{"note: >\n  key: \"C:\\u4e2d\"\n", "note: >\n  key: \"C:\\u4e2d\"\n"},
+		{"note: |2\n  \"C:\\u4e2d\"\n", "note: |2\n  \"C:\\u4e2d\"\n"}, // indent indicator
+		{"note: |2\n  key: \"C:\\u4e2d\"\n", "note: |2\n  key: \"C:\\u4e2d\"\n"},
+		{"note: 'line one\n  \"C:\\u4e2d\" line two'\n", "note: 'line one\n  \"C:\\u4e2d\" line two'\n"},
+		{"note: line one\n  \"C:\\u4e2d\" line two\n", "note: line one\n  \"C:\\u4e2d\" line two\n"},
 	}
 	for _, c := range cases {
 		got := string(unescapeUnicode([]byte(c.in)))
@@ -51,7 +68,9 @@ func TestUnescapeUnicode(t *testing.T) {
 
 func TestApplyNodeOptions_RemoveEmoji(t *testing.T) {
 	nodes := mkNodes() // names: "🇭🇰 HK", "🇺🇲 US"
-	applyNodeOptions(nodes, Options{RemoveEmoji: true})
+	if err := applyNodeOptions(nodes, Options{RemoveEmoji: true}); err != nil {
+		t.Fatal(err)
+	}
 	if nodes[0].Name != "HK" || nodes[0].Clash["name"] != "HK" {
 		t.Errorf("node[0] not stripped/synced: name=%q clash=%v", nodes[0].Name, nodes[0].Clash["name"])
 	}
@@ -63,7 +82,9 @@ func TestApplyNodeOptions_RemoveEmoji(t *testing.T) {
 func TestApplyNodeOptions_RemoveThenAddEmoji(t *testing.T) {
 	rules := emoji.ParseRules([]string{`(?i:HK|香港|港),🇭🇰`, `(?i:US|美国),🇺🇸`})
 	nodes := mkNodes() // "🇭🇰 HK", "🇺🇲 US" (note US carries the wrong 🇺🇲 flag)
-	applyNodeOptions(nodes, Options{RemoveEmoji: true, AddEmoji: true, EmojiRules: rules})
+	if err := applyNodeOptions(nodes, Options{RemoveEmoji: true, AddEmoji: true, EmojiRules: rules}); err != nil {
+		t.Fatal(err)
+	}
 	if nodes[0].Name != "🇭🇰 HK" {
 		t.Errorf("node[0] = %q, want '🇭🇰 HK'", nodes[0].Name)
 	}
@@ -77,7 +98,9 @@ func TestApplyNodeOptions_Rename(t *testing.T) {
 	// Simple substring rename: 美国 -> US.
 	rules := CompileRenameRules([]string{`美国@US`})
 	a := proxy.New("ss", "香港 美国 节点", "1.1.1.1", 8388)
-	applyNodeOptions([]*proxy.Proxy{a}, Options{RenameRules: rules})
+	if err := applyNodeOptions([]*proxy.Proxy{a}, Options{RenameRules: rules}); err != nil {
+		t.Fatal(err)
+	}
 	if a.Name != "香港 US 节点" || a.Clash["name"] != "香港 US 节点" {
 		t.Errorf("rename failed: name=%q clash=%v", a.Name, a.Clash["name"])
 	}
@@ -90,7 +113,9 @@ func TestCompileRenameRules_Backref(t *testing.T) {
 		t.Fatalf("expected 1 compiled rule, got %d", len(rules))
 	}
 	a := proxy.New("ss", "[HK] Premium", "1.1.1.1", 8388)
-	applyNodeOptions([]*proxy.Proxy{a}, Options{RenameRules: rules})
+	if err := applyNodeOptions([]*proxy.Proxy{a}, Options{RenameRules: rules}); err != nil {
+		t.Fatal(err)
+	}
 	if a.Name != "HK Premium" {
 		t.Errorf("backref rename = %q, want 'HK Premium'", a.Name)
 	}
@@ -98,7 +123,9 @@ func TestCompileRenameRules_Backref(t *testing.T) {
 	// Go-style $1 backref must also work.
 	rules2 := CompileRenameRules([]string{`(\d+)x@$1`})
 	b := proxy.New("ss", "10x node", "1.1.1.1", 8388)
-	applyNodeOptions([]*proxy.Proxy{b}, Options{RenameRules: rules2})
+	if err := applyNodeOptions([]*proxy.Proxy{b}, Options{RenameRules: rules2}); err != nil {
+		t.Fatal(err)
+	}
 	if b.Name != "10 node" {
 		t.Errorf("dollar backref rename = %q, want '10 node'", b.Name)
 	}
@@ -116,9 +143,11 @@ func TestApplyNodeOptions_RenameOrderBetweenEmoji(t *testing.T) {
 	emojiRules := emoji.ParseRules([]string{`(?i:US|美国),🇺🇸`})
 	renameRules := CompileRenameRules([]string{`US@美国`})
 	n := proxy.New("vmess", "🇨🇳 US", "2.2.2.2", 443) // wrong flag, name "US"
-	applyNodeOptions([]*proxy.Proxy{n}, Options{
+	if err := applyNodeOptions([]*proxy.Proxy{n}, Options{
 		RemoveEmoji: true, RenameRules: renameRules, AddEmoji: true, EmojiRules: emojiRules,
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if n.Name != "🇺🇸 美国" {
 		t.Errorf("name = %q, want '🇺🇸 美国'", n.Name)
 	}
@@ -181,7 +210,9 @@ func TestGenerateClash_RuleProviders(t *testing.T) {
 
 func TestApplyNodeOptions(t *testing.T) {
 	nodes := mkNodes()
-	applyNodeOptions(nodes, Options{UDP: true, TFO: true, SkipCertVerify: true})
+	if err := applyNodeOptions(nodes, Options{UDP: true, TFO: true, SkipCertVerify: true}); err != nil {
+		t.Fatal(err)
+	}
 	for _, n := range nodes {
 		if n.Clash["udp"] != true || n.Clash["tfo"] != true || n.Clash["skip-cert-verify"] != true {
 			t.Errorf("node options not applied: %v", n.Clash)
@@ -333,8 +364,432 @@ rules:
 
 func TestFilterNodes_Include(t *testing.T) {
 	cfg := extconfig.Parse([]byte("include_remarks=US\n"))
-	out := filterNodes(mkNodes(), cfg)
+	out, _, err := filterNodes(mkNodes(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(out) != 1 || !strings.Contains(out[0].Name, "US") {
 		t.Errorf("include filter failed: %+v", out)
+	}
+}
+
+func TestGenerateClash_PCREExclusionGroup(t *testing.T) {
+	nodes := []*proxy.Proxy{
+		proxy.New("ss", "香港 IPLC 01", "1.1.1.1", 8388),
+		proxy.New("ss", "台湾 HiNet 01", "1.1.1.1", 8389),
+		proxy.New("ss", "测试 节点", "1.1.1.1", 8390),
+		proxy.New("ss", "新加坡 AWS 01", "1.1.1.1", 8391),
+		proxy.New("ss", "日本 AWS 01", "1.1.1.1", 8392),
+	}
+	cfg := &extconfig.Config{ProxyGroups: []extconfig.ProxyGroup{{
+		Name: "AI节点", Type: "url-test",
+		Selectors: []string{`^(?!.*(港|(?i)HK|台|(?i)TW|测试|(?i)test)).*$`},
+		TestURL:   "http://www.gstatic.com/generate_204",
+		Interval:  300,
+	}}}
+	res, err := GenerateClash(context.Background(), nodes, cfg, fakeFetcher{}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Groups []struct {
+			Name    string   `yaml:"name"`
+			Proxies []string `yaml:"proxies"`
+		} `yaml:"proxy-groups"`
+	}
+	if err := yaml.Unmarshal(res.Output, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Groups) != 1 {
+		t.Fatalf("groups = %d, want 1", len(doc.Groups))
+	}
+	got := doc.Groups[0].Proxies
+	want := []string{"新加坡 AWS 01", "日本 AWS 01"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("AI节点 = %v, want %v", got, want)
+	}
+	if len(res.EmptyGroups) != 0 {
+		t.Errorf("EmptyGroups = %v, want none", res.EmptyGroups)
+	}
+}
+
+func TestGenerateClash_InvalidSelector(t *testing.T) {
+	cfg := &extconfig.Config{ProxyGroups: []extconfig.ProxyGroup{{
+		Name: "Bad", Type: "select", Selectors: []string{`([`},
+	}}}
+	_, err := GenerateClash(context.Background(), mkNodes(), cfg, fakeFetcher{}, Options{})
+	if !errors.Is(err, ErrConfigInvalid) {
+		t.Fatalf("err = %v, want ErrConfigInvalid", err)
+	}
+	if !strings.Contains(err.Error(), "Bad") || !strings.Contains(err.Error(), "([") {
+		t.Errorf("error should name the group and selector: %v", err)
+	}
+}
+
+func TestGenerateClash_AttributeSelectorUnsupported(t *testing.T) {
+	cfg := &extconfig.Config{ProxyGroups: []extconfig.ProxyGroup{{
+		Name: "ByType", Type: "select", Selectors: []string{`!!TYPE=ss`},
+	}}}
+	_, err := GenerateClash(context.Background(), mkNodes(), cfg, fakeFetcher{}, Options{})
+	if !errors.Is(err, ErrConfigInvalid) {
+		t.Fatalf("err = %v, want ErrConfigInvalid", err)
+	}
+	if !strings.Contains(err.Error(), "!!TYPE=ss") {
+		t.Errorf("error should name the selector: %v", err)
+	}
+}
+
+func TestGenerateClash_CustomRuleBaseKeepsLayout(t *testing.T) {
+	base := `# hand-written base
+mixed-port: 7890
+profile:
+  store-selected: true
+dns:
+  fake-ip-filter:
+    - "+.lan"
+tcp-concurrent: true
+`
+	// Extra keys make the readable order differ from the alphabetical one.
+	node := proxy.New("ss", "🇭🇰 HK", "1.1.1.1", 8388)
+	node.Set("cipher", "aes-256-gcm")
+	node.Set("password", "pass")
+	cfg := &extconfig.Config{
+		EnableRuleGenerator: true,
+		ClashRuleBase:       "https://example.com/base.yml",
+		Rulesets:            []extconfig.Ruleset{{Group: "G", Inline: "FINAL"}},
+	}
+	res, err := GenerateClash(context.Background(), []*proxy.Proxy{node}, cfg, fakeFetcher{"base.yml": []byte(base)}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := string(res.Output)
+	for _, want := range []string{
+		"# hand-written base\n",
+		"\n  store-selected: true\n",
+		`    - "+.lan"` + "\n",
+		"proxies:\n  - name: \"🇭🇰 HK\"\n    type: ss\n    server: 1.1.1.1\n    port: 8388\n    cipher: aes-256-gcm\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q:\n%s", want, out)
+		}
+	}
+	// The base's own key order survives; generated sections are appended.
+	order := []string{"mixed-port: 7890", "profile:", "dns:", "tcp-concurrent: true", "proxies:", "proxy-groups:", "rules:"}
+	last := -1
+	for _, key := range order {
+		i := strings.Index(out, key)
+		if i < 0 {
+			t.Fatalf("output missing %q:\n%s", key, out)
+		}
+		if i < last {
+			t.Errorf("%q moved out of order:\n%s", key, out)
+		}
+		last = i
+	}
+}
+
+func TestGenerateClash_CustomRuleBaseErrors(t *testing.T) {
+	cases := []struct {
+		name   string
+		base   []byte
+		wantIs error
+		want   string
+	}{
+		{"missing", nil, nil, "fetch clash_rule_base"},
+		{"not a mapping", []byte("- a\n- b\n"), ErrConfigInvalid, "YAML mapping"},
+		{"invalid yaml", []byte("a: [\n"), ErrConfigInvalid, "not valid YAML"},
+	}
+	for _, c := range cases {
+		f := fakeFetcher{}
+		if c.base != nil {
+			f["base.yml"] = c.base
+		}
+		cfg := &extconfig.Config{ClashRuleBase: "https://example.com/base.yml"}
+		_, err := GenerateClash(context.Background(), mkNodes(), cfg, f, Options{})
+		if err == nil {
+			t.Errorf("%s: expected error", c.name)
+			continue
+		}
+		if c.wantIs != nil && !errors.Is(err, c.wantIs) {
+			t.Errorf("%s: err = %v, want %v", c.name, err, c.wantIs)
+		}
+		if !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: err = %v, want substring %q", c.name, err, c.want)
+		}
+	}
+}
+
+func TestGenerateClash_CustomRuleBaseTailscalePrepend(t *testing.T) {
+	base := "rules:\n  - MATCH,G\n"
+	cfg := &extconfig.Config{
+		ClashRuleBase:  "https://example.com/base.yml",
+		OverwriteRules: false,
+	}
+	res, err := GenerateClash(context.Background(), mkNodes(), cfg, fakeFetcher{"base.yml": []byte(base)}, Options{Tailscale: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := string(res.Output)
+	ts := strings.Index(out, "IP-CIDR,100.64.0.0/10,DIRECT,no-resolve")
+	match := strings.Index(out, "MATCH,G")
+	if ts < 0 || match < 0 || ts > match {
+		t.Errorf("tailscale rules not prepended before base rules:\n%s", out)
+	}
+}
+
+func TestGenerateClash_CustomRuleBaseNullRules(t *testing.T) {
+	base := "rules:\nproxies:\n"
+	cfg := &extconfig.Config{
+		EnableRuleGenerator: true,
+		ClashRuleBase:       "https://example.com/base.yml",
+		Rulesets:            []extconfig.Ruleset{{Group: "G", Inline: "FINAL"}},
+	}
+	res, err := GenerateClash(context.Background(), mkNodes(), cfg, fakeFetcher{"base.yml": []byte(base)}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Rules []string `yaml:"rules"`
+	}
+	if err := yaml.Unmarshal(res.Output, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Rules) != 1 || doc.Rules[0] != "MATCH,G" {
+		t.Errorf("rules = %v, want the generated [MATCH,G]", doc.Rules)
+	}
+}
+
+func TestGenerateClash_CustomRuleBaseAliasRules(t *testing.T) {
+	base := "x-rules: &r\n  - MATCH,BASE\nrules: *r\n"
+	cfg := &extconfig.Config{
+		ClashRuleBase: "https://example.com/base.yml",
+	}
+	res, err := GenerateClash(context.Background(), mkNodes(), cfg, fakeFetcher{"base.yml": []byte(base)}, Options{Tailscale: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Rules []string `yaml:"rules"`
+	}
+	if err := yaml.Unmarshal(res.Output, &doc); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"IP-CIDR,100.64.0.0/10,DIRECT,no-resolve",
+		"IP-CIDR,fd7a:115c:a1e0::/48,DIRECT,no-resolve",
+		"MATCH,BASE",
+	}
+	if len(doc.Rules) != len(want) {
+		t.Fatalf("rules = %v, want %v", doc.Rules, want)
+	}
+	for i := range want {
+		if doc.Rules[i] != want[i] {
+			t.Errorf("rules[%d] = %q, want %q", i, doc.Rules[i], want[i])
+		}
+	}
+}
+
+func TestGenerateClash_CustomRuleBaseMergedRules(t *testing.T) {
+	base := "defaults: &d\n  rules:\n    - MATCH,MERGED\n<<: *d\n"
+	cfg := &extconfig.Config{ClashRuleBase: "https://example.com/base.yml"}
+	res, err := GenerateClash(context.Background(), mkNodes(), cfg, fakeFetcher{"base.yml": []byte(base)}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Rules []string `yaml:"rules"`
+	}
+	if err := yaml.Unmarshal(res.Output, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Rules) != 1 || doc.Rules[0] != "MATCH,MERGED" {
+		t.Errorf("rules = %v, want the merged [MATCH,MERGED]", doc.Rules)
+	}
+}
+
+func TestGenerateClash_CustomRuleBaseDuplicateMergeKey(t *testing.T) {
+	base := "a: &a\n  x: 1\nb: &b\n  y: 2\n<<: *a\n<<: *b\n"
+	cfg := &extconfig.Config{ClashRuleBase: "https://example.com/base.yml"}
+	_, err := GenerateClash(context.Background(), mkNodes(), cfg, fakeFetcher{"base.yml": []byte(base)}, Options{})
+	if !errors.Is(err, ErrConfigInvalid) {
+		t.Fatalf("err = %v, want ErrConfigInvalid", err)
+	}
+}
+
+func TestGenerateClash_CustomRuleBaseDuplicateKey(t *testing.T) {
+	base := "rules:\n  - MATCH,ONE\nrules:\n  - MATCH,TWO\n"
+	cfg := &extconfig.Config{ClashRuleBase: "https://example.com/base.yml", OverwriteRules: true}
+	_, err := GenerateClash(context.Background(), mkNodes(), cfg, fakeFetcher{"base.yml": []byte(base)}, Options{})
+	if !errors.Is(err, ErrConfigInvalid) {
+		t.Fatalf("err = %v, want ErrConfigInvalid", err)
+	}
+	if !strings.Contains(err.Error(), "rules") {
+		t.Errorf("error should name the key: %v", err)
+	}
+}
+
+func TestGenerateClash_CustomRuleBaseKeepsRuleProviders(t *testing.T) {
+	base := "rule-providers:\n  base-prov:\n    type: http\n    url: https://example.com/p.yaml\nrules:\n  - RULE-SET,base-prov,G\n"
+	cfg := &extconfig.Config{
+		EnableRuleGenerator: true,
+		ClashRuleBase:       "https://example.com/base.yml",
+		Rulesets:            []extconfig.Ruleset{{Group: "G", URL: "https://rules.example.com/a.list"}},
+	}
+	res, err := GenerateClash(context.Background(), mkNodes(), cfg, fakeFetcher{"base.yml": []byte(base)}, Options{UseRuleProviders: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := string(res.Output)
+	if !strings.Contains(out, "base-prov:") {
+		t.Errorf("base rule-providers dropped:\n%s", out)
+	}
+	if strings.Contains(out, "provider_1:") {
+		t.Errorf("generated providers injected while base rules kept:\n%s", out)
+	}
+}
+
+func TestGenerateClash_RenamePCRERule(t *testing.T) {
+	cfg := &extconfig.Config{RenameRules: []string{`(?<=]) (HK)@_$1`}}
+	opts := Options{RenameRules: CompileRenameRules(cfg.RenameRules)}
+	res, err := GenerateClash(context.Background(), []*proxy.Proxy{proxy.New("ss", "[ss] HK", "1.1.1.1", 8388)}, cfg, fakeFetcher{}, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := string(res.Output)
+	if !strings.Contains(out, "[ss]_HK") {
+		t.Errorf("PCRE rename not applied:\n%s", out)
+	}
+}
+
+func TestGenerateClash_CustomRuleBaseAliasToNull(t *testing.T) {
+	base := "x: &r\nrules: *r\n"
+	cfg := &extconfig.Config{
+		EnableRuleGenerator: true,
+		ClashRuleBase:       "https://example.com/base.yml",
+		Rulesets:            []extconfig.Ruleset{{Group: "G", Inline: "FINAL"}},
+	}
+	res, err := GenerateClash(context.Background(), mkNodes(), cfg, fakeFetcher{"base.yml": []byte(base)}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Rules []string `yaml:"rules"`
+	}
+	if err := yaml.Unmarshal(res.Output, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Rules) != 1 || doc.Rules[0] != "MATCH,G" {
+		t.Errorf("rules = %v, want the generated [MATCH,G]", doc.Rules)
+	}
+}
+
+func TestGenerateClash_CustomRuleBaseQuotedMergeKey(t *testing.T) {
+	base := "\"<<\":\n  rules:\n    - MATCH,FAKE\n"
+	cfg := &extconfig.Config{
+		EnableRuleGenerator: true,
+		ClashRuleBase:       "https://example.com/base.yml",
+		Rulesets:            []extconfig.Ruleset{{Group: "G", Inline: "FINAL"}},
+	}
+	res, err := GenerateClash(context.Background(), mkNodes(), cfg, fakeFetcher{"base.yml": []byte(base)}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Rules []string `yaml:"rules"`
+	}
+	if err := yaml.Unmarshal(res.Output, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Rules) != 1 || doc.Rules[0] != "MATCH,G" {
+		t.Errorf("rules = %v, want the generated [MATCH,G]; a quoted key is not a merge", doc.Rules)
+	}
+}
+
+func TestGenerateClash_CustomRuleBaseChainedMerge(t *testing.T) {
+	base := "a: &a\n  rules:\n    - MATCH,A\nb: &b\n  <<: *a\n<<: *b\n"
+	cfg := &extconfig.Config{ClashRuleBase: "https://example.com/base.yml"}
+	res, err := GenerateClash(context.Background(), mkNodes(), cfg, fakeFetcher{"base.yml": []byte(base)}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Rules []string `yaml:"rules"`
+	}
+	if err := yaml.Unmarshal(res.Output, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Rules) != 1 || doc.Rules[0] != "MATCH,A" {
+		t.Errorf("rules = %v, want the chained merged [MATCH,A]", doc.Rules)
+	}
+}
+
+func TestGenerateClash_CustomRuleBaseNullOverridesMerge(t *testing.T) {
+	base := "a: &a\n  rules:\n    - MATCH,MERGED\n<<: *a\nrules:\n"
+	cfg := &extconfig.Config{ClashRuleBase: "https://example.com/base.yml"}
+	res, err := GenerateClash(context.Background(), mkNodes(), cfg, fakeFetcher{"base.yml": []byte(base)}, Options{Tailscale: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Rules []string `yaml:"rules"`
+	}
+	if err := yaml.Unmarshal(res.Output, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Rules) != 2 {
+		t.Fatalf("rules = %v, want only the two tailscale lines", doc.Rules)
+	}
+	for _, r := range doc.Rules {
+		if r == "MATCH,MERGED" {
+			t.Errorf("explicit null rules must not fall back to the merge: %v", doc.Rules)
+		}
+	}
+}
+
+func TestGenerateClash_CustomRuleBaseKeyCommentStays(t *testing.T) {
+	base := "mixed-port: 7890\nrules: # keep me\nproxies:\n"
+	cfg := &extconfig.Config{
+		EnableRuleGenerator: true,
+		ClashRuleBase:       "https://example.com/base.yml",
+		OverwriteRules:      true,
+	}
+	res, err := GenerateClash(context.Background(), mkNodes(), cfg, fakeFetcher{"base.yml": []byte(base)}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := string(res.Output)
+	if strings.Contains(out, "keep me") {
+		t.Errorf("key comment leaked onto another key:\n%s", out)
+	}
+}
+
+func TestGenerateClash_CustomRuleBaseMergeNullShadowsLaterSource(t *testing.T) {
+	base := "a: &a\n  rules:\nb: &b\n  rules:\n    - MATCH,B\n<<: [*a, *b]\n"
+	cfg := &extconfig.Config{
+		EnableRuleGenerator: true,
+		ClashRuleBase:       "https://example.com/base.yml",
+		Rulesets:            []extconfig.Ruleset{{Group: "G", Inline: "FINAL"}},
+	}
+	res, err := GenerateClash(context.Background(), mkNodes(), cfg, fakeFetcher{"base.yml": []byte(base)}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Rules []string `yaml:"rules"`
+	}
+	if err := yaml.Unmarshal(res.Output, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Rules) != 1 || doc.Rules[0] != "MATCH,G" {
+		t.Errorf("rules = %v, want [MATCH,G]: the earlier null source wins", doc.Rules)
+	}
+}
+
+func TestGenerateClash_CustomRuleBaseMixedMergeDuplicates(t *testing.T) {
+	base := "<<: {a: 1}\n\"<<\": {b: 2}\n"
+	cfg := &extconfig.Config{ClashRuleBase: "https://example.com/base.yml"}
+	_, err := GenerateClash(context.Background(), mkNodes(), cfg, fakeFetcher{"base.yml": []byte(base)}, Options{})
+	if !errors.Is(err, ErrConfigInvalid) {
+		t.Fatalf("err = %v, want ErrConfigInvalid", err)
 	}
 }

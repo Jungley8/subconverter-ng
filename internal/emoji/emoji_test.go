@@ -24,20 +24,23 @@ func TestParseRulesAndAdd(t *testing.T) {
 		"(?i:HK|香港|港),🇭🇰",
 		"(?i:US|美国),🇺🇸",
 		"badpattern-no-comma",
-		"(?<!x)lookbehind,🚫", // RE2-incompatible -> skipped
+		"(?<!x)lookbehind,🚫", // PCRE lookbehind: accepted through the fallback
 	})
-	if len(rules) != 2 {
-		t.Fatalf("ParseRules = %d rules, want 2 (comment/no-comma/lookbehind skipped)", len(rules))
+	if len(rules) != 3 {
+		t.Fatalf("ParseRules = %d rules, want 3 (comment/no-comma skipped)", len(rules))
 	}
-	if got := Add("香港 01", rules); got != "🇭🇰 香港 01" {
-		t.Errorf("Add HK = %q", got)
-	}
-	if got := Add("US-Node", rules); got != "🇺🇸 US-Node" {
-		t.Errorf("Add US = %q", got)
-	}
-	// No match -> unchanged.
-	if got := Add("无匹配", rules); got != "无匹配" {
-		t.Errorf("Add no-match = %q, want unchanged", got)
+	for _, c := range []struct{ name, want string }{
+		{"香港 01", "🇭🇰 香港 01"},
+		{"US-Node", "🇺🇸 US-Node"},
+		{"无匹配", "无匹配"},
+	} {
+		got, err := Add(c.name, rules)
+		if err != nil {
+			t.Fatalf("Add(%q): %v", c.name, err)
+		}
+		if got != c.want {
+			t.Errorf("Add(%q) = %q, want %q", c.name, got, c.want)
+		}
 	}
 }
 
@@ -53,7 +56,11 @@ func TestDefaultRulesLoaded(t *testing.T) {
 		{"美国洛杉矶", "🇺🇸"},
 		{"Singapore", "🇸🇬"},
 	} {
-		if got := Add(c.name, rules); got[:len(c.wantPrefix)] != c.wantPrefix {
+		got, err := Add(c.name, rules)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got[:len(c.wantPrefix)] != c.wantPrefix {
 			t.Errorf("Add(%q) = %q, want prefix %q", c.name, got, c.wantPrefix)
 		}
 	}

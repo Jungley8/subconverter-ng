@@ -119,3 +119,28 @@ func TestBoolVal(t *testing.T) {
 		}
 	}
 }
+
+func TestInvalidRegexEntries(t *testing.T) {
+	cfg := Parse([]byte("[custom]\n" +
+		"exclude_remarks=([\n" +
+		"rename=([@x\n" +
+		"rename=no-separator\n" +
+		"emoji=([,🇦\n" +
+		"emoji=no-comma\n" +
+		"emoji=valid,\n"))
+	if len(cfg.Invalid) != 6 {
+		t.Fatalf("Invalid = %v, want 6 entries", cfg.Invalid)
+	}
+
+	ok := Parse([]byte("[custom]\n" +
+		"exclude_remarks=(?<=a)b\n" +
+		"rename=(?<=a)b@c\n" +
+		"emoji=\\d{1,3},X\n"))
+	if len(ok.Invalid) != 0 {
+		t.Fatalf("Invalid = %v, want none", ok.Invalid)
+	}
+	if len(ok.ExcludeRemarks) != 1 || len(ok.RenameRules) != 1 || len(ok.EmojiRules) != 1 {
+		t.Fatalf("entries dropped: remarks=%d rename=%d emoji=%d",
+			len(ok.ExcludeRemarks), len(ok.RenameRules), len(ok.EmojiRules))
+	}
+}

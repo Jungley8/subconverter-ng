@@ -8,13 +8,13 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"regexp"
 	"strings"
 	"sync"
 
 	"github.com/Jungley8/subconverter-ng/internal/emoji"
 	"github.com/Jungley8/subconverter-ng/internal/extconfig"
 	"github.com/Jungley8/subconverter-ng/internal/generator"
+	"github.com/Jungley8/subconverter-ng/internal/matcher"
 	"github.com/Jungley8/subconverter-ng/internal/parser"
 	"github.com/Jungley8/subconverter-ng/internal/proxy"
 )
@@ -35,6 +35,16 @@ var ErrBadRequest = errors.New("invalid request")
 // badRequest builds an ErrBadRequest with a user-facing message.
 func badRequest(format string, args ...any) error {
 	return fmt.Errorf("%w: %s", ErrBadRequest, fmt.Sprintf(format, args...))
+}
+
+// renderError classifies a generator failure. A broken external config (bad
+// clash_rule_base, uncompilable selector) is the user's file to fix, so it is a
+// 400; anything else stays an upstream-failure error.
+func renderError(err error) error {
+	if errors.Is(err, generator.ErrConfigInvalid) {
+		return badRequest("%s", err)
+	}
+	return err
 }
 
 // Fetcher is the subset of fetch.Client convert needs (kept as an interface for
@@ -103,24 +113,24 @@ type Request struct {
 	// &include= / &exclude= URL params, or CLI --include / --exclude). When set
 	// they OVERRIDE the external config's include_remarks / exclude_remarks,
 	// matching original subconverter semantics. Use CompileRemarks to build them.
-	IncludeRemarks []*regexp.Regexp
-	ExcludeRemarks []*regexp.Regexp
+	IncludeRemarks []*matcher.Matcher
+	ExcludeRemarks []*matcher.Matcher
 }
 
 // CompileRemarks turns one include/exclude spec into a single compiled regex.
 // An empty spec yields nil (no filtering). The spec is matched as ONE regex:
 // alternation belongs inside it, e.g. "(?i)(弃用)|(到期)" — no splitting on "|",
 // which would break regexes whose groups contain alternation.
-func CompileRemarks(spec string) ([]*regexp.Regexp, error) {
+func CompileRemarks(spec string) ([]*matcher.Matcher, error) {
 	spec = strings.TrimSpace(spec)
 	if spec == "" {
 		return nil, nil
 	}
-	re, err := regexp.Compile(spec)
+	re, err := matcher.Compile(spec)
 	if err != nil {
-		return nil, fmt.Errorf("invalid remarks regex %q: %w", spec, err)
+		return nil, badRequest("invalid remarks regex %q: %v", spec, err)
 	}
-	return []*regexp.Regexp{re}, nil
+	return []*matcher.Matcher{re}, nil
 }
 
 // Diagnostics captures non-fatal information about a conversion.
@@ -165,6 +175,9 @@ func Run(ctx context.Context, f Fetcher, req Request) ([]byte, *Diagnostics, err
 			return nil, nil, fmt.Errorf("fetch external config: %w", err)
 		}
 		cfg = extconfig.Parse(data)
+		if invalid := stillInvalid(cfg.Invalid, req); len(invalid) > 0 {
+			return nil, nil, badRequest("invalid external config: %s", strings.Join(invalid, ", "))
+		}
 	} else {
 		cfg = &extconfig.Config{EnableRuleGenerator: true}
 	}
@@ -206,15 +219,27 @@ func Run(ctx context.Context, f Fetcher, req Request) ([]byte, *Diagnostics, err
 		if gen.ProviderInterval <= 0 {
 			gen.ProviderInterval = 86400
 		}
+		// The provider's filter is compiled by mihomo with regexp2, so a
+		// request regex must pass that engine as well as ours.
 		if len(req.IncludeRemarks) > 0 {
-			gen.ProviderInclude = req.IncludeRemarks[0].String()
+			client, err := matcher.CompileClient(req.IncludeRemarks[0].Pattern())
+			if err != nil {
+				return nil, nil, badRequest("invalid include regex for provider mode: %v", err)
+			}
+			gen.ProviderInclude = req.IncludeRemarks[0].Pattern()
+			cfg.IncludeRemarks = []*matcher.Matcher{client}
 		}
 		if len(req.ExcludeRemarks) > 0 {
-			gen.ProviderExclude = req.ExcludeRemarks[0].String()
+			client, err := matcher.CompileClient(req.ExcludeRemarks[0].Pattern())
+			if err != nil {
+				return nil, nil, badRequest("invalid exclude regex for provider mode: %v", err)
+			}
+			gen.ProviderExclude = req.ExcludeRemarks[0].Pattern()
+			cfg.ExcludeRemarks = []*matcher.Matcher{client}
 		}
 		result, err := generator.GenerateClashProvider(ctx, localNodes, cfg, f, gen)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, renderError(err)
 		}
 		return result.Output, diagnosticsFor(result, skipped, ""), nil
 	}
@@ -260,7 +285,7 @@ func Run(ctx context.Context, f Fetcher, req Request) ([]byte, *Diagnostics, err
 			if errors.Is(err, generator.ErrTemplateInvalid) {
 				return nil, nil, badRequest("%s", err)
 			}
-			return nil, nil, err
+			return nil, nil, renderError(err)
 		}
 		return result.Output, diagnosticsFor(result, skipped, userinfo), nil
 	}
@@ -272,9 +297,25 @@ func Run(ctx context.Context, f Fetcher, req Request) ([]byte, *Diagnostics, err
 		if errors.Is(err, generator.ErrTargetNodes) {
 			return nil, nil, fmt.Errorf("%w: %s", ErrNoNodes, err)
 		}
-		return nil, nil, err
+		return nil, nil, renderError(err)
 	}
 	return result.Output, diagnosticsFor(result, skipped, userinfo), nil
+}
+
+// stillInvalid drops remark entries that a request-level &include= / &exclude=
+// replaces, so an unused broken entry does not reject the request.
+func stillInvalid(invalid []string, req Request) []string {
+	out := make([]string, 0, len(invalid))
+	for _, entry := range invalid {
+		if req.IncludeRemarks != nil && strings.HasPrefix(entry, "include_remarks=") {
+			continue
+		}
+		if req.ExcludeRemarks != nil && strings.HasPrefix(entry, "exclude_remarks=") {
+			continue
+		}
+		out = append(out, entry)
+	}
+	return out
 }
 
 // buildGen resolves the per-request generator options against the external

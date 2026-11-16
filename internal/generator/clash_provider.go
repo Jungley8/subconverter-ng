@@ -3,10 +3,10 @@ package generator
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"strings"
 
 	"github.com/Jungley8/subconverter-ng/internal/extconfig"
+	"github.com/Jungley8/subconverter-ng/internal/matcher"
 	"github.com/Jungley8/subconverter-ng/internal/proxy"
 	"gopkg.in/yaml.v3"
 )
@@ -38,7 +38,11 @@ func GenerateClashProvider(ctx context.Context, localNodes []*proxy.Proxy, cfg *
 	// Local share-link nodes are real inline nodes, so server-side processing
 	// (emoji, rename, fdn, dedup, remarks filters, protocol exclusion) applies to
 	// them. Provider payloads are untouched because they are never parsed here.
-	localNodes = prepareNodes(localNodes, cfg, opts, res)
+	prepared, err := prepareNodes(localNodes, cfg, opts, res)
+	if err != nil {
+		return nil, err
+	}
+	localNodes = prepared
 
 	proxies := make([]map[string]any, 0, len(localNodes))
 	localNames := make([]string, 0, len(localNodes))
@@ -86,7 +90,10 @@ func GenerateClashProvider(ctx context.Context, localNodes []*proxy.Proxy, cfg *
 		providers[name] = entry
 	}
 
-	groups := buildGroupsProvider(cfg.ProxyGroups, providerNames, localNames, res)
+	groups, err := buildGroupsProvider(cfg.ProxyGroups, providerNames, localNames, res)
+	if err != nil {
+		return nil, err
+	}
 	var rules []string
 	if len(groups) == 0 {
 		// No external config: without a group the config is unroutable, so
@@ -99,30 +106,57 @@ func GenerateClashProvider(ctx context.Context, localNodes []*proxy.Proxy, cfg *
 		res.SkippedRules = skipped
 	}
 
+	proxiesNode, err := proxiesNode(proxies)
+	if err != nil {
+		return nil, err
+	}
+
 	out := defaultBase()
-	out.Proxies = proxies
+	out.Proxies = proxiesNode
 	out.ProxyProviders = providers
 	out.ProxyGroups = groups
 	out.Rules = rules
 
 	if cfg.ClashRuleBase != "" {
-		if data, err := f.Get(ctx, cfg.ClashRuleBase); err == nil {
-			var base map[string]any
-			if yaml.Unmarshal(data, &base) == nil && base != nil {
-				base["proxies"] = proxies
-				base["proxy-providers"] = providers
-				base["proxy-groups"] = groups
-				if cfg.OverwriteRules || base["rules"] == nil {
-					base["rules"] = rules
-				}
-				y, err := yaml.Marshal(base)
-				if err != nil {
-					return nil, err
-				}
-				res.Output = unescapeUnicode(y)
-				return res, nil
-			}
+		data, err := f.Get(ctx, cfg.ClashRuleBase)
+		if err != nil {
+			return nil, fmt.Errorf("fetch clash_rule_base: %w", err)
 		}
+		root, err := parseBase(data)
+		if err != nil {
+			return nil, err
+		}
+		providersNode, err := yamlNode(providers)
+		if err != nil {
+			return nil, err
+		}
+		groupsNode, err := yamlNode(groups)
+		if err != nil {
+			return nil, err
+		}
+		setMappingValue(root, "proxies", proxiesNode)
+		setMappingValue(root, "proxy-providers", providersNode)
+		setMappingValue(root, "proxy-groups", groupsNode)
+		switch existing := mappingValue(root, "rules"); {
+		case cfg.OverwriteRules || existing == nil:
+			rulesNode, err := yamlNode(rules)
+			if err != nil {
+				return nil, err
+			}
+			setMappingValue(root, "rules", rulesNode)
+		case opts.Tailscale:
+			rulesNode, err := prependRules(existing, tailscaleRuleLines())
+			if err != nil {
+				return nil, err
+			}
+			setMappingValue(root, "rules", rulesNode)
+		}
+		y, err := encodeBase(root)
+		if err != nil {
+			return nil, err
+		}
+		res.Output = unescapeUnicode(y)
+		return res, nil
 	}
 
 	y, err := yaml.Marshal(out)
@@ -137,7 +171,7 @@ func GenerateClashProvider(ctx context.Context, localNodes []*proxy.Proxy, cfg *
 // groups: []Literal selectors stay in `proxies`, regex selectors become the
 // group's `filter` over the referenced providers (`use:`), and are also matched
 // against local inline nodes so share-link entries still join their groups.
-func buildGroupsProvider(defs []extconfig.ProxyGroup, providers, localNames []string, res *Result) []groupOut {
+func buildGroupsProvider(defs []extconfig.ProxyGroup, providers, localNames []string, res *Result) ([]groupOut, error) {
 	groups := make([]groupOut, 0, len(defs))
 	for _, d := range defs {
 		g := groupOut{
@@ -172,13 +206,22 @@ func buildGroupsProvider(defs []extconfig.ProxyGroup, providers, localNames []st
 				}
 				continue
 			}
-			filters = append(filters, sel)
+			if strings.HasPrefix(sel, "!!") {
+				return nil, fmt.Errorf("%w: proxy group %q: %w", ErrConfigInvalid, d.Name, unsupportedSelector(sel))
+			}
+			re, err := matcher.CompileClient(sel)
+			if err != nil {
+				return nil, fmt.Errorf("%w: proxy group %q: selector %q: %w", ErrConfigInvalid, d.Name, sel, err)
+			}
+			filters = append(filters, "(?:"+sel+")")
 			// Local nodes matching this selector join the group inline.
-			if re, err := regexp.Compile(sel); err == nil {
-				for _, n := range localNames {
-					if re.MatchString(n) {
-						add(n)
-					}
+			for _, n := range localNames {
+				ok, err := re.Match(n)
+				if err != nil {
+					return nil, fmt.Errorf("%w: proxy group %q: selector %q: %w", ErrConfigInvalid, d.Name, sel, err)
+				}
+				if ok {
+					add(n)
 				}
 			}
 		}
@@ -194,7 +237,7 @@ func buildGroupsProvider(defs []extconfig.ProxyGroup, providers, localNames []st
 		}
 		groups = append(groups, g)
 	}
-	return groups
+	return groups, nil
 }
 
 // defaultProviderGroups is the fallback group set when no external config
