@@ -207,11 +207,22 @@ func GenerateClash(ctx context.Context, nodes []*proxy.Proxy, cfg *extconfig.Con
 	}
 	nodes = prepared
 
+	// mihomo rejects the whole config on a node it cannot load, so unsupported
+	// nodes are dropped before groups resolve. Groups must see only emitted
+	// nodes; otherwise a selector could reference a node with no proxy line.
 	proxies := make([]map[string]any, 0, len(nodes))
+	emittedNodes := make([]*proxy.Proxy, 0, len(nodes))
 	names := make([]string, 0, len(nodes))
+	emitted := make(map[string]bool, len(nodes))
 	for _, n := range nodes {
+		if reason := clashUnsupportedReason(n); reason != "" {
+			res.SkippedNodes = append(res.SkippedNodes, n.Name+" ("+n.Type+": "+reason+")")
+			continue
+		}
+		emittedNodes = append(emittedNodes, n)
 		proxies = append(proxies, n.Clash)
 		names = append(names, n.Name)
+		emitted[n.Name] = true
 	}
 
 	// list=true: emit only the proxies list, no groups/rules.
@@ -230,10 +241,11 @@ func GenerateClash(ctx context.Context, nodes []*proxy.Proxy, cfg *extconfig.Con
 		return res, nil
 	}
 
-	groups, err := buildGroups(cfg.ProxyGroups, nodes, names, res)
+	groups, err := buildGroups(cfg.ProxyGroups, emittedNodes, names, res)
 	if err != nil {
 		return nil, err
 	}
+	groups = filterSkippedGroupMembers(groups, emitted, groupNames(cfg), res)
 
 	// Rule output: either inline every rule (default, expand=true) or emit
 	// rule-providers + RULE-SET rules (expand=false).
@@ -645,6 +657,54 @@ func buildGroups(defs []extconfig.ProxyGroup, nodes []*proxy.Proxy, allNames []s
 		groups = append(groups, g)
 	}
 	return groups, nil
+}
+
+// clashUnsupportedReason reports why mihomo cannot load n, or "" when it can.
+func clashUnsupportedReason(n *proxy.Proxy) string {
+	switch {
+	case n.Type == "naive":
+		return "mihomo does not load naive nodes"
+	case n.Type == "tuic" && n.Version == 4:
+		return "mihomo supports TUIC v5 only"
+	}
+	return ""
+}
+
+// clashBuiltinPolicies are group members mihomo always accepts. They are not
+// proxy names, so the emitted filter must leave them alone.
+var clashBuiltinPolicies = map[string]bool{
+	"DIRECT": true, "REJECT": true, "REJECT-DROP": true, "PASS": true, "COMPATIBLE": true,
+}
+
+// groupNames collects the generated proxy-group names. A group may reference
+// another group, and that reference is not a skipped node.
+func groupNames(cfg *extconfig.Config) map[string]bool {
+	names := make(map[string]bool, len(cfg.ProxyGroups))
+	for _, d := range cfg.ProxyGroups {
+		names[d.Name] = true
+	}
+	return names
+}
+
+// filterSkippedGroupMembers drops members that name a node mihomo did not
+// receive. A literal selector can name a skipped node directly; without this
+// filter the group would point at a proxy line that is not in the document. An
+// emptied group falls back to DIRECT so the config still loads.
+func filterSkippedGroupMembers(groups []groupOut, emitted, groupRefs map[string]bool, res *Result) []groupOut {
+	for i := range groups {
+		members := make([]string, 0, len(groups[i].Proxies))
+		for _, m := range groups[i].Proxies {
+			if clashBuiltinPolicies[m] || groupRefs[m] || emitted[m] {
+				members = append(members, m)
+			}
+		}
+		if len(members) == 0 {
+			members = []string{"DIRECT"}
+			res.EmptyGroups = append(res.EmptyGroups, groups[i].Name)
+		}
+		groups[i].Proxies = members
+	}
+	return groups
 }
 
 // resolveSelectors expands []Literal references and regex/.* node matchers into
