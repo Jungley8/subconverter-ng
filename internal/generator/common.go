@@ -15,7 +15,6 @@ package generator
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -28,12 +27,6 @@ import (
 // ErrConfigInvalid marks a fault in the user's external config: an unparsable
 // clash_rule_base, a selector no engine accepts. Callers turn it into a 400.
 var ErrConfigInvalid = errors.New("invalid external config")
-
-// unsupportedSelector reports a subconverter attribute matcher, which this
-// build does not implement.
-func unsupportedSelector(selector string) error {
-	return fmt.Errorf("selector %q uses a subconverter attribute matcher (!!TYPE, !!PORT, !!SERVER, !!GROUP, !!GROUPID, !!INSERT, !!PROVIDER) this build does not support", selector)
-}
 
 // Version is a parsed client version from a "name/version" target spec
 // (e.g. "singbox/1.3.11" -> {1, 13, 11}).

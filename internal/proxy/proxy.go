@@ -17,6 +17,12 @@ type Proxy struct {
 	Server string
 	Port   int
 
+	// Group is the name from a tag:<name>,<link> source entry; empty when the
+	// source has no tag. GroupID is the source's index: 0-based for url= and
+	// negative for insert_url. Both feed !!GROUP / !!GROUPID / !!INSERT.
+	Group   string
+	GroupID int
+
 	// Clash is the rendered Clash.Meta proxy entry. It always contains at
 	// least name/type/server/port mirroring the fields above.
 	Clash map[string]any

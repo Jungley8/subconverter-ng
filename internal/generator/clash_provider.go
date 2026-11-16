@@ -207,7 +207,7 @@ func buildGroupsProvider(defs []extconfig.ProxyGroup, providers, localNames []st
 				continue
 			}
 			if strings.HasPrefix(sel, "!!") {
-				return nil, fmt.Errorf("%w: proxy group %q: %w", ErrConfigInvalid, d.Name, unsupportedSelector(sel))
+				return nil, fmt.Errorf("%w: proxy group %q: selector %q cannot be expressed in a provider filter", ErrConfigInvalid, d.Name, sel)
 			}
 			re, err := matcher.CompileClient(sel)
 			if err != nil {

@@ -244,7 +244,7 @@ func Run(ctx context.Context, f Fetcher, req Request) ([]byte, *Diagnostics, err
 		return result.Output, diagnosticsFor(result, skipped, ""), nil
 	}
 
-	nodes, skipped, userinfo, err := fetchAndParseAll(ctx, f, req.SubURLs)
+	nodes, skipped, userinfo, err := fetchAndParseAll(ctx, f, req.SubURLs, func(i int) int { return i })
 	if err != nil {
 		return nil, nil, err
 	}
@@ -253,7 +253,7 @@ func Run(ctx context.Context, f Fetcher, req Request) ([]byte, *Diagnostics, err
 	// user's own subscription must still convert); the userinfo header is taken
 	// from the subscription only, so we discard the insert sources' headers.
 	if len(req.InsertURLs) > 0 {
-		if insNodes, _, _, ierr := fetchAndParseAll(ctx, f, req.InsertURLs); ierr == nil && len(insNodes) > 0 {
+		if insNodes, _, _, ierr := fetchAndParseAll(ctx, f, req.InsertURLs, func(i int) int { return -(i + 1) }); ierr == nil && len(insNodes) > 0 {
 			if req.InsertPrepend {
 				nodes = append(insNodes, nodes...)
 			} else {
@@ -419,32 +419,48 @@ func skippedHint(skipped []string) string {
 	return ""
 }
 
+// splitSource separates a subconverter tag:<name>,<link> source entry. A source
+// without the prefix keeps an empty group.
+func splitSource(raw string) (group, link string) {
+	rest, ok := strings.CutPrefix(strings.TrimSpace(raw), "tag:")
+	if !ok {
+		return "", raw
+	}
+	if i := strings.Index(rest, ","); i >= 0 {
+		return rest[:i], rest[i+1:]
+	}
+	return "", raw
+}
+
 // fetchAndParseAll fetches every subscription concurrently and concatenates the
 // parsed nodes, preserving subscription order. It also returns the
-// Subscription-Userinfo header captured from the FIRST subscription URL.
-func fetchAndParseAll(ctx context.Context, f Fetcher, urls []string) ([]*proxy.Proxy, []string, string, error) {
+// Subscription-Userinfo header captured from the FIRST subscription URL. idFor
+// assigns each source's GroupID (url= counts up, insert_url counts down).
+func fetchAndParseAll(ctx context.Context, f Fetcher, urls []string, idFor func(i int) int) ([]*proxy.Proxy, []string, string, error) {
 	type out struct {
 		nodes    []*proxy.Proxy
 		skipped  []string
 		userinfo string
+		group    string
 		err      error
 	}
 	results := make([]out, len(urls))
 	var wg sync.WaitGroup
 	for i, u := range urls {
+		group, link := splitSource(u)
 		wg.Add(1)
-		go func(i int, u string) {
+		go func(i int, link, group string) {
 			defer wg.Done()
 			// A raw share link (vless://, ss://, …) is node content, not a URL
 			// to fetch: parse it inline. The &url= param and the CLI --url flag
 			// both accept node links directly, so a single node can be
 			// converted without a subscription.
-			if parser.IsShareLink(u) {
-				nodes, skipped, err := parser.Parse([]byte(u))
-				results[i] = out{nodes: nodes, skipped: skipped, err: err}
+			if parser.IsShareLink(link) {
+				nodes, skipped, err := parser.Parse([]byte(link))
+				results[i] = out{nodes: nodes, skipped: skipped, group: group, err: err}
 				return
 			}
-			data, hdr, err := getWithMeta(ctx, f, u)
+			data, hdr, err := getWithMeta(ctx, f, link)
 			if err != nil {
 				results[i].err = err
 				return
@@ -454,9 +470,10 @@ func fetchAndParseAll(ctx context.Context, f Fetcher, urls []string) ([]*proxy.P
 				nodes:    nodes,
 				skipped:  skipped,
 				userinfo: hdr.Get("Subscription-Userinfo"),
+				group:    group,
 				err:      err,
 			}
-		}(i, u)
+		}(i, link, group)
 	}
 	wg.Wait()
 
@@ -465,6 +482,10 @@ func fetchAndParseAll(ctx context.Context, f Fetcher, urls []string) ([]*proxy.P
 	for i, r := range results {
 		if r.err != nil {
 			return nil, nil, "", fmt.Errorf("subscription %d: %w", i+1, r.err)
+		}
+		for _, n := range r.nodes {
+			n.GroupID = idFor(i)
+			n.Group = r.group
 		}
 		allNodes = append(allNodes, r.nodes...)
 		allSkipped = append(allSkipped, r.skipped...)
