@@ -454,6 +454,9 @@ func (r *surgeRenderer) nodeLine(n *proxy.Proxy) (string, string) {
 		return head + strings.Join(parts, ", "), ""
 
 	case "snell":
+		if cs(c, "psk") == "" {
+			return "", "snell needs a psk"
+		}
 		if isShadowTLS(c) && flavor != flavorSurge {
 			return "", "shadow-tls is not supported"
 		}
@@ -462,6 +465,9 @@ func (r *surgeRenderer) nodeLine(n *proxy.Proxy) (string, string) {
 	case "anytls":
 		if flavor != flavorSurge {
 			return "", "anytls is Surge-only"
+		}
+		if cs(c, "password") == "" {
+			return "", "anytls needs a password"
 		}
 		return head + strings.Join(surgeAnytlsParts(c), ", "), ""
 
@@ -484,6 +490,9 @@ func (r *surgeRenderer) nodeLine(n *proxy.Proxy) (string, string) {
 	case "trusttunnel":
 		if flavor != flavorSurge {
 			return "", "trust-tunnel is Surge-only"
+		}
+		if cs(c, "username") == "" || cs(c, "password") == "" {
+			return "", "trust-tunnel needs a username and password"
 		}
 		return head + strings.Join(surgeTrustTunnelParts(c), ", "), ""
 

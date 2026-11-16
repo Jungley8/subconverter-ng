@@ -61,9 +61,11 @@ func protocolNodes() []*proxy.Proxy {
 
 	masque := proxy.New("masque", "MQ", "mq.example.com", 443)
 	masque.Set("private-key", "priv")
+	masque.Set("public-key", "pub")
 
 	tt := proxy.New("trusttunnel", "TT", "tt.example.com", 443)
 	tt.Set("username", "alice")
+	tt.Set("password", "pw")
 
 	awg := proxy.New("wireguard", "AWG", "wg.example.com", 51820)
 	awg.Set("private-key", "priv")

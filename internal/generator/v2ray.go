@@ -127,7 +127,8 @@ func nodeShareLink(n *proxy.Proxy) (string, bool) {
 		return shareSnell(n), true
 
 	case "ssh":
-		if cs(c, "username") == "" && cs(c, "private-key") == "" {
+		if cs(c, "username") == "" ||
+			(cs(c, "password") == "" && cs(c, "private-key") == "") {
 			return "", false
 		}
 		return shareSSH(n), true

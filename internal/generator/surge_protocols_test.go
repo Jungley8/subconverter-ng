@@ -411,6 +411,7 @@ func TestSurgeFamilySkips(t *testing.T) {
 	amnezia.Clash["ip"] = "10.0.0.2/32"
 	amnezia.Clash["amnezia-wg-option"] = map[string]any{"jc": 4}
 	sshKeyOnly := proxy.New("ssh", "SHK", "ssh.example.com", 22)
+	sshKeyOnly.Clash["username"] = "root"
 	sshKeyOnly.Clash["private-key"] = "PRIV"
 	vlessXHTTP := proxy.New("vless", "V-XH", "v.example.com", 443)
 	vlessXHTTP.Clash["uuid"] = "uuid-v"
@@ -522,5 +523,23 @@ func TestSurgeWireGuardRoundTrip(t *testing.T) {
 		if got.Clash[k] != want {
 			t.Errorf("round-trip %s = %v, want %v; node=%v", k, got.Clash[k], want, got.Clash)
 		}
+	}
+}
+
+// TestSurgeWireGuardSectionNameSanitized keeps commas and brackets in a node
+// name from splitting the policy line or the section header.
+func TestSurgeWireGuardSectionNameSanitized(t *testing.T) {
+	n := proxy.New("wireguard", "HK, [01]", "wg.example.com", 51820)
+	n.Set("private-key", "priv")
+	n.Set("public-key", "pub")
+	n.Set("ip", "10.0.0.2")
+
+	_, out := renderSurgeFamily(t, flavorSurge, []*proxy.Proxy{n}, Options{ListOnly: true})
+	if strings.Contains(out, "section-name=HK,") {
+		t.Fatalf("section name kept a comma: %s", out)
+	}
+	nodes, skipped, err := parser.Parse([]byte(out))
+	if err != nil || len(nodes) != 1 || len(skipped) != 0 {
+		t.Fatalf("round-trip failed: nodes=%d skipped=%v err=%v\n%s", len(nodes), skipped, err, out)
 	}
 }

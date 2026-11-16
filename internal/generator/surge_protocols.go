@@ -176,6 +176,10 @@ func surgeAnytlsParts(c map[string]any) []string {
 // surgeSSHParts renders an ssh line. Surge can only authenticate with a stored
 // Keystore item, so a private-key-only node has no representation.
 func surgeSSHParts(c map[string]any) ([]string, string) {
+	user := cs(c, "username")
+	if user == "" {
+		return nil, "ssh needs a username"
+	}
 	pass := cs(c, "password")
 	if pass == "" {
 		if cs(c, "private-key") != "" {
@@ -183,10 +187,7 @@ func surgeSSHParts(c map[string]any) ([]string, string) {
 		}
 		return nil, "ssh needs a password or a Keystore item"
 	}
-	parts := []string{"ssh", cs(c, "server"), strconv.Itoa(ci(c, "port"))}
-	if u := cs(c, "username"); u != "" {
-		parts = append(parts, "username="+u)
-	}
+	parts := []string{"ssh", cs(c, "server"), strconv.Itoa(ci(c, "port")), "username=" + user}
 	return append(parts, "password="+pass), ""
 }
 
@@ -237,11 +238,15 @@ func surgeTrustTunnelParts(c map[string]any) []string {
 	return parts
 }
 
-// surgeSectionName makes a node name safe for a [WireGuard ...] header.
+// surgeSectionName makes a node name safe for a [WireGuard ...] header. Commas
+// and equals signs would split the policy line's section-name= value.
 func surgeSectionName(name string) string {
 	s := strings.ReplaceAll(name, "\r", "")
 	s = strings.ReplaceAll(s, "\n", " ")
 	s = strings.ReplaceAll(s, "]", "")
+	s = strings.ReplaceAll(s, "[", "")
+	s = strings.ReplaceAll(s, ",", " ")
+	s = strings.ReplaceAll(s, "=", " ")
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return "wireguard"

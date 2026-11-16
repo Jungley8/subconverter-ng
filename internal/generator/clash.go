@@ -661,11 +661,20 @@ func buildGroups(defs []extconfig.ProxyGroup, nodes []*proxy.Proxy, allNames []s
 
 // clashUnsupportedReason reports why mihomo cannot load n, or "" when it can.
 func clashUnsupportedReason(n *proxy.Proxy) string {
+	c := n.Clash
 	switch {
 	case n.Type == "naive":
 		return "mihomo does not load naive nodes"
 	case n.Type == "tuic" && n.Version == 4:
 		return "mihomo supports TUIC v5 only"
+	case n.Type == "snell" && cs(c, "psk") == "":
+		return "snell needs a psk"
+	case n.Type == "masque" && (cs(c, "private-key") == "" || cs(c, "public-key") == ""):
+		// Surge's masque line carries only credentials; mihomo also needs the
+		// ECDSA key pair, so a Surge-sourced node cannot become a clash node.
+		return "mihomo masque needs an ECDSA key pair"
+	case n.Type == "trusttunnel" && (cs(c, "username") == "" || cs(c, "password") == ""):
+		return "mihomo trusttunnel needs a username and password"
 	}
 	return ""
 }

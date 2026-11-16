@@ -27,6 +27,9 @@ func singboxSkipReason(n *proxy.Proxy) string {
 			return "AmneziaWG is not supported by sing-box"
 		}
 	case "snell":
+		if cs(c, "psk") == "" {
+			return "snell needs a psk"
+		}
 		if isShadowTLS(c) {
 			return "snell shadow-tls: unsupported by sing-box"
 		}
@@ -38,6 +41,13 @@ func singboxSkipReason(n *proxy.Proxy) string {
 			if mode := cs(cmap(c, "obfs-opts"), "mode"); mode != "" && mode != "http" && mode != "none" {
 				return "snell obfs " + mode + " is not supported by sing-box"
 			}
+		}
+	case "ssh":
+		if cs(c, "username") == "" {
+			return "ssh needs a username"
+		}
+		if cs(c, "password") == "" && cs(c, "private-key") == "" {
+			return "ssh needs a password or private key"
 		}
 	}
 	if isXHTTP(c) {
@@ -115,8 +125,12 @@ func singboxSSHOutbound(n *proxy.Proxy) map[string]any {
 	c := n.Clash
 	base := singboxNodeBase(n)
 	base["type"] = "ssh"
-	base["user"] = cs(c, "username")
-	base["password"] = cs(c, "password")
+	if user := cs(c, "username"); user != "" {
+		base["user"] = user
+	}
+	if pw := cs(c, "password"); pw != "" {
+		base["password"] = pw
+	}
 	if pk := cs(c, "private-key"); pk != "" {
 		base["private_key"] = pk
 	}
