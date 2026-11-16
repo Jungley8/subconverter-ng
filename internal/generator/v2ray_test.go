@@ -8,6 +8,7 @@ import (
 
 	"github.com/Jungley8/subconverter-ng/internal/extconfig"
 	"github.com/Jungley8/subconverter-ng/internal/parser"
+	"github.com/Jungley8/subconverter-ng/internal/proxy"
 )
 
 func b64(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
@@ -67,16 +68,16 @@ func TestGenerateV2ray_RoundTrip(t *testing.T) {
 }
 
 func TestGenerateV2ray_SkipsUnsupported(t *testing.T) {
-	// anytls has no share-link form here -> reported, not emitted.
+	// mieru has no share-link form here -> reported, not emitted.
 	links := []string{
 		"ss://" + b64("aes-256-gcm:pass") + "@1.2.3.4:8388#OK",
-		"anytls://mypassword@a.example.com:8443?sni=sni.example.com#AT",
 	}
 	sub := []byte(base64.StdEncoding.EncodeToString([]byte(strings.Join(links, "\n"))))
 	nodes, _, err := parser.Parse(sub)
 	if err != nil {
 		t.Fatal(err)
 	}
+	nodes = append(nodes, proxy.New("mieru", "MI", "m.example.com", 443))
 	res, err := GenerateV2ray(context.Background(), nodes, &extconfig.Config{}, fakeFetcher{}, Options{})
 	if err != nil {
 		t.Fatal(err)
@@ -89,7 +90,7 @@ func TestGenerateV2ray_SkipsUnsupported(t *testing.T) {
 	if len(got) != 1 || !strings.HasPrefix(got[0], "ss://") {
 		t.Errorf("expected only the ss link, got %v", got)
 	}
-	if len(res.SkippedNodes) != 1 {
-		t.Errorf("SkippedNodes = %v, want 1", res.SkippedNodes)
+	if len(res.SkippedNodes) != 1 || !strings.Contains(res.SkippedNodes[0], "mieru") {
+		t.Errorf("SkippedNodes = %v, want the mieru node named", res.SkippedNodes)
 	}
 }

@@ -120,6 +120,18 @@ func nodeShareLink(n *proxy.Proxy) (string, bool) {
 		applyV2RayTransportQuery(q, c)
 		return "trojan://" + cs(c, "password") + "@" + hostport + "?" + q.Encode() + frag, true
 
+	case "snell":
+		return shareSnell(n), true
+
+	case "ssh":
+		return shareSSH(n), true
+
+	case "naive":
+		return shareNaive(n), true
+
+	case "anytls":
+		return shareAnyTLS(n), true
+
 	case "hysteria2":
 		q := url.Values{}
 		if sni := cs(c, "sni"); sni != "" {
@@ -158,7 +170,12 @@ func nodeShareLink(n *proxy.Proxy) (string, bool) {
 		if cb(c, "skip-cert-verify") {
 			q.Set("allow_insecure", "1")
 		}
-		return "tuic://" + cs(c, "uuid") + ":" + cs(c, "password") + "@" + hostport + "?" + q.Encode() + frag, true
+		// TUIC v4 is token-only; v5 carries uuid:password.
+		userinfo := cs(c, "uuid") + ":" + cs(c, "password")
+		if n.Version == 4 {
+			userinfo = url.User(cs(c, "password")).String()
+		}
+		return "tuic://" + userinfo + "@" + hostport + "?" + q.Encode() + frag, true
 
 	case "socks5", "socks":
 		link := "socks5://"
@@ -211,6 +228,7 @@ func nodeShareLink(n *proxy.Proxy) (string, bool) {
 			}
 			q.Set("reserved", strings.Join(parts, ","))
 		}
+		appendAmneziaWGQuery(q, c)
 		link := "wireguard://" + cs(c, "private-key") + "@" + hostport
 		if enc := q.Encode(); enc != "" {
 			link += "?" + enc
@@ -309,6 +327,17 @@ func ssPluginSpec(c map[string]any) string {
 		if p := cs(opts, "path"); p != "" {
 			parts = append(parts, "path="+p)
 		}
+	case "shadow-tls":
+		parts = append(parts, "shadow-tls")
+		if h := cs(opts, "host"); h != "" {
+			parts = append(parts, "host="+h)
+		}
+		if pw := cs(opts, "password"); pw != "" {
+			parts = append(parts, "password="+pw)
+		}
+		if v := ci(opts, "version"); v > 0 {
+			parts = append(parts, "version="+strconv.Itoa(v))
+		}
 	default:
 		return ""
 	}
@@ -318,16 +347,35 @@ func ssPluginSpec(c map[string]any) string {
 // applyVMessTransportJSON fills net/host/path/type into a vmess share-link JSON
 // from the node's Clash transport options.
 func applyVMessTransportJSON(j map[string]any, c map[string]any) {
-	switch cs(c, "network") {
-	case "ws":
+	network := firstNonEmptyStr(cs(c, "network"), "tcp")
+	switch {
+	case isHTTPUpgrade(c):
+		ws := cmap(c, "ws-opts")
+		j["net"] = "httpupgrade"
+		j["path"] = cs(ws, "path")
+		if hdr := cmap(ws, "headers"); hdr != nil {
+			j["host"] = cs(hdr, "Host")
+		}
+	case isXHTTP(c) || network == "splithttp":
+		xo := cmap(c, "xhttp-opts")
+		j["net"] = "xhttp"
+		j["path"] = cs(xo, "path")
+		j["host"] = cs(xo, "host")
+		if m := cs(xo, "mode"); m != "" {
+			j["mode"] = m
+		}
+		if extra := xhttpExtraJSON(xo); extra != "" {
+			j["extra"] = extra
+		}
+	case network == "ws":
 		ws := cmap(c, "ws-opts")
 		j["path"] = cs(ws, "path")
 		if hdr := cmap(ws, "headers"); hdr != nil {
 			j["host"] = cs(hdr, "Host")
 		}
-	case "grpc":
+	case network == "grpc":
 		j["path"] = cs(cmap(c, "grpc-opts"), "grpc-service-name")
-	case "h2":
+	case network == "h2":
 		h2 := cmap(c, "h2-opts")
 		j["path"] = cs(h2, "path")
 		j["host"] = joinAny(h2["host"])
@@ -338,9 +386,13 @@ func applyVMessTransportJSON(j map[string]any, c map[string]any) {
 // by vless/trojan share-links.
 func applyV2RayTransportQuery(q url.Values, c map[string]any) {
 	network := firstNonEmptyStr(cs(c, "network"), "tcp")
+	if network == "splithttp" {
+		network = "xhttp"
+	}
 	q.Set("type", network)
-	switch network {
-	case "ws":
+	switch {
+	case isHTTPUpgrade(c):
+		q.Set("type", "httpupgrade")
 		ws := cmap(c, "ws-opts")
 		if p := cs(ws, "path"); p != "" {
 			q.Set("path", p)
@@ -350,11 +402,35 @@ func applyV2RayTransportQuery(q url.Values, c map[string]any) {
 				q.Set("host", h)
 			}
 		}
-	case "grpc":
+	case isXHTTP(c) || network == "xhttp":
+		xo := cmap(c, "xhttp-opts")
+		if p := cs(xo, "path"); p != "" {
+			q.Set("path", p)
+		}
+		if h := cs(xo, "host"); h != "" {
+			q.Set("host", h)
+		}
+		if m := cs(xo, "mode"); m != "" {
+			q.Set("mode", m)
+		}
+		if extra := xhttpExtraJSON(xo); extra != "" {
+			q.Set("extra", extra)
+		}
+	case network == "ws":
+		ws := cmap(c, "ws-opts")
+		if p := cs(ws, "path"); p != "" {
+			q.Set("path", p)
+		}
+		if hdr := cmap(ws, "headers"); hdr != nil {
+			if h := cs(hdr, "Host"); h != "" {
+				q.Set("host", h)
+			}
+		}
+	case network == "grpc":
 		if sn := cs(cmap(c, "grpc-opts"), "grpc-service-name"); sn != "" {
 			q.Set("serviceName", sn)
 		}
-	case "h2":
+	case network == "h2":
 		h2 := cmap(c, "h2-opts")
 		if p := cs(h2, "path"); p != "" {
 			q.Set("path", p)
