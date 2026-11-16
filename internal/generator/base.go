@@ -59,7 +59,7 @@ func stripDirectives(data []byte) ([]byte, error) {
 			break
 		}
 		hasDirective = true
-		fields := strings.Fields(string(trimmed))
+		fields := strings.Fields(stripComment(string(trimmed)))
 		switch fields[0] {
 		case "%YAML":
 			if len(fields) != 2 || (fields[1] != "1.1" && fields[1] != "1.2") {
@@ -87,6 +87,14 @@ func stripDirectives(data []byte) ([]byte, error) {
 		out = append(out, '\n')
 	}
 	return append(out, rest[offset:]...), nil
+}
+
+// stripComment drops a trailing YAML comment, which a directive line may carry.
+func stripComment(s string) string {
+	if i := strings.Index(s, "#"); i > 0 && (s[i-1] == ' ' || s[i-1] == '\t') {
+		return strings.TrimSpace(s[:i])
+	}
+	return s
 }
 
 // splitLine returns the line at offset without its newline, and the next offset.
