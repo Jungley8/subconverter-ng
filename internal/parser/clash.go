@@ -41,13 +41,31 @@ func parseClashYAML(text string) ([]*proxy.Proxy, []string, error) {
 		}
 		server, _ := m["server"].(string)
 		port := anyToInt(m["port"])
-		nodes = append(nodes, &proxy.Proxy{
+		p := &proxy.Proxy{
 			Name:   name,
 			Type:   typ,
 			Server: server,
 			Port:   port,
 			Clash:  m,
-		})
+		}
+		if typ == "tuic" {
+			normalizeClashTUIC(p, m)
+		}
+		nodes = append(nodes, p)
 	}
 	return nodes, skipped, nil
+}
+
+// normalizeClashTUIC marks a v4 node (token-based, no uuid) and moves its token
+// to the canonical password key. mihomo cannot load v4 nodes, so generators
+// branch on Proxy.Version to skip or emit a v4 line.
+func normalizeClashTUIC(p *proxy.Proxy, m map[string]any) {
+	if s, ok := m["uuid"].(string); ok && strings.TrimSpace(s) != "" {
+		return
+	}
+	p.Version = 4
+	if token, ok := m["token"].(string); ok && strings.TrimSpace(token) != "" {
+		m["password"] = token
+	}
+	delete(m, "token")
 }

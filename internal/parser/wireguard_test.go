@@ -62,3 +62,71 @@ func TestParse_WireGuardViaDispatch(t *testing.T) {
 		t.Fatalf("dispatch failed: %+v", nodes)
 	}
 }
+
+func TestParseWireGuardAWG(t *testing.T) {
+	uri := "awg://priv@wg.example.com:51820?publickey=pk&address=10.0.0.2&jc=4&jmin=10&jmax=50&s1=1&s2=2&h1=123456&h2=0xabcdef&i1=45&j1=3&itime=30&version=2&header-protection-key=HPK&content-padding-addition=CPA&random-trailers=1&disable-cookies=true&max-handshake-attempts=5&keepalive-timeout=10#AWG"
+	p, err := parseWireGuard(uri)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts, ok := p.Clash["amnezia-wg-option"].(map[string]any)
+	if !ok {
+		t.Fatalf("amnezia-wg-option missing: %v", p.Clash)
+	}
+	want := map[string]any{
+		"jc":                       4,
+		"jmin":                     10,
+		"jmax":                     50,
+		"s1":                       1,
+		"s2":                       2,
+		"h1":                       123456,
+		"h2":                       "0xabcdef",
+		"i1":                       45,
+		"j1":                       3,
+		"itime":                    30,
+		"version":                  2,
+		"header-protection-key":    "HPK",
+		"content-padding-addition": "CPA",
+		"random-trailers":          true,
+		"disable-cookies":          true,
+		"max-handshake-attempts":   5,
+		"keepalive-timeout":        10,
+	}
+	for k, v := range want {
+		if opts[k] != v {
+			t.Errorf("amnezia-wg-option[%q] = %#v, want %#v", k, opts[k], v)
+		}
+	}
+	if len(opts) != len(want) {
+		t.Errorf("amnezia-wg-option has %d keys, want %d: %v", len(opts), len(want), opts)
+	}
+}
+
+func TestParseWireGuard_AWGOptionsOnlyWhenPresent(t *testing.T) {
+	p, err := parseWireGuard("wireguard://priv@wg.example.com:51820?publickey=pk&jc=3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts, ok := p.Clash["amnezia-wg-option"].(map[string]any)
+	if !ok || len(opts) != 1 || opts["jc"] != 3 {
+		t.Errorf("amnezia-wg-option = %#v", p.Clash["amnezia-wg-option"])
+	}
+
+	plain, err := parseWireGuard("wireguard://priv@wg.example.com:51820?publickey=pk")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := plain.Clash["amnezia-wg-option"]; ok {
+		t.Error("plain WireGuard node should have no amnezia-wg-option")
+	}
+}
+
+func TestParse_AWGViaDispatch(t *testing.T) {
+	nodes, skipped, err := Parse([]byte("awg://priv@1.2.3.4:51820?publickey=pk&jc=4#AWG"))
+	if err != nil || len(skipped) != 0 || len(nodes) != 1 {
+		t.Fatalf("dispatch failed: nodes=%v skipped=%v err=%v", nodes, skipped, err)
+	}
+	if nodes[0].Type != "wireguard" || nodes[0].Name != "AWG" {
+		t.Errorf("unexpected node: %+v", nodes[0])
+	}
+}
