@@ -336,15 +336,22 @@ func TestGenerateSingboxHTTPUpgrade(t *testing.T) {
 			t.Errorf("%s transport missing", tag)
 			continue
 		}
-		if tr["type"] != "ws" || tr["v2ray_http_upgrade"] != true {
-			t.Errorf("%s transport = %v, want ws with v2ray_http_upgrade", tag, tr)
+		if tr["type"] != "httpupgrade" {
+			t.Errorf("%s transport type = %v, want httpupgrade", tag, tr["type"])
 		}
 		if tr["path"] != "/up" {
 			t.Errorf("%s transport path = %v", tag, tr["path"])
 		}
+		if tr["host"] != "up.example.com" {
+			t.Errorf("%s transport host = %v, want up.example.com", tag, tr["host"])
+		}
 		hdr, _ := tr["headers"].(map[string]any)
 		if hdr == nil || hdr["Host"] != "up.example.com" {
 			t.Errorf("%s transport headers = %v", tag, tr["headers"])
+		}
+		// sing-box rejects the ws-only flag as an unknown field.
+		if _, ok := tr["v2ray_http_upgrade"]; ok {
+			t.Errorf("%s transport must not carry v2ray_http_upgrade: %v", tag, tr)
 		}
 	}
 
@@ -352,8 +359,14 @@ func TestGenerateSingboxHTTPUpgrade(t *testing.T) {
 	if tr == nil || tr["type"] != "ws" {
 		t.Fatalf("PlainWS transport = %v", tags["PlainWS"]["transport"])
 	}
+	if tr["path"] != "/plain" {
+		t.Errorf("PlainWS transport path = %v", tr["path"])
+	}
 	if _, ok := tr["v2ray_http_upgrade"]; ok {
 		t.Errorf("plain ws must not set v2ray_http_upgrade: %v", tr)
+	}
+	if _, ok := tr["host"]; ok {
+		t.Errorf("plain ws must not carry the httpupgrade host field: %v", tr)
 	}
 }
 

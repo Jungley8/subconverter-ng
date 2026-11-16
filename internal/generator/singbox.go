@@ -612,6 +612,25 @@ func singboxTransport(c map[string]any) map[string]any {
 	switch cs(c, "network") {
 	case "ws":
 		ws := cmap(c, "ws-opts")
+		if isHTTPUpgrade(c) {
+			// sing-box has a dedicated httpupgrade transport; the ws-only flag is
+			// rejected as an unknown field.
+			t := map[string]any{"type": "httpupgrade"}
+			if p := cs(ws, "path"); p != "" {
+				t["path"] = p
+			}
+			if hdr := cmap(ws, "headers"); hdr != nil {
+				if h := cs(hdr, "Host"); h != "" {
+					t["host"] = h
+				}
+				headers := make(map[string]any, len(hdr))
+				for k, v := range hdr {
+					headers[k] = v
+				}
+				t["headers"] = headers
+			}
+			return t
+		}
 		t := map[string]any{"type": "ws"}
 		if p := cs(ws, "path"); p != "" {
 			t["path"] = p
@@ -620,9 +639,6 @@ func singboxTransport(c map[string]any) map[string]any {
 			if h := cs(hdr, "Host"); h != "" {
 				t["headers"] = map[string]any{"Host": h}
 			}
-		}
-		if isHTTPUpgrade(c) {
-			t["v2ray_http_upgrade"] = true
 		}
 		return t
 	case "grpc":
