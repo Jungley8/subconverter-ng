@@ -167,6 +167,17 @@ var protocolAliases = map[string]string{
 	"https":        "http",
 	"anytls":       "anytls",
 	"snell":        "snell",
+	"ssh":          "ssh",
+	"naive":        "naive",
+	"naiveproxy":   "naive",
+	"mieru":        "mieru",
+	"masque":       "masque",
+	"trusttunnel":  "trusttunnel",
+	"trust-tunnel": "trusttunnel",
+	"awg":          "wireguard",
+	"amneziawg":    "wireguard",
+	"tuic4":        "tuic",
+	"tuicv4":       "tuic",
 }
 
 // CanonicalProtocol normalizes a protocol name or alias to its standard form.
@@ -523,6 +534,49 @@ func parseReserved(v any) []int {
 		return res
 	}
 	return nil
+}
+
+// isShadowTLS reports whether the node carries a ShadowTLS wrapper. mihomo
+// expresses it in two places: as the Shadowsocks plugin "shadow-tls", or as the
+// Snell v4 obfs mode "shadow-tls". It is never a standalone proxy type here, so
+// generators must branch on the underlying node type.
+func isShadowTLS(c map[string]any) bool {
+	if cs(c, "plugin") == "shadow-tls" {
+		return true
+	}
+	return cs(cmap(c, "obfs-opts"), "mode") == "shadow-tls"
+}
+
+// shadowTLSOpts returns the wrapper's camouflage host (also its TLS SNI), its
+// password and its version (0 when the source did not declare one).
+func shadowTLSOpts(c map[string]any) (host, pass string, version int) {
+	opts := cmap(c, "plugin-opts")
+	if cs(c, "plugin") != "shadow-tls" {
+		opts = cmap(c, "obfs-opts")
+	}
+	if opts == nil {
+		return "", "", 0
+	}
+	return cs(opts, "host"), cs(opts, "password"), ci(opts, "version")
+}
+
+// isHTTPUpgrade reports whether a ws-transport node actually carries the
+// HTTPUpgrade upgrade request (mihomo stores it as a ws-opts flag).
+func isHTTPUpgrade(c map[string]any) bool {
+	return cs(c, "network") == "ws" && cb(cmap(c, "ws-opts"), "v2ray-http-upgrade")
+}
+
+// isXHTTP reports whether the node uses the xhttp (formerly splithttp)
+// transport.
+func isXHTTP(c map[string]any) bool {
+	return cs(c, "network") == "xhttp"
+}
+
+// hasAmneziaWG reports whether a WireGuard node carries AmneziaWG handshake
+// obfuscation. Targets without AmneziaWG support cannot use such a node: a
+// plain WireGuard handshake is silently dropped by the server.
+func hasAmneziaWG(c map[string]any) bool {
+	return len(cmap(c, "amnezia-wg-option")) > 0
 }
 
 // getSNI returns the server name or SNI, checking both "servername" and "sni".
