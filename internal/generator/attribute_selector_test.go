@@ -36,16 +36,21 @@ func groupMembers(t *testing.T, res *Result) map[string][]string {
 	return out
 }
 
-func runAttr(t *testing.T, selectors []string) map[string][]string {
+func runAttrWith(t *testing.T, nodes []*proxy.Proxy, selectors []string) map[string][]string {
 	t.Helper()
 	cfg := &extconfig.Config{ProxyGroups: []extconfig.ProxyGroup{{
 		Name: "G", Type: "select", Selectors: selectors,
 	}}}
-	res, err := GenerateClash(context.Background(), attrNodes(), cfg, fakeFetcher{}, Options{})
+	res, err := GenerateClash(context.Background(), nodes, cfg, fakeFetcher{}, Options{})
 	if err != nil {
 		t.Fatalf("GenerateClash: %v", err)
 	}
 	return groupMembers(t, res)
+}
+
+func runAttr(t *testing.T, selectors []string) map[string][]string {
+	t.Helper()
+	return runAttrWith(t, attrNodes(), selectors)
 }
 
 func TestAttributeSelectorType(t *testing.T) {
@@ -73,6 +78,44 @@ func TestAttributeSelectorType(t *testing.T) {
 	}
 }
 
+func TestAttributeSelectorTypeTLS(t *testing.T) {
+	plain := proxy.New("http", "Plain HTTP", "3.3.3.3", 80)
+	secure := proxy.New("http", "TLS HTTP", "4.4.4.4", 443)
+	secure.SetRaw("tls", true)
+	https := proxy.New("https", "HTTPS Node", "5.5.5.5", 8443)
+	nodes := []*proxy.Proxy{plain, secure, https}
+	cases := []struct {
+		selector string
+		want     []string
+	}{
+		{`!!TYPE=HTTP`, []string{"Plain HTTP"}},
+		{`!!TYPE=HTTPS`, []string{"TLS HTTP", "HTTPS Node"}},
+	}
+	for _, c := range cases {
+		got := runAttrWith(t, nodes, []string{c.selector})["G"]
+		if strings.Join(got, "|") != strings.Join(c.want, "|") {
+			t.Errorf("%s = %v, want %v", c.selector, got, c.want)
+		}
+	}
+}
+
+func TestAttributeSelectorTail(t *testing.T) {
+	cases := []struct {
+		selector string
+		want     []string
+	}{
+		{`!!TYPE=(?:SS|VMESS)!!HK`, []string{"HK 01"}},
+		{`!!PORT=8000-9000!!US`, []string{"US 01"}},
+		{`!!TYPE=SS!!NOPE`, []string{"DIRECT"}},
+	}
+	for _, c := range cases {
+		got := runAttr(t, []string{c.selector})["G"]
+		if strings.Join(got, "|") != strings.Join(c.want, "|") {
+			t.Errorf("%s = %v, want %v", c.selector, got, c.want)
+		}
+	}
+}
+
 func TestAttributeSelectorPort(t *testing.T) {
 	cases := []struct {
 		selector string
@@ -94,9 +137,29 @@ func TestAttributeSelectorPort(t *testing.T) {
 }
 
 func TestAttributeSelectorServer(t *testing.T) {
-	got := runAttr(t, []string{`!!SERVER=sg\.example\.com`})["G"]
-	if len(got) != 1 || got[0] != "SG 01" {
-		t.Errorf("server selector = %v, want [SG 01]", got)
+	cases := []struct {
+		selector string
+		want     string
+	}{
+		{`!!SERVER=sg\.example\.com`, "SG 01"},
+		// Upstream regFind is a substring match, not a full match.
+		{`!!SERVER=example\.com`, "SG 01"},
+	}
+	for _, c := range cases {
+		got := runAttr(t, []string{c.selector})["G"]
+		if len(got) != 1 || got[0] != c.want {
+			t.Errorf("%s = %v, want [%s]", c.selector, got, c.want)
+		}
+	}
+}
+
+func TestAttributeSelectorServerIPv6(t *testing.T) {
+	nodes := []*proxy.Proxy{proxy.New("ss", "V6 01", "::1", 443)}
+	for _, sel := range []string{`!!SERVER=::1`, `!!SERVER=\[::1\]`} {
+		got := runAttrWith(t, nodes, []string{sel})["G"]
+		if len(got) != 1 || got[0] != "V6 01" {
+			t.Errorf("%s = %v, want [V6 01]", sel, got)
+		}
 	}
 }
 
@@ -104,16 +167,19 @@ func TestAttributeSelectorGroup(t *testing.T) {
 	nodes := attrNodes()
 	nodes[0].Group = "Primary"
 	nodes[1].Group = "Backup"
-	cfg := &extconfig.Config{ProxyGroups: []extconfig.ProxyGroup{{
-		Name: "G", Type: "select", Selectors: []string{`!!GROUP=Primary`},
-	}}}
-	res, err := GenerateClash(context.Background(), nodes, cfg, fakeFetcher{}, Options{})
-	if err != nil {
-		t.Fatal(err)
+	cases := []struct {
+		selector string
+		want     string
+	}{
+		{`!!GROUP=Primary`, "HK 01"},
+		// Upstream regFind is a substring match, not a full match.
+		{`!!GROUP=rimary`, "HK 01"},
 	}
-	got := groupMembers(t, res)["G"]
-	if len(got) != 1 || got[0] != "HK 01" {
-		t.Errorf("group selector = %v, want [HK 01]", got)
+	for _, c := range cases {
+		got := runAttrWith(t, nodes, []string{c.selector})["G"]
+		if len(got) != 1 || got[0] != c.want {
+			t.Errorf("%s = %v, want [%s]", c.selector, got, c.want)
+		}
 	}
 }
 
@@ -145,7 +211,10 @@ func TestAttributeSelectorGroupIDAndInsert(t *testing.T) {
 }
 
 func TestAttributeSelectorErrors(t *testing.T) {
-	for _, sel := range []string{`!!TYPE=`, `!!NOPE=ss`, `!!PORT=abc`, `!!PROVIDER=p1`} {
+	for _, sel := range []string{
+		`!!TYPE=`, `!!NOPE=ss`, `!!PORT=abc`, `!!PROVIDER=p1`,
+		`!!PORT=!1000-`, `!!PORT=!1000+`, `!!PORT=+5`,
+	} {
 		cfg := &extconfig.Config{ProxyGroups: []extconfig.ProxyGroup{{
 			Name: "G", Type: "select", Selectors: []string{sel},
 		}}}

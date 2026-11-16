@@ -35,6 +35,20 @@ func typeName(t string) string {
 	return strings.ToUpper(t)
 }
 
+// attrTypeName is the !!TYPE= name for a node. Parsers store TLS HTTP nodes as
+// type "http" with Clash tls=true; upstream matches those as HTTPS.
+func attrTypeName(n *proxy.Proxy) string {
+	if n.Type == "https" {
+		return "HTTPS"
+	}
+	if n.Type == "http" {
+		if tls, ok := n.Clash["tls"].(bool); ok && tls {
+			return "HTTPS"
+		}
+	}
+	return typeName(n.Type)
+}
+
 // attrSelector matches a node by one subconverter attribute matcher:
 // !!TYPE=, !!PORT=, !!SERVER=, !!GROUP=, !!GROUPID= or !!INSERT=, each with an
 // optional !!<regex> tail applied to the node name.
@@ -100,9 +114,13 @@ func (a *attrSelector) match(n *proxy.Proxy) (bool, error) {
 	var err error
 	switch a.kind {
 	case "TYPE":
-		ok, err = a.re.Match(typeName(n.Type))
+		ok, err = a.re.Match(attrTypeName(n))
 	case "SERVER":
 		ok, err = a.re.Match(n.Server)
+		// Upstream stores IPv6 servers bracketed; ours are bare.
+		if err == nil && !ok && strings.Contains(n.Server, ":") {
+			ok, err = a.re.Match("[" + n.Server + "]")
+		}
 	case "GROUP":
 		ok, err = a.re.Match(n.Group)
 	case "PORT":
@@ -185,6 +203,13 @@ func parseRangeToken(s string) (rangeToken, error) {
 	if strings.HasPrefix(s, "!") {
 		t.neg = true
 		s = s[1:]
+	}
+	// Upstream reads these as different forms; reject instead of guessing.
+	if t.neg && (strings.HasSuffix(s, "-") || strings.HasSuffix(s, "+")) {
+		return t, fmt.Errorf("negated open-ended range %q is not supported", s)
+	}
+	if strings.HasPrefix(s, "+") {
+		return t, fmt.Errorf("bad range entry %q", s)
 	}
 	switch {
 	case strings.HasSuffix(s, "+"):
