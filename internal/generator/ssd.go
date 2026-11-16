@@ -32,7 +32,11 @@ const ssdAirportName = "subconverter-ng"
 // they require the keys to be present.
 func GenerateSSD(_ context.Context, nodes []*proxy.Proxy, cfg *extconfig.Config, _ Fetcher, opts Options) (*Result, error) {
 	res := &Result{ContentType: ctText}
-	nodes = prepareNodes(nodes, cfg, opts, res)
+	prepared, err := prepareNodes(nodes, cfg, opts, res)
+	if err != nil {
+		return nil, err
+	}
+	nodes = prepared
 
 	servers := make([]map[string]any, 0, len(nodes))
 	var defaults map[string]any

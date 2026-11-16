@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/Jungley8/subconverter-ng/internal/extconfig"
+	"github.com/Jungley8/subconverter-ng/internal/matcher"
 	"github.com/Jungley8/subconverter-ng/internal/proxy"
 )
 
@@ -36,7 +37,11 @@ const notesFallback = `"➜ Direct"`
 // the output is a complete config a router-side client can consume directly.
 func GenerateSingboxTemplate(ctx context.Context, nodes []*proxy.Proxy, cfg *extconfig.Config, tmpl []byte, opts Options) (*Result, error) {
 	res := &Result{ContentType: ctJSON}
-	nodes = prepareNodes(nodes, cfg, opts, res)
+	prepared, err := prepareNodes(nodes, cfg, opts, res)
+	if err != nil {
+		return nil, err
+	}
+	nodes = prepared
 	nodes = dropLocalNodes(nodes, res)
 	res.NodeCount = len(nodes)
 	outbounds, _, _ := nodeOutbounds(nodes, opts, res)
@@ -76,14 +81,19 @@ func GenerateSingboxTemplate(ctx context.Context, nodes []*proxy.Proxy, cfg *ext
 			return m
 		}
 		pattern := notesNamePlaceholder.FindStringSubmatch(m)[1]
-		re, err := regexp.Compile(pattern)
+		re, err := matcher.Compile(pattern)
 		if err != nil {
-			notesErr = fmt.Errorf("invalid NotesName regex %q: %w", pattern, err)
+			notesErr = fmt.Errorf("%w: invalid NotesName regex %q: %w", ErrTemplateInvalid, pattern, err)
 			return m
 		}
 		members := make([]string, 0, len(nodes))
 		for _, n := range nodes {
-			if re.MatchString(n.Name) {
+			ok, err := re.Match(n.Name)
+			if err != nil {
+				notesErr = fmt.Errorf("%w: NotesName regex %q: %w", ErrTemplateInvalid, pattern, err)
+				return m
+			}
+			if ok {
 				q, err := json.Marshal(n.Name)
 				if err != nil {
 					notesErr = err

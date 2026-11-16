@@ -20,6 +20,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/Jungley8/subconverter-ng/internal/matcher"
 )
 
 // Ruleset is one ruleset= entry. Exactly one of URL or Inline is set.
@@ -44,12 +46,16 @@ type ProxyGroup struct {
 type Config struct {
 	Rulesets            []Ruleset
 	ProxyGroups         []ProxyGroup
-	ExcludeRemarks      []*regexp.Regexp
-	IncludeRemarks      []*regexp.Regexp
+	ExcludeRemarks      []*matcher.Matcher
+	IncludeRemarks      []*matcher.Matcher
 	ExcludeProtocols    []string
 	EnableRuleGenerator bool
 	OverwriteRules      bool
 	ClashRuleBase       string
+
+	// Invalid holds regex-bearing entries no engine accepts, in declared order.
+	// Callers report them instead of converting with the entry silently gone.
+	Invalid []string
 
 	// RenameRules holds raw "pattern@replacement" lines from rename= entries,
 	// in declared order. The pattern is a regex; the replacement may be empty.
@@ -61,6 +67,12 @@ type Config struct {
 	EmojiRules     []string
 	AddEmoji       *bool
 	RemoveOldEmoji *bool
+}
+
+// compiles reports whether a user pattern is valid under some engine.
+func compiles(pattern string) bool {
+	_, err := matcher.Compile(pattern)
+	return err == nil
 }
 
 // Literal reports whether a selector is a []Reference (vs a regex matcher) and
@@ -101,12 +113,16 @@ func Parse(data []byte) *Config {
 				cfg.ProxyGroups = append(cfg.ProxyGroups, g)
 			}
 		case "exclude_remarks":
-			if re, err := regexp.Compile(val); err == nil {
+			if re, err := matcher.Compile(val); err == nil {
 				cfg.ExcludeRemarks = append(cfg.ExcludeRemarks, re)
+			} else {
+				cfg.Invalid = append(cfg.Invalid, "exclude_remarks="+val)
 			}
 		case "include_remarks":
-			if re, err := regexp.Compile(val); err == nil {
+			if re, err := matcher.Compile(val); err == nil {
 				cfg.IncludeRemarks = append(cfg.IncludeRemarks, re)
+			} else {
+				cfg.Invalid = append(cfg.Invalid, "include_remarks="+val)
 			}
 		case "exclude_protocol", "exclude_protocols", "exclude_type", "exclude_types",
 			"filter_protocol", "filter_protocols", "filter_type", "filter_types":
@@ -120,10 +136,23 @@ func Parse(data []byte) *Config {
 		case "clash_rule_base":
 			cfg.ClashRuleBase = val
 		case "rename":
-			if val != "" {
-				cfg.RenameRules = append(cfg.RenameRules, val)
+			if val == "" {
+				continue
 			}
+			if pat, _, ok := strings.Cut(val, "@"); !ok || pat == "" || !compiles(pat) {
+				cfg.Invalid = append(cfg.Invalid, "rename="+val)
+				continue
+			}
+			cfg.RenameRules = append(cfg.RenameRules, val)
 		case "emoji":
+			// Split on the last comma, as emoji.ParseRules does: a pattern may
+			// contain commas. An entry without an emoji would otherwise disable
+			// the bundled default set.
+			i := strings.LastIndex(val, ",")
+			if i <= 0 || strings.TrimSpace(val[i+1:]) == "" || !compiles(strings.TrimSpace(val[:i])) {
+				cfg.Invalid = append(cfg.Invalid, "emoji="+val)
+				continue
+			}
 			cfg.EmojiRules = append(cfg.EmojiRules, val)
 		case "add_emoji":
 			b := boolVal(val)

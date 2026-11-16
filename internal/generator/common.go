@@ -14,6 +14,8 @@ package generator
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -22,6 +24,16 @@ import (
 	"github.com/Jungley8/subconverter-ng/internal/extconfig"
 	"github.com/Jungley8/subconverter-ng/internal/proxy"
 )
+
+// ErrConfigInvalid marks a fault in the user's external config: an unparsable
+// clash_rule_base, a selector no engine accepts. Callers turn it into a 400.
+var ErrConfigInvalid = errors.New("invalid external config")
+
+// unsupportedSelector reports a subconverter attribute matcher, which this
+// build does not implement.
+func unsupportedSelector(selector string) error {
+	return fmt.Errorf("selector %q uses a subconverter attribute matcher (!!TYPE, !!PORT, !!SERVER, !!GROUP, !!GROUPID, !!INSERT, !!PROVIDER) this build does not support", selector)
+}
 
 // Version is a parsed client version from a "name/version" target spec
 // (e.g. "singbox/1.3.11" -> {1, 13, 11}).
@@ -50,7 +62,7 @@ func sanitizeNodeName(name string) string {
 // slice is the processed node list every generator renders from. Node options
 // (udp/tfo/scv, emoji, rename, append_type) are stamped onto each node's Clash
 // field bag, which all generators read from.
-func prepareNodes(nodes []*proxy.Proxy, cfg *extconfig.Config, opts Options, res *Result) []*proxy.Proxy {
+func prepareNodes(nodes []*proxy.Proxy, cfg *extconfig.Config, opts Options, res *Result) ([]*proxy.Proxy, error) {
 	clean := make([]*proxy.Proxy, 0, len(nodes))
 	for _, n := range nodes {
 		if n == nil {
@@ -76,9 +88,11 @@ func prepareNodes(nodes []*proxy.Proxy, cfg *extconfig.Config, opts Options, res
 		res.ExcludedProtocols = dropped
 	}
 
-	before := len(nodes)
-	nodes = filterNodes(nodes, cfg)
-	res.Filtered = before - len(nodes)
+	nodes, filtered, err := filterNodes(nodes, cfg)
+	if err != nil {
+		return nil, err
+	}
+	res.Filtered = filtered
 	if opts.FilterDeprecated {
 		var dropped int
 		nodes, dropped = filterDeprecated(nodes)
@@ -92,7 +106,9 @@ func prepareNodes(nodes []*proxy.Proxy, cfg *extconfig.Config, opts Options, res
 	if opts.Sort {
 		sort.SliceStable(nodes, func(i, j int) bool { return nodes[i].Name < nodes[j].Name })
 	}
-	applyNodeOptions(nodes, opts)
+	if err := applyNodeOptions(nodes, opts); err != nil {
+		return nil, err
+	}
 	for _, n := range nodes {
 		if strings.ContainsAny(n.Name, "\r\n") {
 			n.Rename(sanitizeNodeName(n.Name))
@@ -100,7 +116,7 @@ func prepareNodes(nodes []*proxy.Proxy, cfg *extconfig.Config, opts Options, res
 	}
 	uniquifyNames(nodes)
 	res.NodeCount = len(nodes)
-	return nodes
+	return nodes, nil
 }
 
 // uniquifyNames guarantees every node has a distinct display name. Clash (and

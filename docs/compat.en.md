@@ -42,6 +42,10 @@ A link that depends on these gets a 404 or has the parameter ignored. It never s
 | The subscription parsed but holds no usable node | `422` |
 | An upstream fetch failed (subscription / config / rule set) | `424` |
 
+**Regexes in the config accept PCRE syntax.** Group selectors, `include`/`exclude`, `rename`, and `emoji` are compiled with Go RE2 first, then with a PCRE engine, which covers lookahead, lookbehind, and backreferences. Exclusion groups like `(^(?!.*(美国|日本)).*)` from the upstream docs match nodes as expected. A selector that neither engine accepts, or a match that runs past 100 ms, returns `400` and names the group and selector. In provider mode, `include`/`exclude` are written into the client `filter`, so they must also compile with the PCRE engine. Attribute selectors such as `!!TYPE=` and `!!GROUP=` are not implemented and also return `400`; they never become a silent empty group.
+
+**`clash_rule_base` keeps your file layout.** Only the generated sections are replaced: `proxies`, `proxy-groups`, and `rules`; plus `proxy-providers` in provider mode and `rule-providers` with `expand=false`. Key order, quotes, and comments stay as written. Indentation becomes 2 spaces and blank lines are dropped. If the base cannot be fetched or parsed, the request fails; it does not fall back to the built-in skeleton.
+
 **The cache is keyed by User-Agent, upstream proxy, and URL.** A request with `&ua=` neither reads nor writes the shared cache, because the UA is an unbounded key space. Set `user_agent` in the server config if you need caching.
 
 **sing-box output follows the kernel version.** Without a declared version, the output follows the current sing-box schema; older kernels need `target=singbox/1.11` and the like. One config is not portable across sing-box major versions. That is the kernel's schema changing, not an option in this converter.

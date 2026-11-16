@@ -2,11 +2,12 @@ package generator
 
 import (
 	"context"
-	"regexp"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/Jungley8/subconverter-ng/internal/extconfig"
+	"github.com/Jungley8/subconverter-ng/internal/matcher"
 	"gopkg.in/yaml.v3"
 )
 
@@ -100,8 +101,8 @@ custom_proxy_group=🚀 节点选择` + "`" + `select` + "`" + `[]♻️ 自动�
 	}
 	// Region group: regex selector becomes filter + use.
 	proxies, use, filter = group("🇭🇰 香港节点")
-	if filter != "港|HK" {
-		t.Errorf("🇭🇰 香港节点 filter = %q, want 港|HK", filter)
+	if filter != "(?:港|HK)" {
+		t.Errorf("🇭🇰 香港节点 filter = %q, want (?:港|HK)", filter)
 	}
 	if strings.Join(use, ",") != strings.Join(wantProviders, ",") {
 		t.Errorf("🇭🇰 香港节点 use = %v, want %v", use, wantProviders)
@@ -199,7 +200,11 @@ func TestGenerateClashProvider_LocalNodesArePrepared(t *testing.T) {
 	base := Options{ProviderMode: true, ProviderURLs: []string{"https://airport.example/sub"}}
 
 	// Remarks filter from the external config.
-	cfg := &extconfig.Config{ExcludeRemarks: []*regexp.Regexp{regexp.MustCompile("HK")}}
+	exclude, err := matcher.Compile("HK")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &extconfig.Config{ExcludeRemarks: []*matcher.Matcher{exclude}}
 	res, err := GenerateClashProvider(context.Background(), nodes, cfg, fakeFetcher{}, base)
 	if err != nil {
 		t.Fatal(err)
@@ -226,5 +231,136 @@ func TestGenerateClashProvider_LocalNodesArePrepared(t *testing.T) {
 	}
 	if len(doc.Proxies) != 0 {
 		t.Errorf("excluded local node leaked into proxies: %v", doc.Proxies)
+	}
+}
+
+func TestGenerateClashProvider_PCREFilter(t *testing.T) {
+	nodes, _, err := parseLinks("ss://YWVzLTI1Ni1nY206cGFzcw==@1.2.3.4:8388#HK-Test")
+	if err != nil {
+		t.Fatalf("parse local link: %v", err)
+	}
+	const ini = "[custom]\n" +
+		"custom_proxy_group=AI节点`url-test`^(?!.*(港|(?i)HK)).*$\n"
+	cfg := extconfig.Parse([]byte(ini))
+	opts := Options{ProviderMode: true, ProviderURLs: []string{"https://airport.example/sub"}}
+	res, err := GenerateClashProvider(context.Background(), nodes, cfg, fakeFetcher{}, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Groups []struct {
+			Name    string   `yaml:"name"`
+			Proxies []string `yaml:"proxies"`
+			Use     []string `yaml:"use"`
+			Filter  string   `yaml:"filter"`
+		} `yaml:"proxy-groups"`
+	}
+	if err := yaml.Unmarshal(res.Output, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Groups) != 1 {
+		t.Fatalf("groups = %d, want 1", len(doc.Groups))
+	}
+	g := doc.Groups[0]
+	if g.Filter != `(?:^(?!.*(港|(?i)HK)).*$)` {
+		t.Errorf("filter = %q", g.Filter)
+	}
+	if len(g.Use) != 1 || len(g.Proxies) != 0 {
+		t.Errorf("use = %v, proxies = %v; want one provider and no inline member", g.Use, g.Proxies)
+	}
+}
+
+func TestGenerateClashProvider_InvalidSelector(t *testing.T) {
+	cfg := extconfig.Parse([]byte("[custom]\ncustom_proxy_group=Bad`select`([\n"))
+	opts := Options{ProviderMode: true, ProviderURLs: []string{"https://airport.example/sub"}}
+	_, err := GenerateClashProvider(context.Background(), nil, cfg, fakeFetcher{}, opts)
+	if !errors.Is(err, ErrConfigInvalid) {
+		t.Fatalf("err = %v, want ErrConfigInvalid", err)
+	}
+}
+
+func TestGenerateClashProvider_CustomRuleBaseKeepsLayout(t *testing.T) {
+	const ini = "[custom]\n" +
+		"custom_proxy_group=G`select`.*\n" +
+		"clash_rule_base=https://example.com/base.yml\n"
+	cfg := extconfig.Parse([]byte(ini))
+	base := "# provider base\nmixed-port: 7890\nrules:\n  - MATCH,keep\n"
+	opts := Options{ProviderMode: true, ProviderURLs: []string{"https://airport.example/sub"}}
+	res, err := GenerateClashProvider(context.Background(), nil, cfg, fakeFetcher{"base.yml": []byte(base)}, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := string(res.Output)
+	if !strings.HasPrefix(out, "# provider base\n") {
+		t.Errorf("base comment lost:\n%s", out)
+	}
+	for _, want := range []string{"proxy-providers:\n  sub-1:\n", "proxy-groups:\n  - name: G\n", "rules:\n  - MATCH,keep\n"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestGenerateClashProvider_BaseTailscalePrepend(t *testing.T) {
+	const ini = "[custom]\n" +
+		"custom_proxy_group=G`select`.*\n" +
+		"clash_rule_base=https://example.com/base.yml\n"
+	cfg := extconfig.Parse([]byte(ini))
+	base := "rules:\n  - MATCH,BASE\n"
+	opts := Options{ProviderMode: true, ProviderURLs: []string{"https://airport.example/sub"}, Tailscale: true}
+	res, err := GenerateClashProvider(context.Background(), nil, cfg, fakeFetcher{"base.yml": []byte(base)}, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := string(res.Output)
+	ts := strings.Index(out, "IP-CIDR,100.64.0.0/10,DIRECT,no-resolve")
+	match := strings.Index(out, "MATCH,BASE")
+	if ts < 0 || match < 0 || ts > match {
+		t.Errorf("tailscale rules not prepended before base rules:\n%s", out)
+	}
+}
+
+func TestGenerateClashProvider_RE2OnlySelectorRejected(t *testing.T) {
+	cfg := extconfig.Parse([]byte("[custom]\ncustom_proxy_group=G`select`\\QHK\\E\n"))
+	opts := Options{ProviderMode: true, ProviderURLs: []string{"https://airport.example/sub"}}
+	_, err := GenerateClashProvider(context.Background(), nil, cfg, fakeFetcher{}, opts)
+	if !errors.Is(err, ErrConfigInvalid) {
+		t.Fatalf("err = %v, want ErrConfigInvalid: the client compiles filters with regexp2", err)
+	}
+}
+
+func TestGenerateClashProvider_FilterFlagsStayIsolated(t *testing.T) {
+	nodes, _, err := parseLinks("ss://YWVzLTI1Ni1nY206cGFzcw==@1.2.3.4:8388#HK")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const ini = "[custom]\n" +
+		"custom_proxy_group=G`select`(?i)us`hk\n"
+	cfg := extconfig.Parse([]byte(ini))
+	opts := Options{ProviderMode: true, ProviderURLs: []string{"https://airport.example/sub"}}
+	res, err := GenerateClashProvider(context.Background(), nodes, cfg, fakeFetcher{}, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Groups []struct {
+			Proxies []string `yaml:"proxies"`
+			Filter  string   `yaml:"filter"`
+		} `yaml:"proxy-groups"`
+	}
+	if err := yaml.Unmarshal(res.Output, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Groups) != 1 {
+		t.Fatalf("groups = %d, want 1", len(doc.Groups))
+	}
+	g := doc.Groups[0]
+	if g.Filter != "(?:(?i)us)|(?:hk)" {
+		t.Errorf("filter = %q, want each selector wrapped", g.Filter)
+	}
+	for _, p := range g.Proxies {
+		if p == "HK" {
+			t.Errorf("(?i) from the first selector leaked onto the second: %v", g.Proxies)
+		}
 	}
 }

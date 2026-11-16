@@ -19,7 +19,11 @@ import (
 // share-link form are skipped and reported in Result.SkippedNodes.
 func GenerateV2ray(_ context.Context, nodes []*proxy.Proxy, cfg *extconfig.Config, _ Fetcher, opts Options) (*Result, error) {
 	res := &Result{ContentType: ctText}
-	nodes = prepareNodes(nodes, cfg, opts, res)
+	prepared, err := prepareNodes(nodes, cfg, opts, res)
+	if err != nil {
+		return nil, err
+	}
+	nodes = prepared
 
 	links := make([]string, 0, len(nodes))
 	for _, n := range nodes {

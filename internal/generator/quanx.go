@@ -14,7 +14,11 @@ import (
 // express (hysteria2/tuic/...) are skipped and reported in Result.SkippedNodes.
 func GenerateQuanX(ctx context.Context, nodes []*proxy.Proxy, cfg *extconfig.Config, f Fetcher, opts Options) (*Result, error) {
 	res := &Result{ContentType: ctText}
-	nodes = prepareNodes(nodes, cfg, opts, res)
+	prepared, err := prepareNodes(nodes, cfg, opts, res)
+	if err != nil {
+		return nil, err
+	}
+	nodes = prepared
 
 	var b strings.Builder
 	b.WriteString("[server_local]\n")
@@ -50,7 +54,10 @@ func GenerateQuanX(ctx context.Context, nodes []*proxy.Proxy, cfg *extconfig.Con
 	for _, d := range cfg.ProxyGroups {
 		groupNames[d.Name] = true
 	}
-	groups := buildGroups(cfg.ProxyGroups, nodes, allNames, res)
+	groups, err := buildGroups(cfg.ProxyGroups, nodes, allNames, res)
+	if err != nil {
+		return nil, err
+	}
 	b.WriteString("\n[policy]\n")
 	for _, g := range groups {
 		b.WriteString(formatQuanXPolicy(g, emitted, groupNames))

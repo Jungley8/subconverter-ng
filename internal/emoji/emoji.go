@@ -12,8 +12,9 @@ package emoji
 
 import (
 	_ "embed"
-	"regexp"
 	"strings"
+
+	"github.com/Jungley8/subconverter-ng/internal/matcher"
 )
 
 //go:embed default.txt
@@ -21,7 +22,7 @@ var defaultRulesText string
 
 // Rule maps a remark pattern to the emoji prepended when it matches.
 type Rule struct {
-	Pattern *regexp.Regexp
+	Pattern *matcher.Matcher
 	Emoji   string
 }
 
@@ -33,8 +34,8 @@ func init() { defaultRules = ParseRules(strings.Split(defaultRulesText, "\n")) }
 func Default() []Rule { return defaultRules }
 
 // ParseRules parses "<regex>,<emoji>" lines, splitting on the LAST comma so a
-// regex containing commas is preserved. Comment/blank lines and uncompilable
-// patterns (e.g. PCRE lookbehind unsupported by RE2) are skipped.
+// regex containing commas is preserved. Comment/blank lines and invalid
+// patterns are skipped; extconfig.Parse reports those before we get here.
 func ParseRules(lines []string) []Rule {
 	var rules []Rule
 	for _, raw := range lines {
@@ -51,7 +52,7 @@ func ParseRules(lines []string) []Rule {
 		if em == "" {
 			continue
 		}
-		re, err := regexp.Compile(pattern)
+		re, err := matcher.Compile(pattern)
 		if err != nil {
 			continue
 		}
@@ -80,13 +81,17 @@ func Remove(name string) string {
 
 // Add prepends "<emoji> " using the first rule whose pattern matches name. If no
 // rule matches, name is returned unchanged.
-func Add(name string, rules []Rule) string {
+func Add(name string, rules []Rule) (string, error) {
 	for _, r := range rules {
-		if r.Pattern.MatchString(name) {
-			return r.Emoji + " " + name
+		ok, err := r.Pattern.Match(name)
+		if err != nil {
+			return "", err
+		}
+		if ok {
+			return r.Emoji + " " + name, nil
 		}
 	}
-	return name
+	return name, nil
 }
 
 func isEmojiRune(r rune) bool {
