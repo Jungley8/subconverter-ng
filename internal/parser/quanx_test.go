@@ -1,6 +1,11 @@
 package parser
 
-import "testing"
+import (
+	"encoding/base64"
+	"testing"
+
+	"github.com/Jungley8/subconverter-ng/internal/proxy"
+)
 
 // The QuanX type sits on the left of "=", while Surge puts the node name
 // there. A Surge line must not be read as QuanX and vice versa.
@@ -152,5 +157,37 @@ func TestParseQuanX_SkipsIncomplete(t *testing.T) {
 	}
 	if len(skipped) != 2 {
 		t.Errorf("skipped = %v, want 2 reasons", skipped)
+	}
+}
+
+// Airports that serve QuanX resources also base64-wrap them, like a link list.
+// The base64 true-positive guard must recognize the QuanX shape: its nodes hold
+// no "://", so without that check the whole subscription is discarded.
+func TestParse_Base64QuanX(t *testing.T) {
+	body := "shadowsocks=1.2.3.4:8388, method=aes-256-gcm, password=pw, tag=HK-01\n" +
+		"shadowsocks=5.6.7.8:8388, method=chacha20-ietf-poly1305, password=pw2, tag=US-01\n"
+	wrapped := base64.StdEncoding.EncodeToString([]byte(body))
+	nodes, skipped, err := Parse([]byte(wrapped))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(nodes) != 2 || len(skipped) != 0 {
+		t.Fatalf("nodes=%d skipped=%v, want 2 nodes and no skipped lines", len(nodes), skipped)
+	}
+	want := []proxy.Proxy{
+		{Type: "ss", Name: "HK-01", Server: "1.2.3.4", Port: 8388},
+		{Type: "ss", Name: "US-01", Server: "5.6.7.8", Port: 8388},
+	}
+	for i, w := range want {
+		got := nodes[i]
+		if got.Type != w.Type || got.Name != w.Name || got.Server != w.Server || got.Port != w.Port {
+			t.Errorf("node[%d] = %+v, want %+v", i, got, w)
+		}
+	}
+	if nodes[0].Clash["cipher"] != "aes-256-gcm" || nodes[1].Clash["cipher"] != "chacha20-ietf-poly1305" {
+		t.Errorf("ciphers = %q, %q", nodes[0].Clash["cipher"], nodes[1].Clash["cipher"])
+	}
+	if nodes[0].Clash["password"] != "pw" || nodes[1].Clash["password"] != "pw2" {
+		t.Errorf("passwords = %q, %q", nodes[0].Clash["password"], nodes[1].Clash["password"])
 	}
 }

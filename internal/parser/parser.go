@@ -115,6 +115,11 @@ func Parse(payload []byte) (nodes []*proxy.Proxy, skipped []string, err error) {
 	body := text
 	if decoded, ok := tryBase64(text); ok {
 		body = decoded
+		// An ssd:// URI wrapped in base64 is the same whole-subscription case as
+		// the direct input above.
+		if nodes, skipped, ok := parseSSD(body); ok {
+			return nodes, skipped, nil
+		}
 		if looksLikeClashYAML(body) {
 			return parseClashYAML(body)
 		}
@@ -174,7 +179,7 @@ func tryBase64(s string) (string, bool) {
 			d := string(b)
 			// Guard against false positives: a real subscription contains "://"
 			// or matches one of the structured document formats.
-			if strings.Contains(d, "://") || looksLikeClashYAML(d) || looksLikeSingboxJSON(d) || looksLikeSurge(d) {
+			if strings.Contains(d, "://") || looksLikeClashYAML(d) || looksLikeSingboxJSON(d) || looksLikeSurge(d) || looksLikeQuanX(d) {
 				return d, true
 			}
 		}
