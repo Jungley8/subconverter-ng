@@ -191,11 +191,17 @@ func Run(ctx context.Context, f Fetcher, req Request) ([]byte, *Diagnostics, err
 			return nil, nil, badRequest("provider mode is only available with target=clash (got %s)", describeTarget(name, ver))
 		}
 		var subs, links []string
-		for _, u := range req.SubURLs {
-			if parser.IsShareLink(u) {
-				links = append(links, u)
+		for _, raw := range req.SubURLs {
+			group, link := splitSource(raw)
+			if group != "" {
+				// A tag only feeds !!GROUP=, and no !! selector can be expressed
+				// in a provider filter.
+				return nil, nil, badRequest("provider mode does not support tag:<group>, sources")
+			}
+			if parser.IsShareLink(link) {
+				links = append(links, link)
 			} else {
-				subs = append(subs, u)
+				subs = append(subs, link)
 			}
 		}
 		if len(subs) == 0 {
@@ -427,7 +433,7 @@ func splitSource(raw string) (group, link string) {
 		return "", raw
 	}
 	if i := strings.Index(rest, ","); i >= 0 {
-		return rest[:i], rest[i+1:]
+		return strings.TrimSpace(rest[:i]), strings.TrimSpace(rest[i+1:])
 	}
 	return "", raw
 }

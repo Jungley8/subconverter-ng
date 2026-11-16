@@ -51,6 +51,10 @@ func stripDirectives(data []byte) ([]byte, error) {
 		line, next := splitLine(rest, offset)
 		trimmed := bytes.TrimSpace(line)
 		if len(trimmed) == 0 || trimmed[0] == '#' {
+			// A comment above the directive block is part of the file.
+			if !hasDirective && len(trimmed) > 0 {
+				kept = append(kept, bytes.TrimRight(line, "\r"))
+			}
 			offset = next
 			continue
 		}

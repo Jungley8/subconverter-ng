@@ -2,6 +2,7 @@ package convert
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -30,6 +31,12 @@ func TestSplitSource(t *testing.T) {
 		{
 			name:      "surrounding spaces are tolerated",
 			raw:       "  tag:Primary,https://example.com/sub  ",
+			wantGroup: "Primary",
+			wantLink:  "https://example.com/sub",
+		},
+		{
+			name:      "spaces after the comma are trimmed",
+			raw:       "tag:Primary, https://example.com/sub",
 			wantGroup: "Primary",
 			wantLink:  "https://example.com/sub",
 		},
@@ -141,6 +148,19 @@ func TestRun_SourceTagGroupAndIDs(t *testing.T) {
 	} {
 		if len(got[name]) != 1 || got[name][0] != want {
 			t.Errorf("%s = %v, want [%s]", name, got[name], want)
+		}
+	}
+}
+
+// A tag only feeds !!GROUP=, which a provider filter cannot express, so a
+// tagged source in provider mode is a request error rather than a provider URL.
+func TestProviderRejectsTaggedSources(t *testing.T) {
+	link := "ss://" + b64("aes-256-gcm:pass") + "@1.1.1.1:8388#A"
+	for _, src := range []string{"tag:Primary," + link, "tag:Primary,https://example.com/sub"} {
+		req := Request{Target: "clash", SubURLs: []string{src}, Provider: true}
+		_, _, err := Run(context.Background(), fakeFetcher{}, req)
+		if !errors.Is(err, ErrBadRequest) {
+			t.Errorf("%s: err = %v, want ErrBadRequest", src, err)
 		}
 	}
 }

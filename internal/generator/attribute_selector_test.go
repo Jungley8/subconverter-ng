@@ -83,13 +83,15 @@ func TestAttributeSelectorTypeTLS(t *testing.T) {
 	secure := proxy.New("http", "TLS HTTP", "4.4.4.4", 443)
 	secure.SetRaw("tls", true)
 	https := proxy.New("https", "HTTPS Node", "5.5.5.5", 8443)
-	nodes := []*proxy.Proxy{plain, secure, https}
+	quoted := proxy.New("http", "Quoted TLS", "6.6.6.6", 444)
+	quoted.SetRaw("tls", "true")
+	nodes := []*proxy.Proxy{plain, secure, https, quoted}
 	cases := []struct {
 		selector string
 		want     []string
 	}{
 		{`!!TYPE=HTTP`, []string{"Plain HTTP"}},
-		{`!!TYPE=HTTPS`, []string{"TLS HTTP", "HTTPS Node"}},
+		{`!!TYPE=HTTPS`, []string{"TLS HTTP", "HTTPS Node", "Quoted TLS"}},
 	}
 	for _, c := range cases {
 		got := runAttrWith(t, nodes, []string{c.selector})["G"]
@@ -127,6 +129,7 @@ func TestAttributeSelectorPort(t *testing.T) {
 		{`!!PORT=1000-`, []string{"HK 01"}},
 		{`!!PORT=!443`, []string{"US 01", "SG 01"}},
 		{`!!PORT=443,9000`, []string{"HK 01", "SG 01"}},
+		{`!!PORT=443, 9000`, []string{"HK 01", "SG 01"}},
 	}
 	for _, c := range cases {
 		got := runAttr(t, []string{c.selector})["G"]

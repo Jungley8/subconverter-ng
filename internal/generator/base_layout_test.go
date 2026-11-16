@@ -51,6 +51,16 @@ func TestBaseYAMLDirectiveWithCommentAccepted(t *testing.T) {
 	}
 }
 
+func TestBaseCommentBeforeDirectivesKept(t *testing.T) {
+	out := generateWithBase(t, "# head\n%YAML 1.2\n---\nmixed-port: 7890\n")
+	if !strings.Contains(out, "# head") {
+		t.Errorf("output dropped the leading comment:\n%s", out)
+	}
+	if strings.Contains(out, "%YAML") {
+		t.Errorf("output kept the %%YAML directive:\n%s", out)
+	}
+}
+
 func TestBaseBOMYAMLDirectiveAccepted(t *testing.T) {
 	out := generateWithBase(t, "\xef\xbb\xbf%YAML 1.2\n---\nmixed-port: 7890\n")
 	if strings.Contains(out, "%YAML") || strings.Contains(out, "\xef\xbb\xbf") {

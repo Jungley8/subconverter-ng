@@ -42,8 +42,16 @@ func attrTypeName(n *proxy.Proxy) string {
 		return "HTTPS"
 	}
 	if n.Type == "http" {
-		if tls, ok := n.Clash["tls"].(bool); ok && tls {
-			return "HTTPS"
+		switch tls := n.Clash["tls"].(type) {
+		case bool:
+			if tls {
+				return "HTTPS"
+			}
+		case string:
+			// A Clash source may write tls: "true"; upstream compares the string.
+			if tls == "true" {
+				return "HTTPS"
+			}
 		}
 	}
 	return typeName(n.Type)
