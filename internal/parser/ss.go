@@ -3,6 +3,7 @@ package parser
 import (
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/Jungley8/subconverter-ng/internal/proxy"
@@ -107,9 +108,18 @@ func applySSPlugin(p *proxy.Proxy, spec string) {
 			opts["path"] = v
 		case "tls":
 			opts["tls"] = true
+		case "password":
+			opts["password"] = v
+		case "version":
+			if n, err := strconv.Atoi(v); err == nil {
+				opts["version"] = n
+			}
 		}
 	}
 	switch {
+	case strings.Contains(name, "shadow-tls"):
+		p.Set("plugin", "shadow-tls")
+		p.Set("plugin-opts", opts)
 	case strings.Contains(name, "obfs"):
 		p.Set("plugin", "obfs")
 		p.Set("plugin-opts", opts)

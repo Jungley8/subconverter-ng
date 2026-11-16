@@ -55,12 +55,52 @@ func parseSingboxJSON(text string) ([]*proxy.Proxy, []string, error) {
 	var nodes []*proxy.Proxy
 	var skipped []string
 
+	// A ShadowTLS setup is two outbounds: the shadowtls outbound dials the
+	// camouflage server, and the shadowsocks outbound detours through it. Merge
+	// each pair into one canonical ss node before the main pass.
+	stOuter := map[string]map[string]any{}
+	for _, ob := range rawOutbounds {
+		if strings.ToLower(cs(ob, "type")) != "shadowtls" {
+			continue
+		}
+		if tag := cs(ob, "tag"); tag != "" {
+			stOuter[tag] = ob
+		}
+	}
+	stInner := map[string]map[string]any{} // shadowtls tag -> its shadowsocks outbound
+	mergedSS := map[string]bool{}          // shadowsocks tag consumed by a merge
+	for _, ob := range rawOutbounds {
+		switch strings.ToLower(cs(ob, "type")) {
+		case "shadowsocks", "ss":
+			detour := cs(ob, "detour")
+			if stOuter[detour] == nil {
+				continue
+			}
+			if _, seen := stInner[detour]; seen {
+				continue
+			}
+			stInner[detour] = ob
+			mergedSS[cs(ob, "tag")] = true
+		}
+	}
+
 	for _, ob := range rawOutbounds {
 		typ := strings.ToLower(cs(ob, "type"))
 		tag := cs(ob, "tag")
 
 		// Skip internal routing types cleanly.
 		if nonProxyOutbounds[typ] {
+			continue
+		}
+		if typ == "shadowtls" {
+			if inner := stInner[tag]; inner != nil {
+				nodes = append(nodes, mergeSingboxShadowTLS(ob, inner))
+			} else {
+				skipped = append(skipped, fmt.Sprintf("%v", ob))
+			}
+			continue
+		}
+		if mergedSS[tag] {
 			continue
 		}
 
@@ -77,6 +117,30 @@ func parseSingboxJSON(text string) ([]*proxy.Proxy, []string, error) {
 	}
 
 	return nodes, skipped, nil
+}
+
+// mergeSingboxShadowTLS joins the shadowtls outbound with the shadowsocks
+// outbound it carries into one ss node with the canonical plugin wrapper.
+func mergeSingboxShadowTLS(st, ss map[string]any) *proxy.Proxy {
+	p := proxy.New("ss", cs(ss, "tag"), cs(st, "server"), ci(st, "server_port"))
+	p.Set("cipher", cs(ss, "method"))
+	p.Set("password", cs(ss, "password"))
+	opts := map[string]any{}
+	if sni := cs(cmap(st, "tls"), "server_name"); sni != "" {
+		opts["host"] = sni
+	}
+	if pass := cs(st, "password"); pass != "" {
+		opts["password"] = pass
+	}
+	if version := ci(st, "version"); version > 0 {
+		opts["version"] = version
+	}
+	p.Set("plugin", "shadow-tls")
+	p.Set("plugin-opts", opts)
+	if cb(ss, "tcp_fast_open") {
+		p.SetRaw("tfo", true)
+	}
+	return p
 }
 
 func parseSingboxOutbound(typ, tag, server string, port int, ob map[string]any) (*proxy.Proxy, error) {
@@ -209,6 +273,64 @@ func parseSingboxOutbound(typ, tag, server string, port int, ob map[string]any) 
 		extractSingboxTLS(p, cmap(ob, "tls"))
 		return p, nil
 
+	case "snell":
+		psk := cs(ob, "psk")
+		if psk == "" {
+			return nil, fmt.Errorf("snell: missing psk")
+		}
+		p := proxy.New("snell", tag, server, port)
+		p.Set("psk", psk)
+		version := ci(ob, "version")
+		if version == 0 {
+			version = 1
+		}
+		p.SetRaw("version", version)
+		p.Set("userkey", cs(ob, "userkey"))
+		if cb(ob, "reuse") {
+			p.SetRaw("reuse", true)
+		}
+		if cb(ob, "udp") {
+			p.SetRaw("udp", true)
+		}
+		if mode := cs(ob, "obfs_mode"); mode != "" && !strings.EqualFold(mode, "none") {
+			opts := map[string]any{"mode": strings.ToLower(mode)}
+			if host := cs(ob, "obfs_host"); host != "" {
+				opts["host"] = host
+			}
+			p.Set("obfs-opts", opts)
+		}
+		p.Set("mode", cs(ob, "mode"))
+		return p, nil
+
+	case "ssh":
+		p := proxy.New("ssh", tag, server, port)
+		p.Set("username", firstNonEmptyStr(cs(ob, "user"), cs(ob, "username")))
+		p.Set("password", cs(ob, "password"))
+		p.Set("private-key", cs(ob, "private_key"))
+		p.Set("private-key-passphrase", cs(ob, "private_key_passphrase"))
+		if hostKeys := stringList(ob["host_key"]); len(hostKeys) > 0 {
+			p.Set("host-key", hostKeys)
+		}
+		if algs := stringList(ob["host_key_algorithms"]); len(algs) > 0 {
+			p.Set("host-key-algorithms", algs)
+		}
+		return p, nil
+
+	case "naive":
+		p := proxy.New("naive", tag, server, port)
+		p.Set("username", cs(ob, "username"))
+		p.Set("password", cs(ob, "password"))
+		// naive is TLS-only and has no insecure mode; TLS options cover the rest.
+		p.SetRaw("tls", true)
+		if cb(ob, "quic") {
+			p.SetRaw("quic", true)
+		}
+		extractSingboxTLS(p, cmap(ob, "tls"))
+		if v := ci(ob, "insecure_concurrency"); v > 0 {
+			p.Set("insecure-concurrency", v)
+		}
+		return p, nil
+
 	case "socks", "socks5":
 		p := proxy.New("socks5", tag, server, port)
 		p.Set("username", cs(ob, "username"))
@@ -315,6 +437,19 @@ func extractSingboxTransport(p *proxy.Proxy, tr map[string]any) {
 		}
 		p.Set("ws-opts", wsOpts)
 
+	case "httpupgrade":
+		p.Set("network", "ws")
+		wsOpts := map[string]any{"v2ray-http-upgrade": true}
+		if path := cs(tr, "path"); path != "" {
+			wsOpts["path"] = path
+		}
+		if headers := cmap(tr, "headers"); headers != nil {
+			if host := cs(headers, "Host"); host != "" {
+				wsOpts["headers"] = map[string]any{"Host": host}
+			}
+		}
+		p.Set("ws-opts", wsOpts)
+
 	case "grpc":
 		p.Set("network", "grpc")
 		p.Set("grpc-opts", map[string]any{
@@ -376,6 +511,22 @@ func cmap(m map[string]any, key string) map[string]any {
 		return v
 	}
 	return nil
+}
+
+// stringList converts a JSON array of strings into a []string, dropping
+// non-string and empty entries.
+func stringList(v any) []string {
+	items, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	var out []string
+	for _, item := range items {
+		if s, ok := item.(string); ok && strings.TrimSpace(s) != "" {
+			out = append(out, strings.TrimSpace(s))
+		}
+	}
+	return out
 }
 
 func firstNonEmptyStr(vals ...string) string {
