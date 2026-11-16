@@ -17,7 +17,7 @@
 ## 特性
 
 - ✅ **接口兼容**：`/sub?target=clash&url=...&config=...`，老客户端无需改动。
-- ✅ **全协议支持**：Shadowsocks、ShadowsocksR、VMess、VLESS（含 Reality / XTLS-Vision）、Trojan、Hysteria（v1/v2）、TUIC v5、AnyTLS、SOCKS5、**WireGuard**。
+- ✅ **协议覆盖**：Shadowsocks、ShadowsocksR、VMess、VLESS（含 Reality / XTLS-Vision，支持 XHTTP 与 HTTPUpgrade 传输）、Trojan、Hysteria（v1/v2）、TUIC v4/v5、AnyTLS、Snell、ShadowTLS、SSH、naive、Mieru、MASQUE、TrustTunnel、AmneziaWG、SOCKS5、**WireGuard**。各 target 支持的协议见 [docs/compat.md](docs/compat.md)。
 - ✅ **全格式订阅源解析**：自动识别并解析 Clash YAML、sing-box JSON、Surge conf 以及 Base64 分享链接列表，原生兼容 Hiddify 等 sing-box 客户端订阅。
 - ✅ **内置 Web 界面与订阅管理**：单个二进制内嵌，浏览器访问根路径即可使用。提供可视化订阅转换、节点参数勾选、本地订阅库管理（到期时间预警、流量重置日、月均开销折算、批量一键转换、JSON 备份恢复），数据仅保存在浏览器本地，保护隐私安全。
 - ✅ **多输出 target**：`clash`（Clash.Meta / mihomo）、`singbox`、`surge`、`shadowrocket`、`quanx`、`loon`、`v2ray`/`mixed`。

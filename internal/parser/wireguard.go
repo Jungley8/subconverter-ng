@@ -10,10 +10,12 @@ import (
 )
 
 // parseWireGuard handles WireGuard share links. There is no single official
-// URI, so we accept the de-facto form used by several panels:
+// URI, so we accept the de-facto form used by several panels, plus awg:// for
+// AWG links:
 //
 //	wireguard://<private-key>@<host>:<port>?address=<v4>[,<v6>]&publickey=<pk>
 //	           &presharedkey=<psk>&reserved=<a,b,c>&mtu=<n>#name
+//	awg://<private-key>@<host>:<port>?jc=4&jmin=10&jmax=50&s1=1&h1=0x1#name
 //
 // Query keys are matched case-insensitively and tolerate a few spellings
 // (publickey/public-key, presharedkey/pre-shared-key, address/ip). WireGuard
@@ -60,6 +62,15 @@ func parseWireGuard(uri string) (*proxy.Proxy, error) {
 		}
 	}
 
+	if dns := firstQ(q, "dns", "dns-server"); dns != "" {
+		p.Set("dns", splitALPN(dns))
+	}
+	if ka := firstQ(q, "persistent-keepalive", "keepalive"); ka != "" {
+		if n, err := strconv.Atoi(ka); err == nil {
+			p.Set("persistent-keepalive", n)
+		}
+	}
+
 	// reserved=<a,b,c> -> [a,b,c] (ints).
 	if rsv := firstQ(q, "reserved"); rsv != "" {
 		var vals []int
@@ -78,6 +89,12 @@ func parseWireGuard(uri string) (*proxy.Proxy, error) {
 	}
 
 	p.SetRaw("udp", true)
+
+	// AWG obfuscation parameters. Only keys present in the link are copied; the
+	// object is absent for a plain WireGuard node.
+	if opts := awgOptions(q); len(opts) > 0 {
+		p.Set("amnezia-wg-option", opts)
+	}
 	return p, nil
 }
 
@@ -99,4 +116,83 @@ func firstQ(q url.Values, keys ...string) string {
 		}
 	}
 	return ""
+}
+
+// awgKeyKinds maps the normalized (separator-free) AWG query key to its
+// canonical name and value kind. Keys missing here are not AWG options.
+var awgKeyKinds = map[string]struct {
+	name string
+	kind string // "int" | "scalar" | "string" | "bool"
+}{
+	"version": {"version", "int"},
+	"jc":      {"jc", "int"},
+	"jmin":    {"jmin", "int"},
+	"jmax":    {"jmax", "int"},
+	"s1":      {"s1", "int"},
+	"s2":      {"s2", "int"},
+	"s3":      {"s3", "int"},
+	"s4":      {"s4", "int"},
+	"h1":      {"h1", "scalar"},
+	"h2":      {"h2", "scalar"},
+	"h3":      {"h3", "scalar"},
+	"h4":      {"h4", "scalar"},
+	"i1":      {"i1", "scalar"},
+	"i2":      {"i2", "scalar"},
+	"i3":      {"i3", "scalar"},
+	"i4":      {"i4", "scalar"},
+	"i5":      {"i5", "scalar"},
+	"j1":      {"j1", "scalar"},
+	"j2":      {"j2", "scalar"},
+	"j3":      {"j3", "scalar"},
+	"itime":   {"itime", "int"},
+
+	"headerprotectionkey":    {"header-protection-key", "string"},
+	"contentpaddingaddition": {"content-padding-addition", "string"},
+	"rekeyaftertime":         {"rekey-after-time", "int"},
+	"rekeytimeout":           {"rekey-timeout", "int"},
+	"rejectaftertime":        {"reject-after-time", "int"},
+	"keepalivetimeout":       {"keepalive-timeout", "int"},
+	"maxhandshakeattempts":   {"max-handshake-attempts", "int"},
+	"randomtrailers":         {"random-trailers", "bool"},
+	"disablecookies":         {"disable-cookies", "bool"},
+}
+
+// awgOptions collects the AWG query keys into the canonical
+// amnezia-wg-option object. Hyphen and underscore spellings are equivalent.
+func awgOptions(q url.Values) map[string]any {
+	var opts map[string]any
+	for k, vals := range q {
+		if len(vals) == 0 {
+			continue
+		}
+		norm := strings.NewReplacer("-", "", "_", "").Replace(k)
+		spec, ok := awgKeyKinds[norm]
+		if !ok {
+			continue
+		}
+		val := strings.TrimSpace(vals[0])
+		if val == "" {
+			continue
+		}
+		if opts == nil {
+			opts = map[string]any{}
+		}
+		switch spec.kind {
+		case "int":
+			if n, err := strconv.Atoi(val); err == nil {
+				opts[spec.name] = n
+			}
+		case "scalar":
+			if n, err := strconv.Atoi(val); err == nil {
+				opts[spec.name] = n
+			} else {
+				opts[spec.name] = val
+			}
+		case "bool":
+			opts[spec.name] = boolish(val)
+		default:
+			opts[spec.name] = val
+		}
+	}
+	return opts
 }

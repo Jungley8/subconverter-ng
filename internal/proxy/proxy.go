@@ -13,9 +13,14 @@ package proxy
 // have to reach into the map.
 type Proxy struct {
 	Name   string
-	Type   string // ss | vmess | vless | trojan | hysteria2 | tuic
+	Type   string // canonical protocol id (see docs/protocols.md)
 	Server string
 	Port   int
+
+	// Version is the wire-protocol version when incompatible versions share one
+	// canonical type and the Clash map cannot carry the distinction safely.
+	// TUIC uses it: 4 means the token-based v4 handshake, 0/5 means v5.
+	Version int
 
 	// Group is the name from a tag:<name>,<link> source entry; empty when the
 	// source has no tag. GroupID is the source's index: 0-based for url= and

@@ -19,6 +19,7 @@ var singboxProtocolFloor = map[string][2]int{
 	"ss": {1, 0}, "socks5": {1, 0}, "socks": {1, 0}, "vmess": {1, 0},
 	"vless": {1, 0}, "trojan": {1, 0}, "wireguard": {1, 0},
 	"hysteria": {1, 1}, "tuic": {1, 2}, "hysteria2": {1, 5}, "anytls": {1, 12},
+	"ssh": {1, 5}, "naive": {1, 13}, "snell": {1, 14},
 }
 
 // defaultSingboxVersion is the schema used when the target carries no version
@@ -30,9 +31,10 @@ var defaultSingboxVersion = Version{Major: 1, Minor: 14}
 // singboxSchema aggregates the schema switches enabled by the declared sing-box
 // version (based on the official deprecation notes).
 type singboxSchema struct {
-	actions  bool // >=1.11: hijack-dns/reject rule actions, no block/dns-out outbounds
-	newDNS   bool // >=1.12: new DNS server format ({type, server} instead of address URLs)
-	ruleSets bool // >=1.12: geosite/geoip inline fields -> remote rule_set references
+	actions   bool // >=1.11: hijack-dns/reject rule actions, no block/dns-out outbounds
+	newDNS    bool // >=1.12: new DNS server format ({type, server} instead of address URLs)
+	ruleSets  bool // >=1.12: geosite/geoip inline fields -> remote rule_set references
+	endpoints bool // >=1.13: WireGuard moved from outbound to endpoint
 }
 
 // singboxSchemaFor derives the schema switches from the declared version,
@@ -43,9 +45,10 @@ func singboxSchemaFor(opts Options) *singboxSchema {
 		ver = &defaultSingboxVersion
 	}
 	return &singboxSchema{
-		actions:  ver.AtLeast(1, 11),
-		newDNS:   ver.AtLeast(1, 12),
-		ruleSets: ver.AtLeast(1, 12),
+		actions:   ver.AtLeast(1, 11),
+		newDNS:    ver.AtLeast(1, 12),
+		ruleSets:  ver.AtLeast(1, 12),
+		endpoints: ver.AtLeast(1, 13),
 	}
 }
 
@@ -102,12 +105,16 @@ func GenerateSingbox(ctx context.Context, nodes []*proxy.Proxy, cfg *extconfig.C
 	nodes = prepared
 	schema := singboxSchemaFor(opts)
 
-	// Node outbounds.
-	outbounds, emitted, allNames := nodeOutbounds(nodes, opts, res)
+	// Node outbounds and endpoints (WireGuard is an endpoint from 1.13 on).
+	outbounds, endpoints, emitted, allNames := nodeOutbounds(nodes, opts, schema, res)
 
-	// list=true: emit only the outbounds list
+	// list=true: emit only the node sections
 	if opts.ListOnly {
-		b, err := json.MarshalIndent(map[string]any{"outbounds": outbounds}, "", "  ")
+		list := map[string]any{"outbounds": outbounds}
+		if len(endpoints) > 0 {
+			list["endpoints"] = endpoints
+		}
+		b, err := json.MarshalIndent(list, "", "  ")
 		if err != nil {
 			return nil, err
 		}
@@ -212,6 +219,9 @@ func GenerateSingbox(ctx context.Context, nodes []*proxy.Proxy, cfg *extconfig.C
 		"outbounds": outbounds,
 		"route":     route,
 	}
+	if len(endpoints) > 0 {
+		conf["endpoints"] = endpoints
+	}
 
 	b, err := json.MarshalIndent(conf, "", "  ")
 	if err != nil {
@@ -221,12 +231,19 @@ func GenerateSingbox(ctx context.Context, nodes []*proxy.Proxy, cfg *extconfig.C
 	return res, nil
 }
 
-// nodeOutbounds renders one sing-box outbound per node, applying the version
-// gate and recording unsupported nodes in res. emitted/allNames let the group
-// and rule builders skip nodes that never made it into the output.
-func nodeOutbounds(nodes []*proxy.Proxy, opts Options, res *Result) (outbounds []map[string]any, emitted map[string]bool, allNames []string) {
+// nodeOutbounds renders one sing-box node per entry, applying the version gate
+// and recording unsupported nodes in res. WireGuard becomes an endpoint on the
+// 1.13+ schema and an outbound below it. emitted/allNames let the group and rule
+// builders skip nodes that never made it into the output.
+func nodeOutbounds(nodes []*proxy.Proxy, opts Options, schema *singboxSchema, res *Result) (outbounds, endpoints []map[string]any, emitted map[string]bool, allNames []string) {
 	emitted = map[string]bool{}
 	allNames = make([]string, 0, len(nodes))
+	// Derived tags (the ShadowTLS wrapper) must not collide with any node name,
+	// including names later in the list, so reserve every name up front.
+	usedTags := make(map[string]bool, len(nodes))
+	for _, n := range nodes {
+		usedTags[n.Name] = true
+	}
 	for _, n := range nodes {
 		// Version gate: drop protocols the declared sing-box release cannot
 		// render. Skipped nodes stay out of emitted/allNames, so groups and
@@ -237,17 +254,36 @@ func nodeOutbounds(nodes []*proxy.Proxy, opts Options, res *Result) (outbounds [
 					fmt.Sprintf("%s (%s: requires sing-box >= %d.%d)", n.Name, n.Type, floor[0], floor[1]))
 				continue
 			}
+			// ShadowTLS has existed since 1.0, but its v3 handshake only since
+			// 1.3, so the wrapper version decides the floor for a wrapped ss node.
+			if n.Type == "ss" && isShadowTLS(n.Clash) {
+				if _, _, v := shadowTLSOpts(n.Clash); v >= 3 && !opts.TargetVersion.AtLeast(1, 3) {
+					res.SkippedNodes = append(res.SkippedNodes,
+						fmt.Sprintf("%s (%s: shadowtls version %d requires sing-box >= 1.3)", n.Name, n.Type, v))
+					continue
+				}
+			}
 		}
-		ob, ok := nodeSingboxOutbound(n)
+		if reason := singboxSkipReason(n); reason != "" {
+			res.SkippedNodes = append(res.SkippedNodes, n.Name+" ("+n.Type+": "+reason+")")
+			continue
+		}
+		if n.Type == "wireguard" && schema != nil && schema.endpoints {
+			endpoints = append(endpoints, nodeSingboxWireGuardEndpoint(n))
+			emitted[n.Name] = true
+			allNames = append(allNames, n.Name)
+			continue
+		}
+		obs, ok := singboxOutboundsForNode(n, usedTags)
 		if !ok {
 			res.SkippedNodes = append(res.SkippedNodes, n.Name+" ("+n.Type+": unsupported by sing-box generator)")
 			continue
 		}
-		outbounds = append(outbounds, ob)
+		outbounds = append(outbounds, obs...)
 		emitted[n.Name] = true
 		allNames = append(allNames, n.Name)
 	}
-	return outbounds, emitted, allNames
+	return outbounds, endpoints, emitted, allNames
 }
 
 // singboxOutboundRef maps a selector member / rule group to a sing-box outbound
@@ -491,6 +527,9 @@ func nodeSingboxOutbound(n *proxy.Proxy) (map[string]any, bool) {
 		if cc := cs(c, "congestion-controller"); cc != "" {
 			base["congestion_control"] = cc
 		}
+		if mode := cs(c, "udp-relay-mode"); mode != "" {
+			base["udp_relay_mode"] = mode
+		}
 		base["tls"] = singboxTLS(c, getSNI(c), true)
 		return base, true
 
@@ -499,6 +538,15 @@ func nodeSingboxOutbound(n *proxy.Proxy) (map[string]any, bool) {
 		base["password"] = cs(c, "password")
 		base["tls"] = singboxTLS(c, cs(c, "sni"), true)
 		return base, true
+
+	case "snell":
+		return singboxSnellOutbound(n)
+
+	case "ssh":
+		return singboxSSHOutbound(n), true
+
+	case "naive":
+		return singboxNaiveOutbound(n), true
 
 	case "socks5", "socks":
 		base["type"] = "socks"
@@ -583,6 +631,25 @@ func singboxTransport(c map[string]any) map[string]any {
 	switch cs(c, "network") {
 	case "ws":
 		ws := cmap(c, "ws-opts")
+		if isHTTPUpgrade(c) {
+			// sing-box has a dedicated httpupgrade transport; the ws-only flag is
+			// rejected as an unknown field.
+			t := map[string]any{"type": "httpupgrade"}
+			if p := cs(ws, "path"); p != "" {
+				t["path"] = p
+			}
+			if hdr := cmap(ws, "headers"); hdr != nil {
+				if h := cs(hdr, "Host"); h != "" {
+					t["host"] = h
+				}
+				headers := make(map[string]any, len(hdr))
+				for k, v := range hdr {
+					headers[k] = v
+				}
+				t["headers"] = headers
+			}
+			return t
+		}
 		t := map[string]any{"type": "ws"}
 		if p := cs(ws, "path"); p != "" {
 			t["path"] = p

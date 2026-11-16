@@ -75,6 +75,12 @@ func parseVLESS(uri string) (*proxy.Proxy, error) {
 	switch network {
 	case "ws":
 		applyV2RayTransport(p, "ws", q.Get("host"), q.Get("path"), "")
+	case "httpupgrade":
+		applyV2RayTransport(p, "httpupgrade", q.Get("host"), q.Get("path"), "")
+	case "xhttp", "splithttp":
+		if err := applyXHTTPQuery(p, q); err != nil {
+			return nil, err
+		}
 	case "grpc":
 		applyV2RayTransport(p, "grpc", q.Get("host"), q.Get("serviceName"), "")
 	case "h2":

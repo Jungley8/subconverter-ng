@@ -44,7 +44,19 @@ func GenerateSingboxTemplate(ctx context.Context, nodes []*proxy.Proxy, cfg *ext
 	nodes = prepared
 	nodes = dropLocalNodes(nodes, res)
 	res.NodeCount = len(nodes)
-	outbounds, _, _ := nodeOutbounds(nodes, opts, res)
+	schema := singboxSchemaFor(opts)
+	outbounds, endpoints, emitted, _ := nodeOutbounds(nodes, opts, schema, res)
+	if len(endpoints) > 0 {
+		// The template contract injects outbounds only. A WireGuard endpoint has
+		// no outbound form on the 1.13+ schema, so report it instead of writing
+		// a node the client would reject.
+		for _, ep := range endpoints {
+			tag, _ := ep["tag"].(string)
+			res.SkippedNodes = append(res.SkippedNodes,
+				tag+" (wireguard: endpoint cannot be injected into a template)")
+			delete(emitted, tag)
+		}
+	}
 
 	// Fail closed before rendering: an empty injection would leave the
 	// template's trailing comma as a syntax error, and a template without the
@@ -88,6 +100,9 @@ func GenerateSingboxTemplate(ctx context.Context, nodes []*proxy.Proxy, cfg *ext
 		}
 		members := make([]string, 0, len(nodes))
 		for _, n := range nodes {
+			if !emitted[n.Name] {
+				continue
+			}
 			ok, err := re.Match(n.Name)
 			if err != nil {
 				notesErr = fmt.Errorf("%w: NotesName regex %q: %w", ErrTemplateInvalid, pattern, err)

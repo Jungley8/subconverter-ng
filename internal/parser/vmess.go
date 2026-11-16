@@ -3,6 +3,7 @@ package parser
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/Jungley8/subconverter-ng/internal/proxy"
@@ -93,6 +94,20 @@ func applyV2RayTransport(p *proxy.Proxy, network, host, path, headerType string)
 		if len(opts) > 0 {
 			p.Set("ws-opts", opts)
 		}
+	case "httpupgrade":
+		applyHTTPUpgrade(p, host, path)
+	case "xhttp", "splithttp":
+		opts := map[string]any{}
+		if path != "" {
+			opts["path"] = path
+		}
+		if host != "" {
+			opts["host"] = host
+		}
+		p.Set("network", "xhttp")
+		if len(opts) > 0 {
+			p.Set("xhttp-opts", opts)
+		}
 	case "grpc":
 		if path != "" {
 			p.Set("grpc-opts", map[string]any{"grpc-service-name": path})
@@ -109,4 +124,47 @@ func applyV2RayTransport(p *proxy.Proxy, network, host, path, headerType string)
 			p.Set("h2-opts", opts)
 		}
 	}
+}
+
+// applyHTTPUpgrade writes the canonical HTTPUpgrade shape: mihomo stores it as
+// a ws transport with an upgrade flag.
+func applyHTTPUpgrade(p *proxy.Proxy, host, path string) {
+	opts := map[string]any{"v2ray-http-upgrade": true}
+	if path != "" {
+		opts["path"] = path
+	}
+	if host != "" {
+		opts["headers"] = map[string]any{"Host": host}
+	}
+	p.Set("network", "ws")
+	p.Set("ws-opts", opts)
+}
+
+// applyXHTTPQuery writes the canonical xhttp shape. extra carries an
+// url-encoded JSON object with the full xhttp block; explicit query keys win.
+func applyXHTTPQuery(p *proxy.Proxy, q url.Values) error {
+	opts := map[string]any{}
+	if extra := q.Get("extra"); extra != "" {
+		var obj map[string]any
+		if err := json.Unmarshal([]byte(extra), &obj); err != nil {
+			return fmt.Errorf("xhttp extra: %w", err)
+		}
+		for k, v := range obj {
+			opts[k] = v
+		}
+	}
+	if path := q.Get("path"); path != "" {
+		opts["path"] = path
+	}
+	if host := q.Get("host"); host != "" {
+		opts["host"] = host
+	}
+	if mode := q.Get("mode"); mode != "" {
+		opts["mode"] = mode
+	}
+	p.Set("network", "xhttp")
+	if len(opts) > 0 {
+		p.Set("xhttp-opts", opts)
+	}
+	return nil
 }

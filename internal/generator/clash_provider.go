@@ -46,11 +46,17 @@ func GenerateClashProvider(ctx context.Context, localNodes []*proxy.Proxy, cfg *
 
 	proxies := make([]map[string]any, 0, len(localNodes))
 	localNames := make([]string, 0, len(localNodes))
+	skipped := map[string]bool{}
 	for _, n := range localNodes {
+		if reason := clashUnsupportedReason(n); reason != "" {
+			res.SkippedNodes = append(res.SkippedNodes, n.Name+" ("+n.Type+": "+reason+")")
+			skipped[n.Name] = true
+			continue
+		}
 		proxies = append(proxies, n.Clash)
 		localNames = append(localNames, n.Name)
 	}
-	res.NodeCount = len(localNodes)
+	res.NodeCount = len(proxies)
 
 	providerNames := make([]string, 0, len(opts.ProviderURLs))
 	providers := make(map[string]any, len(opts.ProviderURLs))
@@ -94,6 +100,7 @@ func GenerateClashProvider(ctx context.Context, localNodes []*proxy.Proxy, cfg *
 	if err != nil {
 		return nil, err
 	}
+	groups = dropSkippedGroupRefs(groups, skipped, res)
 	var rules []string
 	if len(groups) == 0 {
 		// No external config: without a group the config is unroutable, so
@@ -165,6 +172,29 @@ func GenerateClashProvider(ctx context.Context, localNodes []*proxy.Proxy, cfg *
 	}
 	res.Output = unescapeUnicode(y)
 	return res, nil
+}
+
+// dropSkippedGroupRefs removes local node names that the provider config does
+// not receive. Provider names and group references are never in skipped, so
+// they survive; a group with nothing left and no provider falls back to DIRECT.
+func dropSkippedGroupRefs(groups []groupOut, skipped map[string]bool, res *Result) []groupOut {
+	if len(skipped) == 0 {
+		return groups
+	}
+	for i := range groups {
+		members := make([]string, 0, len(groups[i].Proxies))
+		for _, m := range groups[i].Proxies {
+			if !skipped[m] {
+				members = append(members, m)
+			}
+		}
+		if len(members) == 0 && len(groups[i].Use) == 0 {
+			members = []string{"DIRECT"}
+			res.EmptyGroups = append(res.EmptyGroups, groups[i].Name)
+		}
+		groups[i].Proxies = members
+	}
+	return groups
 }
 
 // buildGroupsProvider maps INI proxy-group definitions onto provider-mode

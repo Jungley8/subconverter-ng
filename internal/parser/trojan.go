@@ -44,6 +44,12 @@ func parseTrojan(uri string) (*proxy.Proxy, error) {
 	case "ws":
 		p.Set("network", "ws")
 		applyV2RayTransport(p, "ws", q.Get("host"), q.Get("path"), "")
+	case "httpupgrade":
+		applyV2RayTransport(p, "httpupgrade", q.Get("host"), q.Get("path"), "")
+	case "xhttp", "splithttp":
+		if err := applyXHTTPQuery(p, q); err != nil {
+			return nil, err
+		}
 	case "grpc":
 		p.Set("network", "grpc")
 		applyV2RayTransport(p, "grpc", q.Get("host"), q.Get("serviceName"), "")

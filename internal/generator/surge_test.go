@@ -67,12 +67,12 @@ func TestGenerateSurge(t *testing.T) {
 		}
 	}
 
-	// VLESS is unsupported by Surge: skipped, not emitted.
-	if strings.Contains(out, "US = vless") {
-		t.Error("surge should not emit vless")
+	// Surge renders raw TCP VLESS (TLS in this case).
+	if !strings.Contains(out, "US = vless, us.example.com, 443, username=uuid-2, tls=true, sni=us.example.com") {
+		t.Errorf("surge should emit raw vless:\n%s", out)
 	}
-	if len(res.SkippedNodes) != 1 || !strings.Contains(res.SkippedNodes[0], "vless") {
-		t.Errorf("SkippedNodes = %v, want one vless entry", res.SkippedNodes)
+	if len(res.SkippedNodes) != 0 {
+		t.Errorf("SkippedNodes = %v, want none", res.SkippedNodes)
 	}
 	// GEOSITE is not a Surge rule type: dropped.
 	if strings.Contains(out, "GEOSITE") {

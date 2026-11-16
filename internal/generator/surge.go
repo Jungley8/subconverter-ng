@@ -53,12 +53,13 @@ func generateSurgeFamily(ctx context.Context, flavor surgeFlavor, nodes []*proxy
 
 	// Render proxy lines, tracking which node names actually made it in so empty
 	// groups (and groups referencing skipped nodes) stay loadable.
+	renderer := newSurgeRenderer(flavor)
 	emitted := map[string]bool{}
 	allNames := make([]string, 0, len(nodes))
 	for _, n := range nodes {
-		line, ok := surgeNodeLine(flavor, n)
-		if !ok {
-			res.SkippedNodes = append(res.SkippedNodes, n.Name+" ("+n.Type+": unsupported by target)")
+		line, reason := renderer.nodeLine(n)
+		if reason != "" {
+			res.SkippedNodes = append(res.SkippedNodes, n.Name+" ("+n.Type+": "+reason+")")
 			continue
 		}
 		b.WriteString(line)
@@ -66,17 +67,20 @@ func generateSurgeFamily(ctx context.Context, flavor surgeFlavor, nodes []*proxy
 		emitted[n.Name] = true
 		allNames = append(allNames, n.Name)
 	}
+	b.WriteString(renderer.sectionsBlock())
 
-	// list=true: emit only the [Proxy] section
+	// list=true: emit only the [Proxy] section (plus any sections it references)
 	if opts.ListOnly {
 		var listB strings.Builder
 		listB.WriteString("[Proxy]\n")
+		listRenderer := newSurgeRenderer(flavor)
 		for _, n := range nodes {
-			if line, ok := surgeNodeLine(flavor, n); ok {
+			if line, reason := listRenderer.nodeLine(n); reason == "" {
 				listB.WriteString(line)
 				listB.WriteByte('\n')
 			}
 		}
+		listB.WriteString(listRenderer.sectionsBlock())
 		res.Output = []byte(listB.String())
 		return res, nil
 	}
@@ -179,19 +183,59 @@ func formatSurgeRule(r Rule) (string, bool) {
 	return s, true
 }
 
-// surgeNodeLine renders one node's proxy line for the given flavor. ok is false
-// when the flavor has no representation for the protocol.
-func surgeNodeLine(flavor surgeFlavor, n *proxy.Proxy) (string, bool) {
+// nodeLine renders one node's proxy line for the renderer's flavor. A non-empty
+// reason means the flavor cannot represent the node; the caller records it in
+// SkippedNodes. Surge WireGuard sections are collected as a side effect.
+func (r *surgeRenderer) nodeLine(n *proxy.Proxy) (string, string) {
+	flavor := r.flavor
 	if flavor == flavorLoon {
-		return loonNodeLine(n)
+		if n.Type == "tuic" && n.Version == 4 {
+			return "", "TUIC v4 is not supported"
+		}
+		if isShadowTLS(n.Clash) {
+			return "", "shadow-tls is not supported"
+		}
+		if isXHTTP(n.Clash) {
+			return "", "xhttp transport is not supported"
+		}
+		switch n.Type {
+		case "vmess", "vless", "trojan":
+			if isHTTPUpgrade(n.Clash) {
+				return "", "httpupgrade is not supported"
+			}
+		}
+		if line, ok := loonNodeLine(n); ok {
+			return line, ""
+		}
+		return "", "unsupported by target"
 	}
 	c := n.Clash
 	server := cs(c, "server")
 	port := strconv.Itoa(ci(c, "port"))
 	head := n.Name + " = "
 
+	// Only Surge can carry the HTTPUpgrade upgrade request. Shadowrocket and
+	// Loon would silently fall back to plain WebSocket, so skip the node.
+	switch n.Type {
+	case "vmess", "vless", "trojan":
+		if flavor != flavorSurge && isHTTPUpgrade(n.Clash) {
+			return "", "httpupgrade is not supported"
+		}
+	}
+	// Only the VMess/VLESS/Trojan families carry a share-link transport here;
+	// masque's "network" is its own QUIC/H2 knob and must not be gated.
+	switch n.Type {
+	case "vmess", "vless", "trojan":
+		if reason := surgeTransportSkip(flavor, n.Type, cs(c, "network")); reason != "" {
+			return "", reason
+		}
+	}
+
 	switch n.Type {
 	case "ss":
+		if isShadowTLS(c) && flavor != flavorSurge {
+			return "", "shadow-tls is not supported"
+		}
 		parts := []string{"ss", server, port, "encrypt-method=" + cs(c, "cipher"), "password=" + cs(c, "password")}
 		if cb(c, "udp") {
 			parts = append(parts, "udp-relay=true")
@@ -203,10 +247,13 @@ func surgeNodeLine(flavor surgeFlavor, n *proxy.Proxy) (string, bool) {
 				parts = append(parts, "obfs-host="+h)
 			}
 		}
+		if flavor == flavorSurge && isShadowTLS(c) {
+			parts = append(parts, surgeShadowTLSParams(c)...)
+		}
 		if cb(c, "tfo") {
 			parts = append(parts, "tfo=true")
 		}
-		return head + strings.Join(parts, ", "), true
+		return head + strings.Join(parts, ", "), ""
 
 	case "vmess":
 		parts := []string{"vmess", server, port, "username=" + cs(c, "uuid")}
@@ -214,14 +261,14 @@ func surgeNodeLine(flavor surgeFlavor, n *proxy.Proxy) (string, bool) {
 			parts = append(parts, "vmess-aead=true")
 		}
 		parts = append(parts, surgeTLSParts(c)...)
-		parts = append(parts, surgeWSParts(c)...)
+		parts = append(parts, surgeTransportParts(flavor, c)...)
 		if cb(c, "udp") {
 			parts = append(parts, "udp-relay=true")
 		}
 		if cb(c, "tfo") {
 			parts = append(parts, "tfo=true")
 		}
-		return head + strings.Join(parts, ", "), true
+		return head + strings.Join(parts, ", "), ""
 
 	case "trojan":
 		parts := []string{"trojan", server, port, "password=" + cs(c, "password")}
@@ -231,14 +278,14 @@ func surgeNodeLine(flavor surgeFlavor, n *proxy.Proxy) (string, bool) {
 		if cb(c, "skip-cert-verify") {
 			parts = append(parts, "skip-cert-verify=true")
 		}
-		parts = append(parts, surgeWSParts(c)...)
+		parts = append(parts, surgeTransportParts(flavor, c)...)
 		if cb(c, "udp") {
 			parts = append(parts, "udp-relay=true")
 		}
 		if cb(c, "tfo") {
 			parts = append(parts, "tfo=true")
 		}
-		return head + strings.Join(parts, ", "), true
+		return head + strings.Join(parts, ", "), ""
 
 	case "hysteria2":
 		parts := []string{"hysteria2", server, port, "password=" + cs(c, "password")}
@@ -248,11 +295,12 @@ func surgeNodeLine(flavor surgeFlavor, n *proxy.Proxy) (string, bool) {
 		if cb(c, "skip-cert-verify") {
 			parts = append(parts, "skip-cert-verify=true")
 		}
-		return head + strings.Join(parts, ", "), true
+		parts = append(parts, surgeHysteria2ObfsParts(flavor, c)...)
+		return head + strings.Join(parts, ", "), ""
 
 	case "hysteria":
 		if flavor != flavorShadowrocket {
-			return "", false
+			return "", "hysteria is Shadowrocket-only"
 		}
 		parts := []string{"hysteria", server, port}
 		if auth := cs(c, "auth-str"); auth != "" {
@@ -282,56 +330,76 @@ func surgeNodeLine(flavor surgeFlavor, n *proxy.Proxy) (string, bool) {
 		if cb(c, "tfo") {
 			parts = append(parts, "tfo=true")
 		}
-		return head + strings.Join(parts, ", "), true
+		return head + strings.Join(parts, ", "), ""
 
 	case "vless":
-		// Surge has no VLESS; Shadowrocket does.
-		if flavor != flavorShadowrocket {
-			return "", false
-		}
 		parts := []string{"vless", server, port, "username=" + cs(c, "uuid")}
-		parts = append(parts, surgeTLSParts(c)...)
 		ro := cmap(c, "reality-opts")
-		if len(ro) > 0 {
-			parts = append(parts, "reality=true")
+		if len(ro) > 0 && flavor == flavorSurge {
+			// Surge turns REALITY on with reality-public-key and treats it as
+			// TLS; writing tls=true alongside it is not needed.
+			if sni := getSNI(c); sni != "" {
+				parts = append(parts, "sni="+sni)
+			}
+			if cb(c, "skip-cert-verify") {
+				parts = append(parts, "skip-cert-verify=true")
+			}
 			if pbk := cs(ro, "public-key"); pbk != "" {
-				parts = append(parts, "public-key="+pbk)
+				parts = append(parts, "reality-public-key="+pbk)
 			}
 			if sid := cs(ro, "short-id"); sid != "" {
-				parts = append(parts, "short-id="+sid)
+				parts = append(parts, "reality-short-id="+sid)
 			}
-			if fp := cs(c, "client-fingerprint"); fp != "" {
-				parts = append(parts, "fingerprint="+fp)
+		} else {
+			parts = append(parts, surgeTLSParts(c)...)
+			if flavor == flavorShadowrocket && len(ro) > 0 {
+				parts = append(parts, "reality=true")
+				if pbk := cs(ro, "public-key"); pbk != "" {
+					parts = append(parts, "public-key="+pbk)
+				}
+				if sid := cs(ro, "short-id"); sid != "" {
+					parts = append(parts, "short-id="+sid)
+				}
+				if fp := cs(c, "client-fingerprint"); fp != "" {
+					parts = append(parts, "fingerprint="+fp)
+				}
 			}
 		}
 		if flow := cs(c, "flow"); flow != "" {
 			parts = append(parts, "flow="+flow)
 		}
-		parts = append(parts, surgeWSParts(c)...)
+		parts = append(parts, surgeTransportParts(flavor, c)...)
 		if cb(c, "tfo") {
 			parts = append(parts, "tfo=true")
 		}
-		return head + strings.Join(parts, ", "), true
+		return head + strings.Join(parts, ", "), ""
 
 	case "tuic":
-		if flavor != flavorShadowrocket {
-			return "", false
+		if flavor == flavorSurge {
+			// Surge v5 is tuic-v5 with uuid+password; v4 is the token form.
+			if n.Version == 4 {
+				parts := []string{"tuic", server, port, "token=" + cs(c, "password")}
+				parts = append(parts, surgeTUICTLSParts(c)...)
+				return head + strings.Join(parts, ", "), ""
+			}
+			parts := []string{"tuic-v5", server, port, "uuid=" + cs(c, "uuid"), "password=" + cs(c, "password")}
+			parts = append(parts, surgeTUICTLSParts(c)...)
+			return head + strings.Join(parts, ", "), ""
 		}
+		if n.Version == 4 {
+			return "", "TUIC v4 is not supported"
+		}
+		// Shadowrocket keeps its legacy tuic+token line.
 		parts := []string{"tuic", server, port, "token=" + cs(c, "password")}
-		if sni := getSNI(c); sni != "" {
-			parts = append(parts, "sni="+sni)
-		}
-		if alpn := joinAny(c["alpn"]); alpn != "" {
-			parts = append(parts, "alpn="+alpn)
-		}
-		if cb(c, "skip-cert-verify") {
-			parts = append(parts, "skip-cert-verify=true")
-		}
-		return head + strings.Join(parts, ", "), true
+		parts = append(parts, surgeTUICTLSParts(c)...)
+		return head + strings.Join(parts, ", "), ""
 
 	case "wireguard":
-		if flavor != flavorShadowrocket {
-			return "", false
+		if hasAmneziaWG(c) {
+			return "", "AWG obfuscation is not supported"
+		}
+		if flavor == flavorSurge {
+			return r.surgeWireGuardPolicy(n)
 		}
 		parts := []string{"wireguard", server, port}
 		if priv := cs(c, "private-key"); priv != "" {
@@ -359,7 +427,7 @@ func surgeNodeLine(flavor surgeFlavor, n *proxy.Proxy) (string, bool) {
 			}
 			parts = append(parts, "reserved="+strings.Join(rsvStrs, ","))
 		}
-		return head + strings.Join(parts, ", "), true
+		return head + strings.Join(parts, ", "), ""
 
 	case "socks5", "socks":
 		parts := []string{"socks5", server, port}
@@ -375,7 +443,7 @@ func surgeNodeLine(flavor surgeFlavor, n *proxy.Proxy) (string, bool) {
 		if cb(c, "tfo") {
 			parts = append(parts, "tfo=true")
 		}
-		return head + strings.Join(parts, ", "), true
+		return head + strings.Join(parts, ", "), ""
 
 	case "http":
 		proto := "http"
@@ -400,9 +468,58 @@ func surgeNodeLine(flavor surgeFlavor, n *proxy.Proxy) (string, bool) {
 		if cb(c, "tfo") {
 			parts = append(parts, "tfo=true")
 		}
-		return head + strings.Join(parts, ", "), true
+		return head + strings.Join(parts, ", "), ""
+
+	case "snell":
+		if cs(c, "psk") == "" {
+			return "", "snell needs a psk"
+		}
+		if isShadowTLS(c) && flavor != flavorSurge {
+			return "", "shadow-tls is not supported"
+		}
+		return head + strings.Join(surgeSnellParts(c), ", "), ""
+
+	case "anytls":
+		if flavor != flavorSurge {
+			return "", "anytls is Surge-only"
+		}
+		if cs(c, "password") == "" {
+			return "", "anytls needs a password"
+		}
+		return head + strings.Join(surgeAnytlsParts(c), ", "), ""
+
+	case "ssh":
+		if flavor != flavorSurge {
+			return "", "ssh is Surge-only"
+		}
+		parts, reason := surgeSSHParts(c)
+		if reason != "" {
+			return "", reason
+		}
+		return head + strings.Join(parts, ", "), ""
+
+	case "masque":
+		if flavor != flavorSurge {
+			return "", "masque is Surge-only"
+		}
+		return head + strings.Join(surgeMasqueParts(c), ", "), ""
+
+	case "trusttunnel":
+		if flavor != flavorSurge {
+			return "", "trust-tunnel is Surge-only"
+		}
+		if cs(c, "username") == "" || cs(c, "password") == "" {
+			return "", "trust-tunnel needs a username and password"
+		}
+		return head + strings.Join(surgeTrustTunnelParts(c), ", "), ""
+
+	case "naive":
+		return "", "naive is not supported by the surge family"
+
+	case "mieru":
+		return "", "mieru is not supported by the surge family"
 	}
-	return "", false
+	return "", "unsupported by target"
 }
 
 // surgeTLSParts emits tls/sni/skip-cert-verify params common to vmess/vless.
@@ -513,6 +630,7 @@ func loonNodeLine(n *proxy.Proxy) (string, bool) {
 		if cb(c, "skip-cert-verify") {
 			parts = append(parts, "skip-cert-verify=true")
 		}
+		parts = append(parts, surgeHysteria2ObfsParts(flavorLoon, c)...)
 		return head + strings.Join(parts, ","), true
 
 	case "hysteria":
@@ -538,6 +656,9 @@ func loonNodeLine(n *proxy.Proxy) (string, bool) {
 		return head + strings.Join(parts, ","), true
 
 	case "tuic":
+		if n.Version == 4 {
+			return "", false
+		}
 		parts := []string{"TUIC", server, port, q(cs(c, "uuid")), q(cs(c, "password"))}
 		if sni := getSNI(c); sni != "" {
 			parts = append(parts, "sni="+sni)
@@ -554,6 +675,9 @@ func loonNodeLine(n *proxy.Proxy) (string, bool) {
 		return head + strings.Join(parts, ","), true
 
 	case "wireguard":
+		if hasAmneziaWG(c) {
+			return "", false
+		}
 		parts := []string{"WireGuard", server, port, "private-key=" + q(cs(c, "private-key")), "public-key=" + q(cs(c, "public-key"))}
 		if ip := cs(c, "ip"); ip != "" {
 			parts = append(parts, "ip="+ip)

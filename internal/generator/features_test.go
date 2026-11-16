@@ -406,13 +406,24 @@ func TestWireguardAllTargets(t *testing.T) {
 		t.Fatalf("v2ray wireguard share link mismatch: %s", v2decoded)
 	}
 
-	// Surge skips wireguard (not supported inline)
+	// Surge renders WireGuard as a policy plus a [WireGuard ...] section.
 	surge, err := GenerateSurge(context.Background(), []*proxy.Proxy{node}, cfg, f, Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(surge.SkippedNodes) != 1 {
-		t.Errorf("surge should skip unsupported wireguard: %v", surge.SkippedNodes)
+	if len(surge.SkippedNodes) != 0 {
+		t.Errorf("surge should emit wireguard, skipped: %v", surge.SkippedNodes)
+	}
+	for _, want := range []string{
+		"WG-Node = wireguard, section-name=WG-Node",
+		"[WireGuard WG-Node]",
+		"self-ip = 10.0.0.2",
+		"self-ip-v6 = fd00::2",
+		"peer = (public-key = pubkey, allowed-ips = \"0.0.0.0/0, ::/0\", endpoint = 1.2.3.4:51820, preshared-key = psk, keepalive = 30)",
+	} {
+		if !strings.Contains(string(surge.Output), want) {
+			t.Errorf("surge wireguard missing %q:\n%s", want, surge.Output)
+		}
 	}
 }
 

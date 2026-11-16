@@ -20,6 +20,39 @@ This repository is a Go rewrite of [tindy2013/subconverter](https://github.com/t
 | `target=ssd` | Emit an SSD subscription |
 | `target=singbox/1.13` | Gate protocols and schema by the target kernel version |
 
+## Protocol and target support
+
+This table shows how each target handles the new protocols and transports. The converter drops a node the target does not support, and logs it.
+
+| Protocol / feature | clash (mihomo) | sing-box | Surge | Shadowrocket | Loon | v2ray link |
+|---|---|---|---|---|---|---|
+| Snell | Emits | v4/v6 only, minimum 1.14 | Emits | Emits | — | Emits |
+| ShadowTLS | Emits (native) | ss + shadowtls chain | ss/snell parameters | — | — | ss plugin |
+| SSH | Emits | Emits, minimum 1.5 | Emits | — | — | Emits |
+| naive | Skips (mihomo has no naive) | Emits, minimum 1.13 | — | — | — | Emits |
+| Mieru | Emits | Skips | — | — | — | — |
+| MASQUE | Emits | Skips (sing-box does not treat it as a node) | Emits | — | — | — |
+| TrustTunnel | Emits | Skips | Emits | — | — | — |
+| XHTTP | Emits | Skips node | VLESS only | — | — | VLESS/VMess/Trojan |
+| HTTPUpgrade | Emits | Emits | VLESS/VMess/Trojan | — | — | VLESS/VMess |
+| AmneziaWG | Emits | Skips node | Skips node | Skips node | Skips node | Emits parameters |
+| TUIC v4 | Skips (v5 only) | Skips (v5 only) | Emits `tuic` + token | — | — | Emits v4 link |
+| AnyTLS share link | Emits | Emits | Emits | — | — | Emits |
+
+Legend: "Emits" means the target produces this protocol. "Skips" means the converter drops the node and logs it. A dash means the target does not provide this protocol.
+
+- Juicity is not supported. No target client loads it.
+- Mieru works in mihomo only. MASQUE and TrustTunnel work in mihomo and Surge only.
+- Only sing-box loads naive in a target config. The clash target skips naive nodes.
+- Only the Surge target loads TUIC v4 with a token handshake. mihomo and sing-box support TUIC v5 only.
+- Only mihomo loads AmneziaWG in a target config.
+- sing-box skips XHTTP nodes.
+- Surge uses XHTTP for VLESS only.
+- A number in the sing-box column is the minimum sing-box version.
+- sing-box 1.13 and later write WireGuard as an endpoint. Older releases use the legacy outbound.
+- A MASQUE node read from Surge has no ECDSA key pair. The clash target skips it.
+- Shadowrocket and Loon skip HTTPUpgrade nodes.
+
 ## Not supported
 
 | Upstream feature | Note |

@@ -12,20 +12,27 @@ import (
 // typeNames maps our protocol ids to the names upstream subconverter matches
 // with !!TYPE=.
 var typeNames = map[string]string{
-	"ss":        "SS",
-	"ssr":       "SSR",
-	"vmess":     "VMESS",
-	"vless":     "VLESS",
-	"trojan":    "TROJAN",
-	"snell":     "SNELL",
-	"http":      "HTTP",
-	"https":     "HTTPS",
-	"socks5":    "SOCKS5",
-	"wireguard": "WIREGUARD",
-	"hysteria":  "HYSTERIA",
-	"hysteria2": "HYSTERIA2",
-	"tuic":      "TUIC",
-	"anytls":    "ANYTLS",
+	"ss":          "SS",
+	"ssr":         "SSR",
+	"vmess":       "VMESS",
+	"vless":       "VLESS",
+	"trojan":      "TROJAN",
+	"snell":       "SNELL",
+	"http":        "HTTP",
+	"https":       "HTTPS",
+	"socks5":      "SOCKS5",
+	"wireguard":   "WIREGUARD",
+	"hysteria":    "HYSTERIA",
+	"hysteria2":   "HYSTERIA2",
+	"tuic":        "TUIC",
+	"anytls":      "ANYTLS",
+	"ssh":         "SSH",
+	"naive":       "NAIVE",
+	"mieru":       "MIERU",
+	"masque":      "MASQUE",
+	"trusttunnel": "TRUSTTUNNEL",
+	"awg":         "AWG",
+	"tuic4":       "TUIC4",
 }
 
 func typeName(t string) string {
@@ -53,6 +60,12 @@ func attrTypeName(n *proxy.Proxy) string {
 				return "HTTPS"
 			}
 		}
+	}
+	if n.Type == "wireguard" && hasAmneziaWG(n.Clash) {
+		return "AWG"
+	}
+	if n.Type == "tuic" && n.Version == 4 {
+		return "TUIC4"
 	}
 	return typeName(n.Type)
 }
