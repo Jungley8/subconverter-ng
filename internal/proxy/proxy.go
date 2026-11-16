@@ -19,7 +19,8 @@ type Proxy struct {
 
 	// Group is the name from a tag:<name>,<link> source entry; empty when the
 	// source has no tag. GroupID is the source's index: 0-based for url= and
-	// negative for insert_url. Both feed !!GROUP / !!GROUPID / !!INSERT.
+	// negative for insert_url. Group feeds !!GROUP; GroupID feeds !!GROUPID
+	// and !!INSERT.
 	Group   string
 	GroupID int
 

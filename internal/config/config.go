@@ -189,7 +189,15 @@ func (c *Config) Validate() error {
 		if trimmed == "" {
 			return errors.New("config: insert.urls cannot contain empty entries")
 		}
-		u, err := url.Parse(trimmed)
+		link := trimmed
+		if rest, ok := strings.CutPrefix(trimmed, "tag:"); ok {
+			name, tail, found := strings.Cut(rest, ",")
+			if !found || strings.TrimSpace(name) == "" || strings.TrimSpace(tail) == "" {
+				return fmt.Errorf("config: invalid insert.urls entry %q: tag must be tag:<name>,<url>", raw)
+			}
+			link = strings.TrimSpace(tail)
+		}
+		u, err := url.Parse(link)
 		if err != nil {
 			return fmt.Errorf("config: invalid insert.urls entry %q: %w", raw, err)
 		}
