@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/Jungley8/subconverter-ng/internal/extconfig"
+	"github.com/Jungley8/subconverter-ng/internal/parser"
 	"github.com/Jungley8/subconverter-ng/internal/proxy"
 )
 
@@ -177,6 +178,17 @@ func TestSurgeVLESS_Transports(t *testing.T) {
 	grpc.Clash["network"] = "grpc"
 	grpc.Clash["grpc-opts"] = map[string]any{"grpc-service-name": "svc"}
 
+	raw := proxy.New("vless", "V-RAW", "v.example.com", 443)
+	raw.Clash["uuid"] = "uuid-v"
+	raw.Clash["tls"] = true
+	raw.Clash["sni"] = "v.example.com"
+
+	reality := proxy.New("vless", "V-REALITY", "v.example.com", 443)
+	reality.Clash["uuid"] = "uuid-v"
+	reality.Clash["servername"] = "www.microsoft.com"
+	reality.Clash["flow"] = "xtls-rprx-vision"
+	reality.Clash["reality-opts"] = map[string]any{"public-key": "PUB", "short-id": "ab"}
+
 	tests := []struct {
 		name string
 		node *proxy.Proxy
@@ -201,6 +213,17 @@ func TestSurgeVLESS_Transports(t *testing.T) {
 			name: "grpc",
 			node: grpc,
 			want: "V-GRPC = vless, v.example.com, 443, username=uuid-v, grpc=true, grpc-service-name=svc",
+		},
+		{
+			name: "raw-tls",
+			node: raw,
+			want: "V-RAW = vless, v.example.com, 443, username=uuid-v, tls=true, sni=v.example.com",
+		},
+		{
+			// Surge treats REALITY as its own security mode, not tls=true.
+			name: "reality",
+			node: reality,
+			want: "V-REALITY = vless, v.example.com, 443, username=uuid-v, sni=www.microsoft.com, reality-public-key=PUB, reality-short-id=ab, flow=xtls-rprx-vision",
 		},
 	}
 
@@ -332,7 +355,7 @@ func TestSurgeWireGuardSections(t *testing.T) {
 	proxyIdx := strings.Index(out, "[Proxy]")
 	sectionIdx := strings.Index(out, "[WireGuard WG]")
 	groupIdx := strings.Index(out, "[Proxy Group]")
-	if !(proxyIdx < sectionIdx && sectionIdx < groupIdx) {
+	if proxyIdx >= sectionIdx || sectionIdx >= groupIdx {
 		t.Errorf("WireGuard section order wrong: proxy=%d section=%d group=%d\n%s", proxyIdx, sectionIdx, groupIdx, out)
 	}
 
@@ -389,9 +412,6 @@ func TestSurgeFamilySkips(t *testing.T) {
 	amnezia.Clash["amnezia-wg-option"] = map[string]any{"jc": 4}
 	sshKeyOnly := proxy.New("ssh", "SHK", "ssh.example.com", 22)
 	sshKeyOnly.Clash["private-key"] = "PRIV"
-	vlessTCP := proxy.New("vless", "V-TCP", "v.example.com", 443)
-	vlessTCP.Clash["uuid"] = "uuid-v"
-	vlessTCP.Clash["tls"] = true
 	vlessXHTTP := proxy.New("vless", "V-XH", "v.example.com", 443)
 	vlessXHTTP.Clash["uuid"] = "uuid-v"
 	vlessXHTTP.Clash["network"] = "xhttp"
@@ -408,7 +428,6 @@ func TestSurgeFamilySkips(t *testing.T) {
 		{"amneziawg shadowrocket", flavorShadowrocket, amnezia, "AWG obfuscation is not supported"},
 		{"amneziawg loon", flavorLoon, amnezia, "unsupported by target"},
 		{"ssh key only", flavorSurge, sshKeyOnly, "Keystore"},
-		{"vless tcp surge", flavorSurge, vlessTCP, "Surge VLESS needs ws"},
 		{"vless xhttp shadowrocket", flavorShadowrocket, vlessXHTTP, "xhttp transport is not supported"},
 		{"vless xhttp loon", flavorLoon, vlessXHTTP, "xhttp transport is not supported"},
 	}
@@ -466,6 +485,42 @@ func TestSurgeOnlyProtocolsSkippedElsewhere(t *testing.T) {
 		}
 		if len(res.SkippedNodes) != 1 {
 			t.Errorf("%s on Shadowrocket: SkippedNodes = %v", typ, res.SkippedNodes)
+		}
+	}
+}
+
+// TestSurgeWireGuardRoundTrip renders a WireGuard node as a Surge policy plus
+// [WireGuard ...] section and parses it back. It locks the section syntax to the
+// parser so the two sides cannot drift.
+func TestSurgeWireGuardRoundTrip(t *testing.T) {
+	n := proxy.New("wireguard", "WG-RT", "wg.example.com", 51820)
+	n.Set("private-key", "priv")
+	n.Set("public-key", "pub")
+	n.Set("pre-shared-key", "psk")
+	n.Set("ip", "10.0.0.2")
+	n.Set("ipv6", "fd00::2")
+	n.Set("mtu", 1280)
+	n.Set("dns", []string{"1.1.1.1"})
+	n.Set("allowed-ips", "0.0.0.0/0, ::/0")
+	n.Set("persistent-keepalive", 25)
+
+	_, out := renderSurgeFamily(t, flavorSurge, []*proxy.Proxy{n}, Options{ListOnly: true})
+	nodes, _, err := parser.Parse([]byte(out))
+	if err != nil {
+		t.Fatalf("parse rendered surge: %v", err)
+	}
+	if len(nodes) != 1 {
+		t.Fatalf("parsed %d nodes, want 1:\n%s", len(nodes), out)
+	}
+	got := nodes[0]
+	for k, want := range map[string]any{
+		"server": "wg.example.com", "port": 51820,
+		"private-key": "priv", "public-key": "pub", "pre-shared-key": "psk",
+		"ip": "10.0.0.2", "ipv6": "fd00::2", "mtu": 1280,
+		"allowed-ips": "0.0.0.0/0, ::/0", "persistent-keepalive": 25,
+	} {
+		if got.Clash[k] != want {
+			t.Errorf("round-trip %s = %v, want %v; node=%v", k, got.Clash[k], want, got.Clash)
 		}
 	}
 }

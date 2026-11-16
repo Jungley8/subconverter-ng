@@ -67,6 +67,7 @@ func fixtures(t *testing.T) convert.Fetcher {
 	files := mapFetcher{}
 	for _, name := range []string{
 		"nodes.yaml",
+		"protocols.yaml",
 		"acl4ssr.ini",
 		"acl4ssr-remote.ini",
 		"singbox.ini",
@@ -374,5 +375,50 @@ func TestClashClientAcceptsOutput(t *testing.T) {
 					bin.major, bin.minor, bin.patch, err, msg, out)
 			}
 		})
+	}
+}
+
+// TestSingboxProtocolMatrix feeds the modern-protocol fixture to the current
+// sing-box. Nodes the client cannot render are skipped by the generator, so a
+// pass proves both the emitted outbounds and the skip list are consistent.
+func TestSingboxProtocolMatrix(t *testing.T) {
+	clients := singboxClients(t)
+	bin := pickSingbox(clients, 1, 14)
+	if bin == nil {
+		t.Skip("no sing-box 1.14 installed: set CONFORMANCE_SINGBOX=/path/to/sing-box")
+	}
+
+	req := convert.Request{
+		Target:    "singbox",
+		SubURLs:   []string{fixtureBase + "/protocols.yaml"},
+		ConfigURL: fixtureBase + "/singbox.ini",
+	}
+	out := run(t, fixtures(t), req)
+
+	path := writeConfig(t, "config.json", out)
+	cmd := exec.Command(bin.path, "check", "-c", path)
+	if msg, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("sing-box %d.%d.%d check failed: %v\n%s\n--- rendered config ---\n%s",
+			bin.major, bin.minor, bin.patch, err, msg, out)
+	}
+}
+
+// TestClashProtocolMatrix feeds the modern-protocol fixture to mihomo. The
+// clash generator drops nodes mihomo cannot load (naive, TUIC v4) before groups
+// resolve, so a pass also proves no group references a skipped node.
+func TestClashProtocolMatrix(t *testing.T) {
+	bin := mihomoClient(t)
+	req := convert.Request{
+		Target:    "clash",
+		SubURLs:   []string{fixtureBase + "/protocols.yaml"},
+		ConfigURL: fixtureBase + "/acl4ssr.ini",
+	}
+	out := run(t, fixtures(t), req)
+
+	path := writeConfig(t, "config.yaml", out)
+	cmd := exec.Command(bin.path, "-t", "-d", t.TempDir(), "-f", path)
+	if msg, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("mihomo %d.%d.%d -t failed: %v\n%s\n--- rendered config ---\n%s",
+			bin.major, bin.minor, bin.patch, err, msg, out)
 	}
 }

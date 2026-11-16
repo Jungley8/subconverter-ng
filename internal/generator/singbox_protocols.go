@@ -126,6 +126,9 @@ func singboxSSHOutbound(n *proxy.Proxy) map[string]any {
 	if hk := splitAny(c["host-key"]); len(hk) > 0 {
 		base["host_key"] = hk
 	}
+	if hka := splitAny(c["host-key-algorithms"]); len(hka) > 0 {
+		base["host_key_algorithms"] = hka
+	}
 	return base
 }
 

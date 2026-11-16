@@ -1,0 +1,120 @@
+proxies:
+  - name: SNELL-4
+    type: snell
+    server: 1.1.1.1
+    port: 443
+    psk: "snellpass4"
+    version: 4
+    udp: true
+    obfs-opts:
+      mode: http
+      host: bing.com
+  - name: SNELL-6
+    type: snell
+    server: 1.1.1.2
+    port: 443
+    psk: "snellpass6long"
+    version: 6
+    mode: default
+  - name: SS-SHADOWTLS
+    type: ss
+    server: 2.2.2.2
+    port: 443
+    cipher: 2022-blake3-aes-128-gcm
+    password: iVwCncQW5vOkLbRqfYEXxA==
+    plugin: shadow-tls
+    plugin-opts:
+      host: cloud.tencent.com
+      password: stpass
+      version: 3
+  - name: SSH-1
+    type: ssh
+    server: 3.3.3.3
+    port: 22
+    username: root
+    password: sshpass
+  - name: NAIVE-1
+    type: naive
+    server: 4.4.4.4
+    port: 443
+    username: user
+    password: naivepass
+    tls: true
+    sni: naive.example.com
+  - name: ANYTLS-1
+    type: anytls
+    server: 4.4.4.5
+    port: 443
+    password: anypass
+    sni: any.example.com
+  - name: MIERU-1
+    type: mieru
+    server: 5.5.5.5
+    port: 2999
+    transport: TCP
+    username: user
+    password: mierupass
+  - name: MASQUE-1
+    type: masque
+    server: 6.6.6.6
+    port: 443
+    username: user
+    password: masquepass
+    private-key: "MHcCAQEEIHtbwbjKV/EteW1eGmFeOJsmEYoagwWDZ23JxW26/xZKoAoGCCqGSM49AwEHoUQDQgAEH2QCUjm1UI1s0U2foIplc8JqSvR9MAsJZKQwc+l3k56pljloeuUSRJLt4IlWQ2dp62wDIsAf/z9OTxDHyjKTxw=="
+    public-key: "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEH2QCUjm1UI1s0U2foIplc8JqSvR9MAsJZKQwc+l3k56pljloeuUSRJLt4IlWQ2dp62wDIsAf/z9OTxDHyjKTxw=="
+    ip: 172.16.0.2/32
+    network: quic
+  - name: TT-1
+    type: trusttunnel
+    server: 7.7.7.7
+    port: 443
+    username: user
+    password: ttpass
+    sni: tt.example.com
+  - name: XHTTP-VLESS
+    type: vless
+    server: 8.8.8.8
+    port: 443
+    uuid: 11111111-2222-3333-4444-555555555555
+    tls: true
+    servername: xhttp.example.com
+    network: xhttp
+    xhttp-opts:
+      path: /x
+      host: xhttp.example.com
+      mode: auto
+  - name: HTTPUP-VLESS
+    type: vless
+    server: 9.9.9.9
+    port: 443
+    uuid: 11111111-2222-3333-4444-555555555555
+    tls: true
+    servername: up.example.com
+    network: ws
+    ws-opts:
+      path: /up
+      headers:
+        Host: up.example.com
+      v2ray-http-upgrade: true
+  - name: AWG-1
+    type: wireguard
+    server: 10.0.0.1
+    port: 51820
+    private-key: "feF3p824XdVkX3JEzMb5/dLkA/kFNP3RqIU6EuQRTsA="
+    public-key: "crE5ikHZUC0NG2C0x1M1nzHRWVNXsS6c9tgPOeXCISs="
+    ip: 10.0.0.2
+    amnezia-wg-option:
+      jc: 4
+      jmin: 40
+      jmax: 70
+      s1: 20
+      s2: 20
+      h1: 1
+      h2: 2
+      h3: 3
+      h4: 4
+  - name: TUIC4-1
+    type: tuic
+    server: 11.0.0.1
+    port: 443
+    token: t4token

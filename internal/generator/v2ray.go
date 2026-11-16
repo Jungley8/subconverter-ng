@@ -121,15 +121,24 @@ func nodeShareLink(n *proxy.Proxy) (string, bool) {
 		return "trojan://" + cs(c, "password") + "@" + hostport + "?" + q.Encode() + frag, true
 
 	case "snell":
+		if cs(c, "psk") == "" {
+			return "", false
+		}
 		return shareSnell(n), true
 
 	case "ssh":
+		if cs(c, "username") == "" && cs(c, "private-key") == "" {
+			return "", false
+		}
 		return shareSSH(n), true
 
 	case "naive":
 		return shareNaive(n), true
 
 	case "anytls":
+		if cs(c, "password") == "" {
+			return "", false
+		}
 		return shareAnyTLS(n), true
 
 	case "hysteria2":

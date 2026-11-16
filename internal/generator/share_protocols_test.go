@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/Jungley8/subconverter-ng/internal/extconfig"
+	"github.com/Jungley8/subconverter-ng/internal/parser"
 	"github.com/Jungley8/subconverter-ng/internal/proxy"
 )
 
@@ -450,4 +451,86 @@ func decodeVMessJSON(t *testing.T, link string) map[string]any {
 		t.Fatalf("vmess body is not JSON: %v\n%s", err, raw)
 	}
 	return j
+}
+
+// decodeShareLinks renders nodes as a v2ray link list and parses the decoded
+// result back. It is the round-trip guard for newly supported link forms.
+func decodeShareLinks(t *testing.T, nodes []*proxy.Proxy) []*proxy.Proxy {
+	t.Helper()
+	res, err := GenerateV2ray(context.Background(), nodes, &extconfig.Config{}, fakeFetcher{}, Options{})
+	if err != nil {
+		t.Fatalf("generate v2ray: %v", err)
+	}
+	body, err := base64.StdEncoding.DecodeString(string(res.Output))
+	if err != nil {
+		t.Fatalf("decode v2ray list: %v", err)
+	}
+	parsed, skipped, err := parser.Parse(body)
+	if err != nil {
+		t.Fatalf("parse rendered links: %v\n%s", err, body)
+	}
+	if len(skipped) != 0 {
+		t.Fatalf("rendered links did not parse: %v\n%s", skipped, body)
+	}
+	return parsed
+}
+
+func TestShareLinkRoundTrip_ModernProtocols(t *testing.T) {
+	snell := proxy.New("snell", "SN", "sn.example.com", 443)
+	snell.Set("psk", "pskpass")
+	snell.SetRaw("version", 4)
+	snell.Set("obfs-opts", map[string]any{"mode": "http", "host": "bing.com", "uri": "/"})
+
+	snellST := proxy.New("snell", "SN-ST", "sn2.example.com", 443)
+	snellST.Set("psk", "pskpass2")
+	snellST.SetRaw("version", 4)
+	snellST.Set("obfs-opts", map[string]any{
+		"mode": "shadow-tls", "host": "camouflage.example.com",
+		"password": "stpass", "version": 3,
+	})
+
+	ssh := proxy.New("ssh", "SSH", "ssh.example.com", 22)
+	ssh.Set("username", "root")
+	ssh.Set("password", "sshpass")
+	ssh.Set("private-key", "KEY")
+
+	naive := proxy.New("naive", "NV", "naive.example.com", 443)
+	naive.Set("username", "user")
+	naive.Set("password", "naivepass")
+	naive.Set("sni", "naive.example.com")
+
+	anytls := proxy.New("anytls", "AT", "at.example.com", 8443)
+	anytls.Set("password", "anypass")
+	anytls.Set("sni", "at.example.com")
+
+	tuic4 := proxy.New("tuic", "T4", "t4.example.com", 443)
+	tuic4.Set("password", "v4token")
+	tuic4.Version = 4
+
+	parsed := decodeShareLinks(t, []*proxy.Proxy{snell, snellST, ssh, naive, anytls, tuic4})
+	if len(parsed) != 6 {
+		t.Fatalf("parsed %d links, want 6", len(parsed))
+	}
+
+	if got := parsed[0].Clash; got["psk"] != "pskpass" || ci(got, "version") != 4 ||
+		cs(cmap(got, "obfs-opts"), "mode") != "http" {
+		t.Errorf("snell round-trip wrong: %v", got)
+	}
+	sto := cmap(parsed[1].Clash, "obfs-opts")
+	if cs(sto, "mode") != "shadow-tls" || cs(sto, "host") != "camouflage.example.com" ||
+		cs(sto, "password") != "stpass" || ci(sto, "version") != 3 {
+		t.Errorf("snell shadow-tls round-trip wrong: %v", parsed[1].Clash)
+	}
+	if parsed[2].Clash["username"] != "root" || parsed[2].Clash["private-key"] != "KEY" {
+		t.Errorf("ssh round-trip wrong: %v", parsed[2].Clash)
+	}
+	if parsed[3].Clash["username"] != "user" || parsed[3].Clash["sni"] != "naive.example.com" {
+		t.Errorf("naive round-trip wrong: %v", parsed[3].Clash)
+	}
+	if parsed[4].Clash["sni"] != "at.example.com" {
+		t.Errorf("anytls round-trip wrong: %v", parsed[4].Clash)
+	}
+	if parsed[5].Version != 4 || parsed[5].Clash["password"] != "v4token" {
+		t.Errorf("tuic v4 round-trip wrong: version=%d clash=%v", parsed[5].Version, parsed[5].Clash)
+	}
 }

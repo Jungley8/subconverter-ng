@@ -318,16 +318,26 @@ func (r *surgeRenderer) nodeLine(n *proxy.Proxy) (string, string) {
 		return head + strings.Join(parts, ", "), ""
 
 	case "vless":
-		// Surge emits VLESS over ws/xhttp/grpc (gated above). Reality stays a
-		// Shadowrocket-only form in this generator.
-		if flavor == flavorSurge && len(cmap(c, "reality-opts")) > 0 {
-			return "", "Surge cannot represent reality"
-		}
 		parts := []string{"vless", server, port, "username=" + cs(c, "uuid")}
-		parts = append(parts, surgeTLSParts(c)...)
-		if flavor == flavorShadowrocket {
-			ro := cmap(c, "reality-opts")
-			if len(ro) > 0 {
+		ro := cmap(c, "reality-opts")
+		if len(ro) > 0 && flavor == flavorSurge {
+			// Surge turns REALITY on with reality-public-key and treats it as
+			// TLS; writing tls=true alongside it is not needed.
+			if sni := getSNI(c); sni != "" {
+				parts = append(parts, "sni="+sni)
+			}
+			if cb(c, "skip-cert-verify") {
+				parts = append(parts, "skip-cert-verify=true")
+			}
+			if pbk := cs(ro, "public-key"); pbk != "" {
+				parts = append(parts, "reality-public-key="+pbk)
+			}
+			if sid := cs(ro, "short-id"); sid != "" {
+				parts = append(parts, "reality-short-id="+sid)
+			}
+		} else {
+			parts = append(parts, surgeTLSParts(c)...)
+			if flavor == flavorShadowrocket && len(ro) > 0 {
 				parts = append(parts, "reality=true")
 				if pbk := cs(ro, "public-key"); pbk != "" {
 					parts = append(parts, "public-key="+pbk)

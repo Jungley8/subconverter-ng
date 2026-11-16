@@ -280,13 +280,24 @@ func parseSurgeLine(typ, name, server string, port int, extra []string) (*proxy.
 		if boolish(params["tfo"]) {
 			p.SetRaw("tfo", true)
 		}
-		if boolish(params["reality"]) {
+		// Shadowrocket writes reality=true + public-key/short-id; Surge writes
+		// reality-public-key/reality-short-id and treats REALITY as its own
+		// security mode. Both become the canonical TLS+reality-opts pair.
+		pbk := firstNonEmptyStr(params["reality-public-key"], params["public-key"])
+		sid := firstNonEmptyStr(params["reality-short-id"], params["short-id"])
+		if boolish(params["reality"]) || pbk != "" {
 			p.SetRaw("tls", true)
-			p.Set("reality-opts", map[string]any{
-				"public-key": params["public-key"],
-				"short-id":   params["short-id"],
-			})
-			if fp := params["fingerprint"]; fp != "" {
+			ro := map[string]any{}
+			if pbk != "" {
+				ro["public-key"] = pbk
+			}
+			if sid != "" {
+				ro["short-id"] = sid
+			}
+			if len(ro) > 0 {
+				p.Set("reality-opts", ro)
+			}
+			if fp := firstNonEmptyStr(params["fingerprint"], params["client-fingerprint"]); fp != "" {
 				p.Set("client-fingerprint", fp)
 			}
 		} else if boolish(params["tls"]) || params["sni"] != "" {
@@ -608,6 +619,9 @@ func parseSurgeSnell(name, server string, port int, params map[string]string) (*
 	}
 	if params["udp-port"] != "" {
 		p.SetRaw("udp", true)
+		if n := atoiPort(params["udp-port"]); n > 0 {
+			p.Set("udp-port", n)
+		}
 	}
 	p.Set("userkey", params["userkey"])
 	p.Set("mode", params["mode"])
@@ -664,7 +678,7 @@ func parseSurgeWireGuardSection(name, section string, sections map[string]map[st
 		p.Set("persistent-keepalive", ka)
 	}
 	if allowed := peer["allowed-ips"]; allowed != "" {
-		p.Set("allowed-ips", splitALPN(allowed))
+		p.Set("allowed-ips", allowed)
 	}
 	p.SetRaw("udp", true)
 	return p, nil

@@ -32,16 +32,11 @@ func (r *surgeRenderer) sectionsBlock() string {
 }
 
 // surgeTransportSkip reports why a flavor cannot render the node's transport,
-// or "" when it can. Surge emits VLESS only over ws, xhttp and grpc; a plain
-// TCP VLESS node has no Surge form.
+// or "" when it can. Surge renders raw TCP and TLS VLESS; its extra transports
+// (xhttp, grpc) are VLESS-only. Shadowrocket and Loon keep ws only.
 func surgeTransportSkip(flavor surgeFlavor, typ, network string) string {
 	switch network {
-	case "", "tcp":
-		if flavor == flavorSurge && typ == "vless" {
-			return "Surge VLESS needs ws, xhttp, or grpc"
-		}
-		return ""
-	case "ws":
+	case "", "tcp", "ws":
 		return ""
 	case "xhttp":
 		if flavor == flavorSurge && typ == "vless" {
@@ -64,7 +59,7 @@ func surgeTransportParts(flavor surgeFlavor, c map[string]any) []string {
 	var parts []string
 	if cs(c, "network") == "ws" {
 		parts = append(parts, surgeWSParts(c)...)
-		if isHTTPUpgrade(c) {
+		if flavor == flavorSurge && isHTTPUpgrade(c) {
 			parts = append(parts, "ws-http-upgrade=true")
 		}
 	}
@@ -284,21 +279,33 @@ func (r *surgeRenderer) surgeWireGuardPolicy(n *proxy.Proxy) (string, string) {
 	if ipv6 != "" {
 		b.WriteString("self-ip-v6 = " + ipv6 + "\n")
 	}
-	b.WriteString("dns-server = 1.1.1.1\n")
+	dns := joinAny(c["dns"])
+	if dns == "" {
+		dns = "1.1.1.1"
+	}
+	b.WriteString("dns-server = " + dns + "\n")
 	mtu := ci(c, "mtu")
 	if mtu <= 0 {
 		mtu = 1280
 	}
 	b.WriteString("mtu = " + strconv.Itoa(mtu) + "\n")
+	allowed := joinAny(c["allowed-ips"])
+	if allowed == "" {
+		allowed = "0.0.0.0/0, ::/0"
+	}
 	peer := []string{
 		"public-key = " + cs(c, "public-key"),
-		`allowed-ips = "0.0.0.0/0, ::/0"`,
+		"allowed-ips = \"" + allowed + "\"",
 		"endpoint = " + cs(c, "server") + ":" + strconv.Itoa(ci(c, "port")),
 	}
 	if psk := cs(c, "pre-shared-key"); psk != "" {
 		peer = append(peer, "preshared-key = "+psk)
 	}
-	peer = append(peer, "keepalive = 30")
+	keepalive := ci(c, "persistent-keepalive")
+	if keepalive <= 0 {
+		keepalive = 30
+	}
+	peer = append(peer, "keepalive = "+strconv.Itoa(keepalive))
 	b.WriteString("peer = (" + strings.Join(peer, ", ") + ")")
 	r.sections = append(r.sections, b.String())
 

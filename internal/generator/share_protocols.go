@@ -36,6 +36,17 @@ func shareSnell(n *proxy.Proxy) string {
 	if mode := cs(c, "mode"); mode != "" {
 		q.Set("mode", mode)
 	}
+	// The snell URI has no standard ShadowTLS keys. Keep the wrapper's secret
+	// and version in the link under the parser's obfs-* names so the node
+	// round-trips.
+	if isShadowTLS(c) {
+		if _, pass, version := shadowTLSOpts(c); pass != "" {
+			q.Set("obfs-psk", pass)
+			if version > 0 {
+				q.Set("obfs-version", strconv.Itoa(version))
+			}
+		}
+	}
 	link := "snell://" + url.User(cs(c, "psk")).String() + "@" + hostPort(c)
 	if enc := q.Encode(); enc != "" {
 		link += "?" + enc
