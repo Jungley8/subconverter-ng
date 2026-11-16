@@ -426,16 +426,28 @@ func TestGenerateClash_InvalidSelector(t *testing.T) {
 	}
 }
 
-func TestGenerateClash_AttributeSelectorUnsupported(t *testing.T) {
+func TestGenerateClash_UnknownAttributeSelector(t *testing.T) {
 	cfg := &extconfig.Config{ProxyGroups: []extconfig.ProxyGroup{{
-		Name: "ByType", Type: "select", Selectors: []string{`!!TYPE=ss`},
+		Name: "ByType", Type: "select", Selectors: []string{`!!NOPE=ss`},
 	}}}
 	_, err := GenerateClash(context.Background(), mkNodes(), cfg, fakeFetcher{}, Options{})
 	if !errors.Is(err, ErrConfigInvalid) {
 		t.Fatalf("err = %v, want ErrConfigInvalid", err)
 	}
-	if !strings.Contains(err.Error(), "!!TYPE=ss") {
+	if !strings.Contains(err.Error(), "!!NOPE") {
 		t.Errorf("error should name the selector: %v", err)
+	}
+}
+
+func TestGenerateClash_ProviderAttributeSelector(t *testing.T) {
+	cfg := extconfig.Parse([]byte("[custom]\ncustom_proxy_group=ByType`select`!!TYPE=ss\n"))
+	opts := Options{ProviderMode: true, ProviderURLs: []string{"https://airport.example/sub"}}
+	_, err := GenerateClashProvider(context.Background(), nil, cfg, fakeFetcher{}, opts)
+	if !errors.Is(err, ErrConfigInvalid) {
+		t.Fatalf("err = %v, want ErrConfigInvalid", err)
+	}
+	if !strings.Contains(err.Error(), "provider filter") {
+		t.Errorf("error should explain the provider filter limit: %v", err)
 	}
 }
 

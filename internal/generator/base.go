@@ -4,26 +4,115 @@ import (
 	"bytes"
 	"fmt"
 	"sort"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
 
 // parseBase decodes a clash_rule_base document, requiring a top-level mapping.
 // The base stays a yaml.Node tree so its key order, comments and scalar quotes
-// survive. yaml.v3 does not record blank lines, so those are lost.
-func parseBase(data []byte) (*yaml.Node, error) {
+// survive. yaml.v3 does not record blank lines, so those are lost. The indent
+// width is measured here: injected nodes carry no positions.
+func parseBase(data []byte) (*yaml.Node, int, error) {
+	clean, err := stripDirectives(data)
+	if err != nil {
+		return nil, 0, err
+	}
 	var doc yaml.Node
-	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return nil, fmt.Errorf("%w: clash_rule_base is not valid YAML: %w", ErrConfigInvalid, err)
+	if err := yaml.Unmarshal(clean, &doc); err != nil {
+		return nil, 0, fmt.Errorf("%w: clash_rule_base is not valid YAML: %w", ErrConfigInvalid, err)
 	}
 	if len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
-		return nil, fmt.Errorf("%w: clash_rule_base must be a YAML mapping", ErrConfigInvalid)
+		return nil, 0, fmt.Errorf("%w: clash_rule_base must be a YAML mapping", ErrConfigInvalid)
 	}
 	root := doc.Content[0]
 	if err := checkDuplicateKeys(root); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	return root, nil
+	return root, baseIndentWidth(root), nil
+}
+
+// stripDirectives handles the leading YAML directive block. yaml.v3 refuses
+// %YAML 1.2 even though Clash accepts it, so 1.1/1.2 lines are dropped. %TAG
+// lines are kept: yaml.v3 resolves tag handles natively. Directives must end
+// with a --- line, and any other directive is an error.
+func stripDirectives(data []byte) ([]byte, error) {
+	rest := data
+	bom := false
+	if bytes.HasPrefix(rest, []byte("\xef\xbb\xbf")) {
+		rest = rest[len("\xef\xbb\xbf"):]
+		bom = true
+	}
+	var kept [][]byte
+	offset := 0
+	hasDirective := false
+	terminated := false
+	for offset < len(rest) {
+		line, next := splitLine(rest, offset)
+		trimmed := bytes.TrimSpace(line)
+		if len(trimmed) == 0 || trimmed[0] == '#' {
+			// A comment above the directive block is part of the file.
+			if !hasDirective && len(trimmed) > 0 {
+				kept = append(kept, bytes.TrimRight(line, "\r"))
+			}
+			offset = next
+			continue
+		}
+		if trimmed[0] != '%' {
+			terminated = isDocumentStart(trimmed)
+			break
+		}
+		hasDirective = true
+		fields := strings.Fields(stripComment(string(trimmed)))
+		switch fields[0] {
+		case "%YAML":
+			if len(fields) != 2 || (fields[1] != "1.1" && fields[1] != "1.2") {
+				return nil, fmt.Errorf("%w: clash_rule_base uses unsupported YAML version %q", ErrConfigInvalid, strings.TrimSpace(string(trimmed[len("%YAML"):])))
+			}
+		case "%TAG":
+			kept = append(kept, line)
+		default:
+			return nil, fmt.Errorf("%w: clash_rule_base uses unsupported directive %q", ErrConfigInvalid, fields[0])
+		}
+		offset = next
+	}
+	if !hasDirective {
+		if !bom {
+			return data, nil
+		}
+		return rest, nil
+	}
+	if !terminated {
+		return nil, fmt.Errorf("%w: clash_rule_base directives are not terminated by ---", ErrConfigInvalid)
+	}
+	out := make([]byte, 0, len(rest))
+	for _, line := range kept {
+		out = append(out, line...)
+		out = append(out, '\n')
+	}
+	return append(out, rest[offset:]...), nil
+}
+
+// stripComment drops a trailing YAML comment, which a directive line may carry.
+func stripComment(s string) string {
+	if i := strings.Index(s, "#"); i > 0 && (s[i-1] == ' ' || s[i-1] == '\t') {
+		return strings.TrimSpace(s[:i])
+	}
+	return s
+}
+
+// splitLine returns the line at offset without its newline, and the next offset.
+func splitLine(data []byte, offset int) ([]byte, int) {
+	if end := bytes.IndexByte(data[offset:], '\n'); end >= 0 {
+		return data[offset : offset+end], offset + end + 1
+	}
+	return data[offset:], len(data)
+}
+
+// isDocumentStart reports whether a trimmed line opens a YAML document.
+func isDocumentStart(trimmed []byte) bool {
+	s := string(trimmed)
+	return s == "---" || strings.HasPrefix(s, "--- ") || strings.HasPrefix(s, "---\t")
 }
 
 // checkDuplicateKeys rejects a base that repeats a mapping key. yaml.v3 accepts
@@ -61,11 +150,13 @@ func checkDuplicateKeys(n *yaml.Node) error {
 	return nil
 }
 
-// encodeBase renders a base document with the 2-space indent Clash configs use.
-func encodeBase(root *yaml.Node) ([]byte, error) {
+// encodeBase renders a base document with the indentation width measured by
+// parseBase, so a 4-space base stays 4-space and the generated sections follow
+// it. Widths outside 2..9 fall back to the 2-space indent Clash configs use.
+func encodeBase(root *yaml.Node, width int) ([]byte, error) {
 	var buf bytes.Buffer
 	enc := yaml.NewEncoder(&buf)
-	enc.SetIndent(2)
+	enc.SetIndent(width)
 	if err := enc.Encode(root); err != nil {
 		return nil, fmt.Errorf("encode clash_rule_base: %w", err)
 	}
@@ -73,6 +164,70 @@ func encodeBase(root *yaml.Node) ([]byte, error) {
 		return nil, fmt.Errorf("encode clash_rule_base: %w", err)
 	}
 	return buf.Bytes(), nil
+}
+
+// baseIndentWidth reports the indentation width the base was authored with.
+// yaml.v3's emitter accepts 2..9, so anything else falls back to 2.
+func baseIndentWidth(root *yaml.Node) int {
+	if width := nestedIndentWidth(root); width >= 2 && width <= 9 {
+		return width
+	}
+	return 2
+}
+
+// nestedIndentWidth returns the indentation step of the first nested block in
+// source order, or 0 when the document has none.
+func nestedIndentWidth(n *yaml.Node) int {
+	switch n.Kind {
+	case yaml.MappingNode:
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			k, v := n.Content[i], n.Content[i+1]
+			if width := blockIndentWidth(k, v); width > 0 {
+				return width
+			}
+			if width := nestedIndentWidth(v); width > 0 {
+				return width
+			}
+		}
+	case yaml.SequenceNode:
+		for _, c := range n.Content {
+			if width := nestedIndentWidth(c); width > 0 {
+				return width
+			}
+		}
+	}
+	return 0
+}
+
+// blockIndentWidth reports the indent step of a block value relative to its
+// key, or 0 when v is not an indented block. An anchored value reports the
+// anchor column, so the position comes from its first child instead.
+func blockIndentWidth(k, v *yaml.Node) int {
+	if v.Style&yaml.FlowStyle != 0 {
+		return 0
+	}
+	switch v.Kind {
+	case yaml.MappingNode:
+		if len(v.Content) < 2 {
+			return 0
+		}
+		child := v.Content[0]
+		if child.Line > k.Line && child.Column > k.Column {
+			return child.Column - k.Column
+		}
+	case yaml.SequenceNode:
+		if len(v.Content) == 0 {
+			return 0
+		}
+		if v.Line > k.Line && v.Column > k.Column {
+			return v.Column - k.Column
+		}
+		child := v.Content[0]
+		if child.Line > k.Line && child.Column-2 > k.Column {
+			return child.Column - 2 - k.Column
+		}
+	}
+	return 0
 }
 
 // mappingValue returns the value node for key. A direct key wins over a merged

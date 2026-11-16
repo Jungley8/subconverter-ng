@@ -122,7 +122,7 @@ func GenerateClashProvider(ctx context.Context, localNodes []*proxy.Proxy, cfg *
 		if err != nil {
 			return nil, fmt.Errorf("fetch clash_rule_base: %w", err)
 		}
-		root, err := parseBase(data)
+		root, width, err := parseBase(data)
 		if err != nil {
 			return nil, err
 		}
@@ -151,7 +151,7 @@ func GenerateClashProvider(ctx context.Context, localNodes []*proxy.Proxy, cfg *
 			}
 			setMappingValue(root, "rules", rulesNode)
 		}
-		y, err := encodeBase(root)
+		y, err := encodeBase(root, width)
 		if err != nil {
 			return nil, err
 		}
@@ -207,7 +207,7 @@ func buildGroupsProvider(defs []extconfig.ProxyGroup, providers, localNames []st
 				continue
 			}
 			if strings.HasPrefix(sel, "!!") {
-				return nil, fmt.Errorf("%w: proxy group %q: %w", ErrConfigInvalid, d.Name, unsupportedSelector(sel))
+				return nil, fmt.Errorf("%w: proxy group %q: selector %q cannot be expressed in a provider filter", ErrConfigInvalid, d.Name, sel)
 			}
 			re, err := matcher.CompileClient(sel)
 			if err != nil {

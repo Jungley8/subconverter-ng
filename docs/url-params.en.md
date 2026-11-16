@@ -33,6 +33,8 @@ The content behind `url=` is detected by shape, with no extra parameter:
 | `ssd://` URI | base64 JSON, still common on older airports; one URI is enough, it does not need to be HTTP-reachable |
 | A single share link | Put `vless://...` directly in `url=`; nothing is fetched |
 
+Separate multiple sources with `|`. A source may start with `tag:<group>,` (for example `tag:primary,https://...`); `!!GROUP=` matches that tag.
+
 Lines that do not parse are skipped and counted in the log and `&check=true`; they never fail the whole conversion. An SSD URI and a QuanX resource are single pieces of content you can paste into `url=` as is.
 
 !!! note "Protocol coverage"

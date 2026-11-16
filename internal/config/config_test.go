@@ -271,6 +271,25 @@ func TestConfig_Validate(t *testing.T) {
 		t.Errorf("valid insert URLs should pass: %v", err)
 	}
 
+	cfg.Insert.URLs = []string{"tag:Primary,https://example.com/sub", "tag:Other,http://example.org/sub"}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("valid tagged insert URLs should pass: %v", err)
+	}
+
+	for _, bad := range []string{
+		"tag:",
+		"tag:Primary",
+		"tag:Primary,ftp://example.com/sub",
+		"tag:Primary,http:///no-host",
+		"tag:,https://example.com/sub",
+		"tag:Primary,",
+	} {
+		cfg.Insert.URLs = []string{bad}
+		if err := cfg.Validate(); err == nil {
+			t.Errorf("expected error for tagged insert URL %q", bad)
+		}
+	}
+
 	cfg.Insert.URLs = []string{""}
 	if err := cfg.Validate(); err == nil {
 		t.Error("expected error for empty insert URL entry")

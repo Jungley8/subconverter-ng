@@ -42,9 +42,9 @@
 | 订阅内容里没有可用节点 | `422` |
 | 上游抓取失败（订阅 / 配置 / 规则集） | `424` |
 
-**配置里的正则支持 PCRE 语法。** 分组选择器、`include`/`exclude`、`rename`、`emoji` 都先用 Go RE2 编译，失败再换 PCRE 引擎，覆盖 lookahead、lookbehind 与反向引用。上游文档里的 `(^(?!.*(美国|日本)).*)` 这类排除式分组可以正常匹配。两种引擎都编译失败、或匹配超过 100ms 超时时返回 `400`，错误里带分组名与选择器。provider 模式下 `include`/`exclude` 会写进客户端 `filter`，因此还必须能被 PCRE 引擎编译。`!!TYPE=`、`!!GROUP=` 等属性选择器未实现，同样返回 `400`，不静默产出空分组。
+**配置里的正则支持 PCRE 语法。** 分组选择器、`include`/`exclude`、`rename`、`emoji` 都先用 Go RE2 编译，失败再换 PCRE 引擎，覆盖 lookahead、lookbehind 与反向引用。上游文档里的 `(^(?!.*(美国|日本)).*)` 这类排除式分组可以正常匹配。两种引擎都编译失败、或匹配超过 100ms 超时时返回 `400`，错误里带分组名与选择器。provider 模式下 `include`/`exclude` 会写进客户端 `filter`，因此还必须能被 PCRE 引擎编译。属性选择器：`!!TYPE=` 对协议名全匹配，带 TLS 的 HTTP 节点是 `HTTPS`，明文是 `HTTP`；`!!PORT=` 支持 `443`、`1000-2000`、`1000-`、`1000+`、`!443`、`!1000-2000`，多项用逗号分隔并允许空格；`!1000-`、`!1000+`、`+5` 返回 `400`，上游对它们的解读不同；`!!SERVER=` 与 `!!GROUP=` 按子串匹配，`!!GROUP=` 读取 `tag:<组名>,` 前缀，无 tag 的节点组名为空，IPv6 地址同时接受 `::1` 与 `[::1]`；`!!GROUPID=` 对 `url=` 从 0 计数，`!!INSERT=` 对 `insert_url` 从 1 计数。每项都可以再跟 `!!<正则>` 按节点名过滤。空值或未知属性返回 `400`。`!!PROVIDER=` 未支持（provider 名自动生成为 `sub-N`）；provider 模式下任何 `!!` 选择器都无法写进客户端 `filter`，这两种情况都返回 `400`；provider 模式下带 `tag:` 的来源同样返回 `400`。
 
-**`clash_rule_base` 保留原文件布局。** 只替换生成段：`proxies`、`proxy-groups`、`rules`，provider 模式另加 `proxy-providers`，`expand=false` 时另加 `rule-providers`。其余键序、引号与注释保持原样；缩进统一为 2 空格，空行不保留。base 抓取或解析失败时返回错误，不回落内置骨架。
+**`clash_rule_base` 保留原文件布局。** 只替换生成段：`proxies`、`proxy-groups`、`rules`，provider 模式另加 `proxy-providers`，`expand=false` 时另加 `rule-providers`。其余键序、引号与注释保持原样；缩进沿用 base 的宽度（2 到 9 空格，超出范围回落 2 空格）；顶部的 `%YAML 1.1` 或 `%YAML 1.2` 指令会去掉（yaml.v3 拒绝该指令），`%TAG` 指令保留；其他版本、其他指令、或指令块后没有 `---` 都返回 `400`；空行不保留。base 抓取或解析失败时返回错误，不回落内置骨架。
 
 **缓存按「UA + 上游代理 + URL」区分。** 带 `&ua=` 的请求不读写共享缓存（UA 是无界键空间）。需要缓存就把 UA 写进服务端 `user_agent`。
 
