@@ -174,7 +174,7 @@ func tryBase64(s string) (string, bool) {
 			d := string(b)
 			// Guard against false positives: a real subscription contains "://"
 			// or matches one of the structured document formats.
-			if strings.Contains(d, "://") || looksLikeClashYAML(d) || looksLikeSingboxJSON(d) || looksLikeSurge(d) {
+			if strings.Contains(d, "://") || looksLikeClashYAML(d) || looksLikeSingboxJSON(d) || looksLikeSurge(d) || looksLikeQuanX(d) {
 				return d, true
 			}
 		}

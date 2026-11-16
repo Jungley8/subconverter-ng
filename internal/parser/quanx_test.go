@@ -1,6 +1,9 @@
 package parser
 
-import "testing"
+import (
+	"encoding/base64"
+	"testing"
+)
 
 // The QuanX type sits on the left of "=", while Surge puts the node name
 // there. A Surge line must not be read as QuanX and vice versa.
@@ -152,5 +155,24 @@ func TestParseQuanX_SkipsIncomplete(t *testing.T) {
 	}
 	if len(skipped) != 2 {
 		t.Errorf("skipped = %v, want 2 reasons", skipped)
+	}
+}
+
+// Airports that serve QuanX resources also base64-wrap them, like a link list.
+// The base64 true-positive guard must recognize the QuanX shape: its nodes hold
+// no "://", so without that check the whole subscription is discarded.
+func TestParse_Base64QuanX(t *testing.T) {
+	body := "shadowsocks=1.2.3.4:8388, method=aes-256-gcm, password=pw, tag=HK-01\n" +
+		"shadowsocks=5.6.7.8:8388, method=chacha20-ietf-poly1305, password=pw2, tag=US-01\n"
+	wrapped := base64.StdEncoding.EncodeToString([]byte(body))
+	nodes, skipped, err := Parse([]byte(wrapped))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(nodes) != 2 || len(skipped) != 0 {
+		t.Fatalf("nodes=%d skipped=%v, want 2 nodes and no skipped lines", len(nodes), skipped)
+	}
+	if nodes[0].Name != "HK-01" || nodes[1].Name != "US-01" {
+		t.Errorf("names = %q, %q; want HK-01, US-01", nodes[0].Name, nodes[1].Name)
 	}
 }
