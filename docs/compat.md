@@ -20,6 +20,36 @@
 | `target=ssd` | 输出 SSD 订阅 |
 | `target=singbox/1.13` | 按目标内核版本门控协议与 schema |
 
+## 协议与 target 支持
+
+本表列出新增协议与传输在各 target 的支持情况。转换器丢弃 target 不支持的节点，并记入日志。
+
+| 协议 / 特性 | clash（mihomo） | sing-box | Surge | Shadowrocket | Loon | v2ray 链接 |
+|---|---|---|---|---|---|---|
+| Snell | 输出 | 仅 v4/v6，最低 1.14 | 输出 | 输出 | — | 输出 |
+| ShadowTLS | 输出（原生） | ss + shadowtls 链 | ss/snell 参数 | — | — | ss 插件 |
+| SSH | 输出 | 输出，最低 1.5 | 输出 | — | — | 输出 |
+| naive | 跳过（mihomo 不支持 naive） | 输出，最低 1.13 | — | — | — | 输出 |
+| Mieru | 输出 | 跳过 | — | — | — | — |
+| MASQUE | 输出 | 跳过（sing-box 不把它当作节点） | 输出 | — | — | — |
+| TrustTunnel | 输出 | 跳过 | 输出 | — | — | — |
+| XHTTP | 输出 | 跳过节点 | 仅 VLESS | — | — | VLESS/VMess |
+| HTTPUpgrade | 输出 | 输出 | VLESS/VMess/Trojan | — | — | VLESS/VMess |
+| AmneziaWG | 输出 | 跳过节点 | 跳过节点 | 跳过节点 | 跳过节点 | 输出参数 |
+| TUIC v4 | 跳过（仅 v5） | 跳过（仅 v5） | 输出 tuic + token | — | — | 输出 v4 链接 |
+| AnyTLS 分享链接 | 输出 | 输出 | 输出 | — | — | 输出 |
+
+图例：「输出」表示该 target 生成此协议。「跳过」表示转换器丢弃该节点并记入日志。「—」表示该 target 不提供此协议。
+
+- Juicity 不受支持。没有 target 客户端加载它。
+- Mieru 只在 mihomo 中可用。MASQUE 与 TrustTunnel 只在 mihomo 与 Surge 中可用。
+- 在 target 配置中，只有 sing-box 加载 naive。clash target 跳过 naive 节点。
+- 在 target 配置中，只有 Surge 加载 TUIC v4，使用 token 握手。mihomo 与 sing-box 只支持 TUIC v5。
+- 在 target 配置中，只有 mihomo 加载 AmneziaWG。
+- sing-box 跳过 XHTTP 节点。
+- Surge 只为 VLESS 使用 XHTTP。
+- sing-box 列中的版本号是该协议要求的最低 sing-box 版本。
+
 ## 不支持
 
 | 上游能力 | 说明 |
