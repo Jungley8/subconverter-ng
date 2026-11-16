@@ -115,6 +115,11 @@ func Parse(payload []byte) (nodes []*proxy.Proxy, skipped []string, err error) {
 	body := text
 	if decoded, ok := tryBase64(text); ok {
 		body = decoded
+		// An ssd:// URI wrapped in base64 is the same whole-subscription case as
+		// the direct input above.
+		if nodes, skipped, ok := parseSSD(body); ok {
+			return nodes, skipped, nil
+		}
 		if looksLikeClashYAML(body) {
 			return parseClashYAML(body)
 		}

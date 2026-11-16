@@ -88,6 +88,33 @@ func TestParseSSD_Plugin(t *testing.T) {
 	}
 }
 
+// A base64-wrapped ssd:// URI is the whole-subscription case one layer down:
+// the decoded body must reach parseSSD, not the line-by-line share-link loop.
+func TestParse_Base64SSD(t *testing.T) {
+	uri := ssdURI(t, `{
+		"airport": "Demo Airport",
+		"encryption": "aes-256-gcm",
+		"password": "pw",
+		"port": 8388,
+		"servers": [{"server": "1.2.3.4", "remarks": "HK 01"}]
+	}`)
+	wrapped := base64.StdEncoding.EncodeToString([]byte(uri))
+	nodes, skipped, err := Parse([]byte(wrapped))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(skipped) != 0 {
+		t.Fatalf("skipped = %v", skipped)
+	}
+	if len(nodes) != 1 {
+		t.Fatalf("got %d nodes, want 1", len(nodes))
+	}
+	n := nodes[0]
+	if n.Type != "ss" || n.Name != "HK 01" || n.Server != "1.2.3.4" || n.Port != 8388 {
+		t.Errorf("node = %+v", n)
+	}
+}
+
 // A broken SSD body is node content the user pasted, not a URL: it must be
 // reported as a skipped entry. Fetching it as a URL produces a confusing
 // "unsupported scheme" error instead.

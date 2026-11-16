@@ -3,6 +3,8 @@ package parser
 import (
 	"encoding/base64"
 	"testing"
+
+	"github.com/Jungley8/subconverter-ng/internal/proxy"
 )
 
 // The QuanX type sits on the left of "=", while Surge puts the node name
@@ -172,7 +174,20 @@ func TestParse_Base64QuanX(t *testing.T) {
 	if len(nodes) != 2 || len(skipped) != 0 {
 		t.Fatalf("nodes=%d skipped=%v, want 2 nodes and no skipped lines", len(nodes), skipped)
 	}
-	if nodes[0].Name != "HK-01" || nodes[1].Name != "US-01" {
-		t.Errorf("names = %q, %q; want HK-01, US-01", nodes[0].Name, nodes[1].Name)
+	want := []proxy.Proxy{
+		{Type: "ss", Name: "HK-01", Server: "1.2.3.4", Port: 8388},
+		{Type: "ss", Name: "US-01", Server: "5.6.7.8", Port: 8388},
+	}
+	for i, w := range want {
+		got := nodes[i]
+		if got.Type != w.Type || got.Name != w.Name || got.Server != w.Server || got.Port != w.Port {
+			t.Errorf("node[%d] = %+v, want %+v", i, got, w)
+		}
+	}
+	if nodes[0].Clash["cipher"] != "aes-256-gcm" || nodes[1].Clash["cipher"] != "chacha20-ietf-poly1305" {
+		t.Errorf("ciphers = %q, %q", nodes[0].Clash["cipher"], nodes[1].Clash["cipher"])
+	}
+	if nodes[0].Clash["password"] != "pw" || nodes[1].Clash["password"] != "pw2" {
+		t.Errorf("passwords = %q, %q", nodes[0].Clash["password"], nodes[1].Clash["password"])
 	}
 }
