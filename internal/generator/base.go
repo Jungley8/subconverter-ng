@@ -13,7 +13,7 @@ import (
 // survive. yaml.v3 does not record blank lines, so those are lost.
 func parseBase(data []byte) (*yaml.Node, error) {
 	var doc yaml.Node
-	if err := yaml.Unmarshal(data, &doc); err != nil {
+	if err := yaml.Unmarshal(stripDirectives(data), &doc); err != nil {
 		return nil, fmt.Errorf("%w: clash_rule_base is not valid YAML: %w", ErrConfigInvalid, err)
 	}
 	if len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
@@ -24,6 +24,41 @@ func parseBase(data []byte) (*yaml.Node, error) {
 		return nil, err
 	}
 	return root, nil
+}
+
+// stripDirectives drops leading YAML directive lines (%YAML, %TAG) and the
+// blank lines between them. yaml.v3 refuses a %YAML 1.2 document even though
+// Clash accepts it. The leading --- marker is kept, and a document without
+// directives is returned untouched.
+func stripDirectives(data []byte) []byte {
+	seen := false
+	offset := 0
+	for offset < len(data) {
+		var line []byte
+		next := len(data)
+		if end := bytes.IndexByte(data[offset:], '\n'); end >= 0 {
+			line = data[offset : offset+end]
+			next = offset + end + 1
+		} else {
+			line = data[offset:]
+		}
+		trimmed := bytes.TrimSpace(line)
+		if len(trimmed) > 0 {
+			if trimmed[0] == '%' {
+				seen = true
+			} else {
+				if !seen {
+					return data
+				}
+				return data[offset:]
+			}
+		}
+		offset = next
+	}
+	if !seen {
+		return data
+	}
+	return data[offset:]
 }
 
 // checkDuplicateKeys rejects a base that repeats a mapping key. yaml.v3 accepts
@@ -61,11 +96,13 @@ func checkDuplicateKeys(n *yaml.Node) error {
 	return nil
 }
 
-// encodeBase renders a base document with the 2-space indent Clash configs use.
+// encodeBase renders a base document with the indentation width found in the
+// base, so a 4-space base stays 4-space and the generated sections follow it.
+// Widths outside 1..8 fall back to the 2-space indent Clash configs use.
 func encodeBase(root *yaml.Node) ([]byte, error) {
 	var buf bytes.Buffer
 	enc := yaml.NewEncoder(&buf)
-	enc.SetIndent(2)
+	enc.SetIndent(baseIndentWidth(root))
 	if err := enc.Encode(root); err != nil {
 		return nil, fmt.Errorf("encode clash_rule_base: %w", err)
 	}
@@ -73,6 +110,42 @@ func encodeBase(root *yaml.Node) ([]byte, error) {
 		return nil, fmt.Errorf("encode clash_rule_base: %w", err)
 	}
 	return buf.Bytes(), nil
+}
+
+// baseIndentWidth reports the indentation width the base was authored with.
+// yaml.v3 records Line and Column while parsing, so a nested block node's
+// column minus its key's column is the indent step. Generated nodes injected
+// into the tree have zero positions; they are skipped.
+func baseIndentWidth(root *yaml.Node) int {
+	if width := nestedIndentWidth(root); width >= 1 && width <= 8 {
+		return width
+	}
+	return 2
+}
+
+// nestedIndentWidth returns the indentation step of the first nested block in
+// source order, or 0 when the document has none.
+func nestedIndentWidth(n *yaml.Node) int {
+	switch n.Kind {
+	case yaml.MappingNode:
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			k, v := n.Content[i], n.Content[i+1]
+			if (v.Kind == yaml.MappingNode || v.Kind == yaml.SequenceNode) &&
+				v.Line > k.Line && v.Column > k.Column {
+				return v.Column - k.Column
+			}
+			if width := nestedIndentWidth(v); width > 0 {
+				return width
+			}
+		}
+	case yaml.SequenceNode:
+		for _, c := range n.Content {
+			if width := nestedIndentWidth(c); width > 0 {
+				return width
+			}
+		}
+	}
+	return 0
 }
 
 // mappingValue returns the value node for key. A direct key wins over a merged
