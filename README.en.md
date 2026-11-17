@@ -12,7 +12,7 @@
 
 📖 **Documentation**: <https://sub.jungley.net>
 
-`subconverter` is a classic tool, but active development has slowed. Modern protocols such as Hysteria2, TUIC, and VLESS Reality are often missing. `subconverter-ng` is a pure Go rewrite. It **preserves the identical URL interface** as a drop-in replacement, targets **Clash.Meta (mihomo)** alongside major modern clients, and ships first-class protocol support.
+`subconverter` is a classic tool, but active development has slowed. Modern protocols and transports such as Snell, ShadowTLS, Hysteria2, TUIC, VLESS Reality, and XHTTP are often missing. `subconverter-ng` is a pure Go rewrite. It **preserves the identical URL interface** as a drop-in replacement, targets **Clash.Meta (mihomo)** alongside major modern clients, and ships first-class protocol support.
 
 ## Features
 
@@ -108,7 +108,7 @@ See [docs/url-params.md](docs/url-params.md) for full documentation. Common opti
 | `list` | Output node list only without groups or rules (**clash only**) |
 | `append_type` | Prepend `[TYPE]` to node names |
 | `tailscale` | Prepend Tailscale DIRECT rules (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`) |
-| `exclude_protocol` | Exclude nodes by protocol or type (e.g. `hy2,tuic`; alias: `exclude_protocols`) |
+| `exclude_protocol` | Exclude nodes by protocol or type (e.g. `hy2,tuic,awg`; alias: `exclude_protocols`) |
 | `expand` | Set to `false` to output rule-providers referencing remote rules (**clash only**) |
 | `emoji` `add_emoji` `remove_emoji` | Add or remove emoji tags |
 | `udp` `tfo` `scv` | Node transport feature toggles |

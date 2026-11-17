@@ -12,7 +12,7 @@
 
 📖 **文档站**：<https://sub.jungley.net>
 
-`subconverter` 已经很经典，但近年迭代变慢，Hysteria2、TUIC、VLESS Reality 等新协议支持不全。`subconverter-ng` 用 Go 重写，**保持相同的 URL 接口**（可直接替换），对准 **Clash.Meta (mihomo)** 及各现代客户端标准，第一时间支持新协议。
+`subconverter` 已经很经典，但近年迭代变慢，Snell、ShadowTLS、Hysteria2、TUIC、VLESS Reality、XHTTP 等现代协议与传输支持不全。`subconverter-ng` 用 Go 重写，**保持相同的 URL 接口**（可直接替换），对准 **Clash.Meta (mihomo)** 及各现代客户端标准，第一时间支持新协议。
 
 ## 特性
 
@@ -108,7 +108,7 @@ docker compose up -d
 | `list` | 仅输出节点列表（无分组 / 规则，**仅 clash**） |
 | `append_type` | 节点名前追加 `[类型]` 前缀 |
 | `tailscale` | 注入 Tailscale 直连规则（`100.64.0.0/10`, `fd7a:115c:a1e0::/48`） |
-| `exclude_protocol` | 手动排除指定协议（多个用逗号或竖线分隔，如 `hy2,tuic`；别名 `exclude_protocols`） |
+| `exclude_protocol` | 手动排除指定协议（多个用逗号或竖线分隔，如 `hy2,tuic,awg`；别名 `exclude_protocols`） |
 | `expand` | `false` 时输出 rule-providers 引用远程规则（**仅 clash**） |
 | `emoji` `add_emoji` `remove_emoji` | emoji 增删（对齐 subconverter） |
 | `udp` `tfo` `scv` | 节点特性开关（部分 target 支持） |
