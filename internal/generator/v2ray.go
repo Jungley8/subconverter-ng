@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"net"
 	"net/url"
 	"strconv"
 	"strings"
@@ -47,7 +48,7 @@ func nodeShareLink(n *proxy.Proxy) (string, bool) {
 	c := n.Clash
 	host := cs(c, "server")
 	port := ci(c, "port")
-	hostport := host + ":" + strconv.Itoa(port)
+	hostport := net.JoinHostPort(host, strconv.Itoa(port))
 	frag := "#" + encodeFragment(n.Name)
 
 	switch n.Type {

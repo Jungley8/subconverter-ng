@@ -38,8 +38,8 @@ Separate multiple sources with `|`. A source may start with `tag:<group>,` (for 
 Lines that do not parse are skipped and counted in the log and `&check=true`; they never fail the whole conversion. An SSD URI and a QuanX resource are single pieces of content you can paste into `url=` as is.
 
 !!! note "Protocol coverage"
-    Each target prioritizes the common protocols (ss/vmess/vless/trojan/hysteria2/tuic). A protocol a given
-    target cannot express (e.g. Surge has no VLESS, QuanX/Surge have no hysteria2/tuic) is **skipped and listed
+    Each target prioritizes the common protocols (ss/vmess/vless/trojan/hysteria2/tuic). A protocol or transport a
+    given target cannot express (e.g. QuanX has no hysteria2/tuic, Loon has no XHTTP) is **skipped and listed
     in the log** rather than failing the whole config.
 
 ### Version gating (`target=name[/version]`)
