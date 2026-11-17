@@ -193,9 +193,11 @@ func TestGenerateShadowrocket_Enhancements(t *testing.T) {
 	if !strings.Contains(out, "US-REALITY = vless, us.example.com, 443, username=uuid-2, tls=true, sni=www.microsoft.com, reality=true, public-key=PUBKEY, short-id=ab, fingerprint=chrome, flow=xtls-rprx-vision, tfo=true") {
 		t.Errorf("shadowrocket vless reality wrong:\n%s", out)
 	}
-	// TUIC
-	if !strings.Contains(out, "TW-TUIC = tuic, tw.example.com, 443, token=tpass, sni=tw.example.com, alpn=h3") {
-		t.Errorf("shadowrocket tuic wrong:\n%s", out)
+	// TUIC v5: bare password pair, UUID as user, SNI as peer, udp=1.
+	for _, want := range []string{"TW-TUIC = tuic, tw.example.com, 443, ", "user=uuid-3", "udp=1", "sni=tw.example.com", "alpn=h3"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("shadowrocket tuic missing %q:\n%s", want, out)
+		}
 	}
 }
 

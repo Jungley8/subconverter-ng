@@ -58,6 +58,27 @@ func TestParseSingboxHTTPUpgradeHost(t *testing.T) {
 	}
 }
 
+func TestParseSurgeShadowrocketTUICv5(t *testing.T) {
+	text := `[Proxy]
+T = tuic, t.example.com, 443, password=tp, user=uuid-5, sni=t.example.com, alpn=h3, skip-cert-verify=true, udp=1
+T4 = tuic, t4.example.com, 443, token=v4tok
+`
+	nodes, skipped, err := parseSurge(text)
+	if err != nil || len(nodes) != 2 || len(skipped) != 0 {
+		t.Fatalf("parse: nodes=%d skipped=%v err=%v", len(nodes), skipped, err)
+	}
+	v5, v4 := nodes[0], nodes[1]
+	if v5.Version != 0 || v5.Clash["uuid"] != "uuid-5" || v5.Clash["password"] != "tp" {
+		t.Errorf("shadowrocket tuic v5 lost fields: %v", v5.Clash)
+	}
+	if v5.Clash["sni"] != "t.example.com" || v5.Clash["skip-cert-verify"] != true {
+		t.Errorf("shadowrocket tuic v5 lost TLS fields: %v", v5.Clash)
+	}
+	if v4.Version != 4 || v4.Clash["password"] != "v4tok" {
+		t.Errorf("surge tuic v4 misparsed: version=%d clash=%v", v4.Version, v4.Clash)
+	}
+}
+
 func TestParseSurgeWireGuardFirstPeer(t *testing.T) {
 	text := `[Proxy]
 WG = wireguard, section-name=wg1

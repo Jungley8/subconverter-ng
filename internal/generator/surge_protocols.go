@@ -39,12 +39,15 @@ func surgeTransportSkip(flavor surgeFlavor, typ, network string) string {
 	case "", "tcp", "ws":
 		return ""
 	case "xhttp":
-		if flavor == flavorSurge && typ == "vless" {
+		if typ == "vless" && (flavor == flavorSurge || flavor == flavorShadowrocket) {
 			return ""
 		}
 		return "xhttp transport is not supported"
 	case "grpc":
 		if flavor == flavorSurge && typ == "vless" {
+			return ""
+		}
+		if flavor == flavorShadowrocket {
 			return ""
 		}
 		return "gRPC transport is not supported"
@@ -57,6 +60,21 @@ func surgeTransportSkip(flavor surgeFlavor, typ, network string) string {
 // xhttp and grpc; Shadowrocket keeps ws (with the optional http-upgrade flag).
 func surgeTransportParts(flavor surgeFlavor, c map[string]any) []string {
 	var parts []string
+	// Shadowrocket spells every non-TCP transport as obfs=<type> with path=,
+	// host= and (for gRPC) serviceName=.
+	if flavor == flavorShadowrocket {
+		switch {
+		case isHTTPUpgrade(c):
+			ws := cmap(c, "ws-opts")
+			return appendShadowrocketTransport("httpupgrade", cs(ws, "path"), shadowrocketHost(ws), "")
+		case isXHTTP(c):
+			x := cmap(c, "xhttp-opts")
+			return appendShadowrocketTransport("xhttp", cs(x, "path"), cs(x, "host"), cs(x, "mode"))
+		case cs(c, "network") == "grpc":
+			g := cmap(c, "grpc-opts")
+			return appendShadowrocketTransport("grpc", "", "", cs(g, "grpc-service-name"))
+		}
+	}
 	if cs(c, "network") == "ws" {
 		parts = append(parts, surgeWSParts(c)...)
 		if flavor == flavorSurge && isHTTPUpgrade(c) {
@@ -83,6 +101,33 @@ func surgeTransportParts(flavor surgeFlavor, c map[string]any) []string {
 		parts = append(parts, "grpc=true")
 		if sn := cs(cmap(c, "grpc-opts"), "grpc-service-name"); sn != "" {
 			parts = append(parts, "grpc-service-name="+sn)
+		}
+	}
+	return parts
+}
+
+// shadowrocketHost returns the Host header of a ws-opts bag.
+func shadowrocketHost(ws map[string]any) string {
+	hdr := cmap(ws, "headers")
+	return cs(hdr, "Host")
+}
+
+// appendShadowrocketTransport writes Shadowrocket's obfs=<type> form. The
+// serviceName slot carries a gRPC service; mode carries the XHTTP mode.
+func appendShadowrocketTransport(typ, path, host, serviceOrMode string) []string {
+	parts := []string{"obfs=" + typ}
+	if path != "" {
+		parts = append(parts, "path="+path)
+	}
+	if host != "" {
+		parts = append(parts, "host="+host)
+	}
+	if serviceOrMode != "" {
+		switch typ {
+		case "grpc":
+			parts = append(parts, "serviceName="+serviceOrMode)
+		case "xhttp":
+			parts = append(parts, "mode="+serviceOrMode)
 		}
 	}
 	return parts
@@ -156,22 +201,32 @@ func surgeSnellParts(c map[string]any) []string {
 	return parts
 }
 
-// surgeHysteria2ObfsParts renders Hysteria2 obfuscation. Surge writes the key as
-// part of the parameter name (salamander-<key>); Shadowrocket/Loon take the
-// canonical obfs + obfs-<key> pair.
-func surgeHysteria2ObfsParts(flavor surgeFlavor, c map[string]any) []string {
-	obfs := cs(c, "obfs")
-	if obfs == "" {
-		return nil
-	}
+// surgeHysteria2ObfsParts renders Hysteria2 obfuscation. Surge names the
+// parameter salamander-password (salamander) or gecko-password;
+// Shadowrocket uses obfsParam, and Loon supports salamander only.
+func surgeHysteria2ObfsParts(flavor surgeFlavor, c map[string]any) ([]string, string) {
+	obfs := strings.ToLower(cs(c, "obfs"))
 	key := cs(c, "obfs-password")
+	if obfs == "" {
+		return nil, ""
+	}
 	if key == "" {
-		return []string{"obfs=" + obfs}
+		return nil, "hysteria2 obfs needs a password"
 	}
-	if flavor == flavorSurge && (obfs == "salamander" || obfs == "gecko") {
-		return []string{obfs + "-" + key}
+	switch obfs {
+	case "salamander":
+		if flavor == flavorShadowrocket {
+			return []string{"obfsParam=" + key}, ""
+		}
+		return []string{"salamander-password=" + key}, ""
+	case "gecko":
+		if flavor != flavorSurge {
+			return nil, "hysteria2 obfs gecko is not supported by this target"
+		}
+		return []string{"gecko-password=" + key}, ""
+	default:
+		return nil, "hysteria2 obfs " + obfs + " is not supported"
 	}
-	return []string{"obfs=" + obfs, "obfs-password=" + key}
 }
 
 // surgeAnytlsParts renders anytls.
@@ -306,16 +361,12 @@ func (r *surgeRenderer) surgeWireGuardPolicy(n *proxy.Proxy) (string, string) {
 	if ipv6 != "" {
 		b.WriteString("self-ip-v6 = " + ipv6 + "\n")
 	}
-	dns := joinAny(c["dns"])
-	if dns == "" {
-		dns = "1.1.1.1"
+	if dns := joinAny(c["dns"]); dns != "" {
+		b.WriteString("dns-server = " + strings.ReplaceAll(dns, ",", ", ") + "\n")
 	}
-	b.WriteString("dns-server = " + dns + "\n")
-	mtu := ci(c, "mtu")
-	if mtu <= 0 {
-		mtu = 1280
+	if mtu := ci(c, "mtu"); mtu > 0 {
+		b.WriteString("mtu = " + strconv.Itoa(mtu) + "\n")
 	}
-	b.WriteString("mtu = " + strconv.Itoa(mtu) + "\n")
 	allowed := joinAny(c["allowed-ips"])
 	if allowed == "" {
 		allowed = "0.0.0.0/0, ::/0"
@@ -333,11 +384,16 @@ func (r *surgeRenderer) surgeWireGuardPolicy(n *proxy.Proxy) (string, string) {
 	if psk := cs(c, "pre-shared-key"); psk != "" {
 		peer = append(peer, "preshared-key = "+psk)
 	}
-	keepalive := ci(c, "persistent-keepalive")
-	if keepalive <= 0 {
-		keepalive = 30
+	if keepalive := ci(c, "persistent-keepalive"); keepalive > 0 {
+		peer = append(peer, "keepalive = "+strconv.Itoa(keepalive))
 	}
-	peer = append(peer, "keepalive = "+strconv.Itoa(keepalive))
+	if rsv := parseReserved(c["reserved"]); len(rsv) == 3 {
+		parts := make([]string, 0, 3)
+		for _, v := range rsv {
+			parts = append(parts, strconv.Itoa(v))
+		}
+		peer = append(peer, "client-id = "+strings.Join(parts, "/"))
+	}
 	b.WriteString("peer = (" + strings.Join(peer, ", ") + ")")
 	r.sections = append(r.sections, b.String())
 

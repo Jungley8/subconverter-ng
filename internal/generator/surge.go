@@ -214,14 +214,6 @@ func (r *surgeRenderer) nodeLine(n *proxy.Proxy) (string, string) {
 	port := strconv.Itoa(ci(c, "port"))
 	head := n.Name + " = "
 
-	// Only Surge can carry the HTTPUpgrade upgrade request. Shadowrocket and
-	// Loon would silently fall back to plain WebSocket, so skip the node.
-	switch n.Type {
-	case "vmess", "vless", "trojan":
-		if flavor != flavorSurge && isHTTPUpgrade(n.Clash) {
-			return "", "httpupgrade is not supported"
-		}
-	}
 	// Only the VMess/VLESS/Trojan families carry a share-link transport here;
 	// masque's "network" is its own QUIC/H2 knob and must not be gated.
 	switch n.Type {
@@ -295,7 +287,11 @@ func (r *surgeRenderer) nodeLine(n *proxy.Proxy) (string, string) {
 		if cb(c, "skip-cert-verify") {
 			parts = append(parts, "skip-cert-verify=true")
 		}
-		parts = append(parts, surgeHysteria2ObfsParts(flavor, c)...)
+		obfsParts, reason := surgeHysteria2ObfsParts(flavor, c)
+		if reason != "" {
+			return "", reason
+		}
+		parts = append(parts, obfsParts...)
 		return head + strings.Join(parts, ", "), ""
 
 	case "hysteria":
@@ -389,9 +385,23 @@ func (r *surgeRenderer) nodeLine(n *proxy.Proxy) (string, string) {
 		if n.Version == 4 {
 			return "", "TUIC v4 is not supported"
 		}
-		// Shadowrocket keeps its legacy tuic+token line.
-		parts := []string{"tuic", server, port, "token=" + cs(c, "password")}
-		parts = append(parts, surgeTUICTLSParts(c)...)
+		// Shadowrocket's TUIC v5 vocabulary: the UUID is `user` and UDP is the
+		// numeric `udp=1`. TLS keys stay Surge-compatible.
+		parts := []string{
+			"tuic", server, port,
+			"password=" + cs(c, "password"),
+			"user=" + cs(c, "uuid"),
+		}
+		if sni := getSNI(c); sni != "" {
+			parts = append(parts, "sni="+sni)
+		}
+		if cb(c, "skip-cert-verify") {
+			parts = append(parts, "skip-cert-verify=true")
+		}
+		if alpn := joinAny(c["alpn"]); alpn != "" {
+			parts = append(parts, "alpn="+alpn)
+		}
+		parts = append(parts, "udp=1")
 		return head + strings.Join(parts, ", "), ""
 
 	case "wireguard":
@@ -630,7 +640,11 @@ func loonNodeLine(n *proxy.Proxy) (string, bool) {
 		if cb(c, "skip-cert-verify") {
 			parts = append(parts, "skip-cert-verify=true")
 		}
-		parts = append(parts, surgeHysteria2ObfsParts(flavorLoon, c)...)
+		obfsParts, reason := surgeHysteria2ObfsParts(flavorLoon, c)
+		if reason != "" {
+			return "", false
+		}
+		parts = append(parts, obfsParts...)
 		return head + strings.Join(parts, ","), true
 
 	case "hysteria":

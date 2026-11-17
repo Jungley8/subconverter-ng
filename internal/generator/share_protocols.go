@@ -2,6 +2,7 @@ package generator
 
 import (
 	"encoding/json"
+	"net"
 	"net/url"
 	"strconv"
 
@@ -199,5 +200,5 @@ func xhttpExtraJSON(xo map[string]any) string {
 }
 
 func hostPort(c map[string]any) string {
-	return cs(c, "server") + ":" + strconv.Itoa(ci(c, "port"))
+	return net.JoinHostPort(cs(c, "server"), strconv.Itoa(ci(c, "port")))
 }

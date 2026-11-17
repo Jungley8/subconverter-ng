@@ -15,19 +15,142 @@ func protocolTestCfg() *extconfig.Config {
 	return &extconfig.Config{}
 }
 
-func TestSurgeFamilySkipsHTTPUpgrade(t *testing.T) {
+func TestSurgeFamilyHTTPUpgrade(t *testing.T) {
 	n := proxy.New("vless", "V-HU", "v.example.com", 443)
 	n.Set("uuid", "uuid-v")
 	n.Set("network", "ws")
-	n.Set("ws-opts", map[string]any{"path": "/up", "v2ray-http-upgrade": true})
+	n.Set("ws-opts", map[string]any{"path": "/up", "headers": map[string]any{"Host": "cdn.example.com"}, "v2ray-http-upgrade": true})
 
-	for _, flavor := range []surgeFlavor{flavorShadowrocket, flavorLoon} {
-		res, out := renderSurgeFamily(t, flavor, []*proxy.Proxy{n}, Options{ListOnly: true})
-		if strings.Contains(out, "V-HU = ") {
-			t.Errorf("flavor %d downgraded httpupgrade:\n%s", flavor, out)
+	// Shadowrocket expresses HTTPUpgrade as obfs=httpupgrade + path/host.
+	res, out := renderSurgeFamily(t, flavorShadowrocket, []*proxy.Proxy{n}, Options{ListOnly: true})
+	if len(res.SkippedNodes) != 0 {
+		t.Errorf("shadowrocket SkippedNodes = %v", res.SkippedNodes)
+	}
+	for _, want := range []string{"obfs=httpupgrade", "path=/up", "host=cdn.example.com"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("shadowrocket httpupgrade missing %q:\n%s", want, out)
 		}
-		if len(res.SkippedNodes) != 1 || !strings.Contains(res.SkippedNodes[0], "httpupgrade") {
+	}
+
+	// Loon cannot carry HTTPUpgrade; emitting it would silently degrade to WS.
+	res, out = renderSurgeFamily(t, flavorLoon, []*proxy.Proxy{n}, Options{ListOnly: true})
+	if strings.Contains(out, "V-HU = ") {
+		t.Errorf("loon downgraded httpupgrade:\n%s", out)
+	}
+	if len(res.SkippedNodes) != 1 || !strings.Contains(res.SkippedNodes[0], "httpupgrade") {
+		t.Errorf("loon SkippedNodes = %v", res.SkippedNodes)
+	}
+}
+
+func TestSurgeShadowrocketXHTTP(t *testing.T) {
+	n := proxy.New("vless", "V-XH", "v.example.com", 443)
+	n.Set("uuid", "uuid-v")
+	n.Set("network", "xhttp")
+	n.Set("xhttp-opts", map[string]any{"path": "/xh", "host": "cdn.example.com", "mode": "auto"})
+
+	res, out := renderSurgeFamily(t, flavorShadowrocket, []*proxy.Proxy{n}, Options{ListOnly: true})
+	if len(res.SkippedNodes) != 0 {
+		t.Errorf("shadowrocket SkippedNodes = %v", res.SkippedNodes)
+	}
+	for _, want := range []string{"obfs=xhttp", "path=/xh", "host=cdn.example.com", "mode=auto"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("shadowrocket xhttp missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestSurgeHysteria2ObfsSyntax(t *testing.T) {
+	n := proxy.New("hysteria2", "HY2", "h.example.com", 443)
+	n.Set("password", "auth")
+	n.Set("sni", "h.example.com")
+	n.Set("obfs", "salamander")
+	n.Set("obfs-password", "sek")
+
+	// Surge and Loon carry the obfs key in a fixed parameter name. They do not
+	// emit a bare `salamander` token.
+	for _, flavor := range []surgeFlavor{flavorSurge, flavorLoon} {
+		res, out := renderSurgeFamily(t, flavor, []*proxy.Proxy{n}, Options{ListOnly: true})
+		if len(res.SkippedNodes) != 0 {
 			t.Errorf("flavor %d SkippedNodes = %v", flavor, res.SkippedNodes)
+		}
+		if !strings.Contains(out, "salamander-password=sek") {
+			t.Errorf("flavor %d hysteria2 obfs missing correct parameter:\n%s", flavor, out)
+		}
+		if strings.Contains(out, "obfsParam") || strings.Contains(out, "salamandarsek") {
+			t.Errorf("flavor %d hysteria2 obfs used foreign syntax:\n%s", flavor, out)
+		}
+	}
+
+	// Shadowrocket uses obfsParam.
+	_, out := renderSurgeFamily(t, flavorShadowrocket, []*proxy.Proxy{n}, Options{ListOnly: true})
+	if !strings.Contains(out, "obfsParam=sek") {
+		t.Errorf("shadowrocket hysteria2 obfs missing obfsParam:\n%s", out)
+	}
+
+	// Surge also supports gecko; Loon and Shadowrocket do not.
+	gecko := proxy.New("hysteria2", "GECKO", "h.example.com", 443)
+	gecko.Set("password", "auth")
+	gecko.Set("obfs", "gecko")
+	gecko.Set("obfs-password", "sek")
+	res, out := renderSurgeFamily(t, flavorSurge, []*proxy.Proxy{gecko}, Options{ListOnly: true})
+	if len(res.SkippedNodes) != 0 {
+		t.Errorf("surge gecko SkippedNodes = %v", res.SkippedNodes)
+	}
+	if !strings.Contains(out, "gecko-password=sek") {
+		t.Errorf("surge gecko obfs missing gecko-password:\n%s", out)
+	}
+	for _, flavor := range []surgeFlavor{flavorLoon, flavorShadowrocket} {
+		res, out := renderSurgeFamily(t, flavor, []*proxy.Proxy{gecko}, Options{ListOnly: true})
+		if len(res.SkippedNodes) != 1 {
+			t.Errorf("flavor %d gecko SkippedNodes = %v", flavor, res.SkippedNodes)
+		}
+		if strings.Contains(out, "GECKO = ") {
+			t.Errorf("flavor %d emitted unsupported gecko obfs:\n%s", flavor, out)
+		}
+	}
+}
+
+func TestShareLinksBracketIPv6(t *testing.T) {
+	newNode := func(typ string) *proxy.Proxy {
+		n := proxy.New(typ, typ+"-v6", "2001:db8::1", 443)
+		n.Set("uuid", "uuid-v")
+		n.Set("password", "pw")
+		n.Set("username", "user")
+		n.Set("psk", "psk")
+		n.Set("private-key", "priv")
+		n.Set("public-key", "pub")
+		n.Set("ip", "10.0.0.2")
+		n.Set("cipher", "aes-128-gcm")
+		return n
+	}
+	// vmess carries its server inside base64 JSON, so it has no URI host.
+	types := []string{"ss", "vless", "trojan", "snell", "ssh", "naive", "anytls", "wireguard", "hysteria2", "tuic"}
+	nodes := make([]*proxy.Proxy, 0, len(types))
+	for _, typ := range types {
+		nodes = append(nodes, newNode(typ))
+	}
+
+	res, err := GenerateV2ray(context.Background(), nodes, protocolTestCfg(), fakeFetcher{}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.SkippedNodes) != 0 {
+		t.Fatalf("SkippedNodes = %v", res.SkippedNodes)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(string(res.Output))
+	if err != nil {
+		t.Fatal(err)
+	}
+	links := strings.Split(string(decoded), "\n")
+	if len(links) != len(types) {
+		t.Fatalf("got %d links, want %d", len(links), len(types))
+	}
+	for _, link := range links {
+		if !strings.Contains(link, "@[2001:db8::1]:443") {
+			t.Errorf("share link does not bracket the IPv6 host: %s", link)
+		}
+		if strings.Contains(link, "@2001:db8::1:443") {
+			t.Errorf("share link has an ambiguous unbracketed IPv6 host: %s", link)
 		}
 	}
 }

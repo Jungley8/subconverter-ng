@@ -370,7 +370,6 @@ func parseSurgeLine(typ, name, server string, port int, extra []string) (*proxy.
 			p.SetRaw("skip-cert-verify", true)
 		}
 		applySurgeHysteria2Obfs(p, params)
-		applySurgePositionalObfs(p, posArgs)
 		return p, nil
 
 	case "hysteria":
@@ -403,7 +402,15 @@ func parseSurgeLine(typ, name, server string, port int, extra []string) (*proxy.
 		return p, nil
 
 	case "tuic":
-		// Surge `tuic` is the v4 token handshake.
+		// Surge `tuic` is the v4 token handshake. Shadowrocket uses the same
+		// type name for v5 and identifies the user with `user`.
+		if uuid := firstNonEmptyStr(params["uuid"], params["user"], params["username"]); uuid != "" {
+			p := proxy.New("tuic", name, server, port)
+			p.Set("uuid", uuid)
+			p.Set("password", params["password"])
+			applySurgeTUICOptions(p, params)
+			return p, nil
+		}
 		p := proxy.New("tuic", name, server, port)
 		p.Set("password", firstNonEmptyStr(params["token"], params["password"]))
 		p.Version = 4
@@ -412,7 +419,7 @@ func parseSurgeLine(typ, name, server string, port int, extra []string) (*proxy.
 
 	case "tuic-v5":
 		p := proxy.New("tuic", name, server, port)
-		p.Set("uuid", firstNonEmptyStr(params["uuid"], params["username"]))
+		p.Set("uuid", firstNonEmptyStr(params["uuid"], params["user"], params["username"]))
 		p.Set("password", params["password"])
 		applySurgeTUICOptions(p, params)
 		return p, nil
@@ -591,41 +598,40 @@ func applySurgeShadowTLS(p *proxy.Proxy, params map[string]string) (bool, error)
 	return true, nil
 }
 
-// applySurgeHysteria2Obfs maps Surge's combined salamander-<key> /
-// gecko-<key> obfs value to the canonical obfs + obfs-password pair.
+// applySurgeHysteria2Obfs maps Hysteria2 obfuscation to the canonical
+// obfs + obfs-password pair. Surge and Loon name the parameter
+// salamander-password (salamander) or gecko-password;
+// Shadowrocket uses obfs/obfsParam.
 func applySurgeHysteria2Obfs(p *proxy.Proxy, params map[string]string) {
-	obfs := params["obfs"]
-	if obfs == "" {
+	if key := params["salamander-password"]; key != "" {
+		p.Set("obfs", "salamander")
+		p.Set("obfs-password", surgeUnquote(key))
 		return
 	}
-	if key := params["obfs-password"]; key != "" {
-		p.Set("obfs", obfs)
-		p.Set("obfs-password", key)
+	if key := params["gecko-password"]; key != "" {
+		p.Set("obfs", "gecko")
+		p.Set("obfs-password", surgeUnquote(key))
 		return
 	}
-	kind, key, ok := strings.Cut(obfs, "-")
-	if ok && (kind == "salamander" || kind == "gecko") {
+	if key := params["obfsparam"]; key != "" {
+		kind := strings.ToLower(surgeUnquote(params["obfs"]))
+		if kind == "" {
+			kind = "salamander"
+		}
 		p.Set("obfs", kind)
-		p.Set("obfs-password", key)
-		return
+		p.Set("obfs-password", surgeUnquote(key))
 	}
-	p.Set("obfs", obfs)
 }
 
-// applySurgePositionalObfs reads Surge's salamander-<key> / gecko-<key> flags,
-// which are standalone tokens rather than key=value parameters.
-func applySurgePositionalObfs(p *proxy.Proxy, posArgs []string) {
-	for _, arg := range posArgs {
-		kind, key, ok := strings.Cut(arg, "-")
-		switch strings.ToLower(kind) {
-		case "salamander", "gecko":
-			if ok && key != "" {
-				p.Set("obfs", strings.ToLower(kind))
-				p.Set("obfs-password", key)
-				return
-			}
+// surgeUnquote strips the optional single or double quotes around a Surge value.
+func surgeUnquote(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) >= 2 {
+		if (s[0] == '"' && s[len(s)-1] == '"') || (s[0] == '\'' && s[len(s)-1] == '\'') {
+			return s[1 : len(s)-1]
 		}
 	}
+	return s
 }
 
 // parseSurgeSnell maps a Surge snell line. Surge omits the version for v1.
@@ -715,6 +721,17 @@ func parseSurgeWireGuardSection(name, section string, sections map[string]map[st
 	}
 	if allowed := peer["allowed-ips"]; allowed != "" {
 		p.Set("allowed-ips", splitALPN(allowed))
+	}
+	if cid := firstNonEmptyStr(peer["client-id"], peer["reserved"]); cid != "" {
+		var vals []int
+		for _, part := range strings.Split(cid, "/") {
+			if n, err := strconv.Atoi(strings.TrimSpace(part)); err == nil {
+				vals = append(vals, n)
+			}
+		}
+		if len(vals) > 0 {
+			p.Set("reserved", vals)
+		}
 	}
 	p.SetRaw("udp", true)
 	return p, nil

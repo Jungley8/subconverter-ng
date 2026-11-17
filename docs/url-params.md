@@ -38,8 +38,8 @@
 解析不了的行会跳过并在日志/`&check=true` 里计数，不会让整份转换失败。SSD 与 QuanX 资源都是**单条内容**，直接贴在 `url=` 里即可。
 
 !!! note "协议覆盖"
-    各 target 优先输出常见协议（ss/vmess/vless/trojan/hysteria2/tuic）。某 target 无法表达的协议（如
-    Surge 没有 VLESS、QuanX/Surge 没有 hysteria2/tuic 时）会被**跳过并在日志中列出**，不会让整份配置失败。
+    各 target 优先输出常见协议（ss/vmess/vless/trojan/hysteria2/tuic）。某 target 无法表达的协议或传输（如
+    QuanX 没有 hysteria2/tuic、Loon 没有 XHTTP）会被**跳过并在日志中列出**，不会让整份配置失败。
 
 ### 版本门控（`target=name[/version]`）
 

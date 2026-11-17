@@ -419,7 +419,7 @@ func TestWireguardAllTargets(t *testing.T) {
 		"[WireGuard WG-Node]",
 		"self-ip = 10.0.0.2",
 		"self-ip-v6 = fd00::2",
-		"peer = (public-key = pubkey, allowed-ips = \"0.0.0.0/0, ::/0\", endpoint = 1.2.3.4:51820, preshared-key = psk, keepalive = 30)",
+		"peer = (public-key = pubkey, allowed-ips = \"0.0.0.0/0, ::/0\", endpoint = 1.2.3.4:51820, preshared-key = psk, client-id = 1/2/3)",
 	} {
 		if !strings.Contains(string(surge.Output), want) {
 			t.Errorf("surge wireguard missing %q:\n%s", want, surge.Output)

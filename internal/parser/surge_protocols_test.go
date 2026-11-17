@@ -13,8 +13,8 @@ MQ = masque, mq.example.com, 443, username=mu, password=mp, port-hopping=1000-20
 TT = trust-tunnel, tt.example.com, 443, username=tu, password=tp, headers=x-a:1, max-streams=8, h3=true, client-random-auth-key=k
 T4 = tuic, t4.example.com, 443, token=v4tok, sni=t4.example.com
 T5 = tuic-v5, t5.example.com, 443, uuid=uuid-5, password=t5p, sni=t5.example.com
-HY2 = hysteria2, hy2.example.com, 8443, password=hy2p, obfs=salamander-key123, sni=hy2.example.com
-HY2G = hysteria2, hy2g.example.com, 8443, password=hy2gp, obfs=gecko-key456
+HY2 = hysteria2, hy2.example.com, 8443, password=hy2p, salamander-password=key123, sni=hy2.example.com
+HY2G = hysteria2, hy2g.example.com, 8443, password=hy2gp, gecko-password=key456
 WG = wireguard, section-name=WG1
 VLX = vless, vl.example.com, 443, username=vlu, xhttp=true, xhttp-path=/x, xhttp-host=cdn.example.com, xhttp-mode=stream-one, sni=vl.example.com, tls=true
 VLG = vless, vlg.example.com, 443, username=vlg, grpc=true, grpc-service-name=svc

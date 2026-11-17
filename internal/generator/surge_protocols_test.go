@@ -300,11 +300,17 @@ func TestSurgeTUICVersions(t *testing.T) {
 		t.Errorf("surge tuic v4 must use token only:\n%s", out)
 	}
 
-	// Shadowrocket keeps its legacy tuic+token form for v5, but cannot carry v4.
+	// Shadowrocket TUIC v5 carries the password as a bare key=value pair, the
+	// UUID as `user`, the SNI as `peer`, and UDP as `udp=1`. It cannot carry v4.
 	v5SR := v5
 	_, out = renderOne(t, flavorShadowrocket, v5SR)
-	if !strings.Contains(out, "T5 = tuic, t.example.com, 443, token=tpw") {
-		t.Errorf("shadowrocket tuic v5 legacy line changed:\n%s", out)
+	for _, want := range []string{"T5 = tuic, t.example.com, 443, ", "user=uuid-5", "udp=1", "sni=t.example.com", "alpn=h3"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("shadowrocket tuic v5 missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "token=") {
+		t.Errorf("shadowrocket tuic v5 must not use the v4 token form:\n%s", out)
 	}
 
 	for _, flavor := range []surgeFlavor{flavorShadowrocket, flavorLoon} {
@@ -342,12 +348,18 @@ func TestSurgeWireGuardSections(t *testing.T) {
 		"private-key = PRIV",
 		"self-ip = 10.0.0.2/32",
 		"self-ip-v6 = fd00::2/128",
-		"dns-server = 1.1.1.1",
 		"mtu = 1420",
-		`peer = (public-key = PUB, allowed-ips = "0.0.0.0/0, ::/0", endpoint = wg.example.com:51820, preshared-key = PSK, keepalive = 30)`,
+		`peer = (public-key = PUB, allowed-ips = "0.0.0.0/0, ::/0", endpoint = wg.example.com:51820, preshared-key = PSK)`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q\n---\n%s", want, out)
+		}
+	}
+
+	// No invented defaults: absent DNS, keepalive and MTU stay absent.
+	for _, unwanted := range []string{"dns-server = 1.1.1.1", "keepalive =", "mtu = 1280"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("surge WireGuard must not invent %q:\n%s", unwanted, out)
 		}
 	}
 
@@ -359,14 +371,26 @@ func TestSurgeWireGuardSections(t *testing.T) {
 		t.Errorf("WireGuard section order wrong: proxy=%d section=%d group=%d\n%s", proxyIdx, sectionIdx, groupIdx, out)
 	}
 
-	// Default MTU is 1280.
-	bare := proxy.New("wireguard", "WG2", "wg.example.com", 51820)
-	bare.Clash["private-key"] = "PRIV"
-	bare.Clash["public-key"] = "PUB"
-	bare.Clash["ip"] = "10.0.0.2/32"
-	_, out = renderOne(t, flavorSurge, bare)
-	if !strings.Contains(out, "mtu = 1280") {
-		t.Errorf("default WireGuard mtu should be 1280:\n%s", out)
+	// Explicit DNS, keepalive and reserved fields are carried through; reserved
+	// maps to Surge's client-id.
+	full := proxy.New("wireguard", "WG3", "wg.example.com", 51820)
+	full.Clash["private-key"] = "PRIV"
+	full.Clash["public-key"] = "PUB"
+	full.Clash["ip"] = "10.0.0.2/32"
+	full.Clash["dns"] = []string{"1.1.1.1", "8.8.8.8"}
+	full.Clash["mtu"] = 1280
+	full.Clash["persistent-keepalive"] = 25
+	full.Clash["reserved"] = []int{1, 2, 3}
+	_, out = renderOne(t, flavorSurge, full)
+	for _, want := range []string{
+		"dns-server = 1.1.1.1, 8.8.8.8",
+		"mtu = 1280",
+		"keepalive = 25",
+		"client-id = 1/2/3",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q\n---\n%s", want, out)
+		}
 	}
 }
 
@@ -429,7 +453,6 @@ func TestSurgeFamilySkips(t *testing.T) {
 		{"amneziawg shadowrocket", flavorShadowrocket, amnezia, "AWG obfuscation is not supported"},
 		{"amneziawg loon", flavorLoon, amnezia, "unsupported by target"},
 		{"ssh key only", flavorSurge, sshKeyOnly, "Keystore"},
-		{"vless xhttp shadowrocket", flavorShadowrocket, vlessXHTTP, "xhttp transport is not supported"},
 		{"vless xhttp loon", flavorLoon, vlessXHTTP, "xhttp transport is not supported"},
 	}
 
